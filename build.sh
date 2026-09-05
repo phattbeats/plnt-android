@@ -119,19 +119,33 @@ pushd core >/dev/null
 # exposes `uniffi_bindgen_main()` but is brittle on some clap versions —
 # fall back to the committed bindings at app/app/src/main/kotlin/com/plnt/client/uniffi/...
 # which are the canonical artifact for this exact .udl + uniffi-version pair.
+#
+# plnt-core declares its interfaces via `#[uniffi::export]` proc macros, not
+# the (near-empty) `plnt_core.udl`. UDL-mode bindgen (`generate <file>.udl`)
+# only sees UDL-declared items, so it silently produces bindings missing
+# every proc-macro type (Client, EventSink, ConnEvent, IdentityObj, ...).
+# Proc-macro items are only visible to bindgen via "library mode", which
+# reads the metadata uniffi embeds in the compiled cdylib — so build a
+# host-target cdylib purely to hand to bindgen (never shipped to the app).
 BINDINGS_DIR="../app/app/src/main/kotlin/com/plnt/client"
 COMMITTED_BINDINGS="$BINDINGS_DIR/uniffi/plnt_core/plnt_core.kt"
 mkdir -p "$BINDINGS_DIR"
 set +e
-echo "build.sh: generating Kotlin bindings via workspace-local CLI shim"
+echo "build.sh: building host cdylib for bindgen metadata"
+cargo build --release -p plnt-core 2>/dev/null
+HOST_LIB=$(find ../target/release -maxdepth 1 -name "libplnt_core.so" -o -name "libplnt_core.dylib" 2>/dev/null | head -n1)
+if [[ -z "$HOST_LIB" ]]; then
+  HOST_LIB=$(find ../target/release -maxdepth 1 -name "libplnt_core.*" 2>/dev/null | head -n1)
+fi
+echo "build.sh: generating Kotlin bindings via workspace-local CLI shim (library mode)"
 cargo run --manifest-path ../Cargo.toml --bin plnt-uniffi-bindgen -- generate \
   --language kotlin \
   --out-dir "$BINDINGS_DIR" \
-  src/plnt_core.udl 2>/dev/null
+  --library "$HOST_LIB" 2>/dev/null
 BINDGEN_RC=$?
 set -e
-if [[ $BINDGEN_RC -ne 0 || ! -f "$COMMITTED_BINDINGS" ]]; then
-  echo "build.sh: bindgen CLI exited $BINDGEN_RC; using committed bindings at $COMMITTED_BINDINGS"
+if [[ $BINDGEN_RC -ne 0 || -z "$HOST_LIB" || ! -f "$COMMITTED_BINDINGS" ]]; then
+  echo "build.sh: bindgen CLI exited $BINDGEN_RC (host lib: ${HOST_LIB:-none}); using committed bindings at $COMMITTED_BINDINGS"
   if [[ ! -f "$COMMITTED_BINDINGS" ]]; then
     echo "build.sh: ERROR — no committed bindings fallback and CLI failed" >&2
     exit 1
