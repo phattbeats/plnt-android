@@ -143,7 +143,7 @@ for tgt in $RUST_TARGETS; do
   echo "build.sh: cargo-ndk build for $tgt"
   cargo ndk \
     --target "$tgt" \
-    --platform "$ANDROID_PLATFORM" \
+    --platform "${ANDROID_PLATFORM#android-}" \
     --output-dir "../app/app/src/main/jniLibs/$tgt" \
     build --release
 done
