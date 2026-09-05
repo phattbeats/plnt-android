@@ -28,7 +28,6 @@ jobs:
       # Reproducible pins — README's "Pinned toolchain versions" table.
       NDK_VERSION: "27.0.12077973"
       ANDROID_PLATFORM: "android-34"
-      ANDROID_HOME: ${{ runner.temp }}/android-sdk
 
     steps:
       - name: Checkout
@@ -37,6 +36,11 @@ jobs:
           submodules: recursive
           # Pull the full tsclientlib@ee3bc6f history (1MB), nothing more.
           fetch-depth: 0
+
+      - name: Set ANDROID_HOME
+        # env: only allows github/needs/vars/strategy/matrix/secrets/inputs
+        # contexts, not runner — so runner.temp has to be resolved in a step.
+        run: echo "ANDROID_HOME=${RUNNER_TEMP}/android-sdk" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
