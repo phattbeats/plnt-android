@@ -1,9 +1,1 @@
-// UniFFI Definition Language — the source of truth for the Rust ↔ Kotlin contract.
-//
-// For now this is a single smoke function (core_version) that proves the
-// round trip works on a real device. Once the architecture above the Rust
-// layer stabilizes, additional interfaces will go here.
-
-namespace plnt_core {
-    string core_version();
-};
+namespace plnt_core{};
