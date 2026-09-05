@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["core", "tools/plnt-uniffi-bindgen"]
+
+# A separate crate for the uniffi-bindgen CLI wrapper. We can't add it to the
+# same crate as the cdylib (cargo wants `uniffi_bindgen` as an rlib when used as
+# a binary dependency, but it's published as a library-only crate — the cli
+# bin needs to be in its own crate).
+#
+# This `plnt-uniffi-bindgen` crate is invoked from build.sh as:
+#   cargo run --bin plnt-uniffi-bindgen -- generate ...
+#
+# It's not built by default — only when build.sh explicitly invokes it.

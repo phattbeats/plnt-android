@@ -18,7 +18,7 @@ TS6-only features.
 | Phase | Status |
 |---|---|
 | PHA-3073 voice spike (Rust core → TS6 server, 4 s of 440 Hz) | **PASS** — spike write-up + voicespike harness: <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download> |
-| PHA-3074 toolchain (this repo) | **SCAFFOLD COMPLETE** — Cargo workspace + `plnt-core` + UniFFI bindings + Gradle/Compose app + `build.sh` + README. Verified locally on container-without-Android-SDK; **CI will need an Ubuntu 24.04 runner with Rust + JDK 17 + Android SDK 34 + NDK 27** to actually produce `app-debug.apk`. |
+| PHA-3074 toolchain (this repo) | **SCAFFOLD COMPLETE + CI WIRED** — Cargo workspace + `plnt-core` (verified `cargo build`/`cargo test` clean host-side) + UniFFI bindings (generated, committed at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`) + Gradle/Compose app + `build.sh` + `.github/workflows/build.yml` (CI runs on Ubuntu 24.04). Live APK build needs a CI runner with Rust + JDK 17 + Android SDK 34 + NDK 27 — wired in the workflow. |
 
 ## Layout
 
@@ -31,6 +31,10 @@ plnt-android/
 │   │   ├── lib.rs                    core_version() smoke function
 │   │   └── plnt_core.udl             UniFFI Definition Language
 │   └── tests/smoke.rs                Host-side test of core_version()
+├── tools/
+│   └── plnt-uniffi-bindgen/         Workspace-local CLI shim — `cargo run --bin
+│       │ plnt-uniffi-bindgen -- generate ...` because upstream
+│       │ `uniffi_bindgen` is library-only (no [[bin]]).
 ├── app/                              Android Gradle project
 │   ├── settings.gradle.kts
 │   ├── build.gradle.kts              Top-level (Android-application plugin)
@@ -42,9 +46,14 @@ plnt-android/
 │       └── src/main/
 │           ├── AndroidManifest.xml   RECORD_AUDIO + BLUETOOTH_CONNECT +
 │           │                          FOREGROUND_SERVICE_MICROPHONE per locked architecture
-│           ├── kotlin/com/plnt/client/MainActivity.kt
+│           ├── kotlin/com/plnt/client/
+│           │   ├── MainActivity.kt
+│           │   └── uniffi/plnt_core/plnt_core.kt   Generated UniFFI binding
 │           └── res/values/themes.xml
+├── .github/workflows/
+│   └── build.yml                     CI: ubuntu-24.04, builds via build.sh
 ├── build.sh                          One-command build
+├── Cargo.toml                         Workspace root (members: core, tools/*)
 └── README.md                         (this file)
 ```
 

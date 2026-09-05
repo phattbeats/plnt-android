@@ -13,12 +13,11 @@
 /// Return the embedded core version. Round-trip smoke for the UniFFI binding.
 pub fn core_version() -> String {
     format!(
-        "plnt-core {} (tsclientlib@{}, audiopus {}, uniffi {})",
+        "plnt-core {} (tsclientlib@{}, audiopus {})",
         env!("CARGO_PKG_VERSION"),
         // tsclientlib pinned commit (see Cargo.toml)
         "ee3bc6f",
-        audiopus::version_str(),
-        uniffi::VERSION,
+        audiopus::version(),
     )
 }
 

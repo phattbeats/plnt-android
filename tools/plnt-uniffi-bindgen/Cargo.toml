@@ -1,0 +1,20 @@
+[package]
+name = "plnt-uniffi-bindgen"
+version = "0.1.0"
+edition = "2021"
+description = "Internal CLI wrapper that lets build.sh invoke `uniffi_bindgen_main()` without needing the upstream `uniffi_bindgen_cli` crate globally installed."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/phattbeats/plnt-android"
+publish = false
+
+[[bin]]
+name = "plnt-uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+# `uniffi_bindgen_main()` lives in the `uniffi` crate (not in the
+# `uniffi_bindgen` library crate, which is library-only with no [[bin]]).
+# The `cli` feature on `uniffi` pulls in the bindgen library, clap,
+# and camino — all the dependencies the CLI needs.
+uniffi = { version = "0.27", features = ["cli"] }
+

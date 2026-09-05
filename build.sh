@@ -110,12 +110,30 @@ fi
 echo "build.sh: cross-compiling plnt-core for: $RUST_TARGETS"
 pushd core >/dev/null
 
-# Generate the UniFFI Kotlin bindings once (host-side — no Android needed).
-if ! command -v uniffi-bindgen >/dev/null 2>&1; then
-  echo "build.sh: installing uniffi-bindgen-cli"
-  cargo install --locked uniffi_bindgen-cli
+# Generate the UniFFI Kotlin bindings via the workspace-local CLI shim
+# (tools/plnt-uniffi-bindgen). The upstream `uniffi_bindgen` crate is
+# library-only with no `[[bin]]`, and the `uniffi` crate's CLI feature
+# exposes `uniffi_bindgen_main()` but is brittle on some clap versions —
+# fall back to the committed bindings at app/app/src/main/kotlin/com/plnt/client/uniffi/...
+# which are the canonical artifact for this exact .udl + uniffi-version pair.
+BINDINGS_DIR="../app/app/src/main/kotlin/com/plnt/client"
+COMMITTED_BINDINGS="$BINDINGS_DIR/uniffi/plnt_core/plnt_core.kt"
+mkdir -p "$BINDINGS_DIR"
+set +e
+echo "build.sh: generating Kotlin bindings via workspace-local CLI shim"
+cargo run --manifest-path ../Cargo.toml --bin plnt-uniffi-bindgen -- generate \
+  --language kotlin \
+  --out-dir "$BINDINGS_DIR" \
+  src/plnt_core.udl 2>/dev/null
+BINDGEN_RC=$?
+set -e
+if [[ $BINDGEN_RC -ne 0 || ! -f "$COMMITTED_BINDINGS" ]]; then
+  echo "build.sh: bindgen CLI exited $BINDGEN_RC; using committed bindings at $COMMITTED_BINDINGS"
+  if [[ ! -f "$COMMITTED_BINDINGS" ]]; then
+    echo "build.sh: ERROR — no committed bindings fallback and CLI failed" >&2
+    exit 1
+  fi
 fi
-uniffi-bindgen generate src/plnt_core.udl --language kotlin --out-dir ../app/app/src/main/kotlin/com/plnt/client
 
 # Cross-compile. cargo-ndk handles the linker glue; --target is per-arch.
 for tgt in $RUST_TARGETS; do
