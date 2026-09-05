@@ -59,4 +59,7 @@ dependencies {
     // The generated file is written to src/main/kotlin/com/plnt/client/plnt by
     // `cargo run --bin uniffi-bindgen generate src/plnt_core.udl --language kotlin`
     // invoked from build.sh.
+    // UniFFI's generated bindings load the native lib via JNA; Android needs the
+    // @aar artifact (bundles the JNA native dispatch libs), not the plain jar.
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
 }
