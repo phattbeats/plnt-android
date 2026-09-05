@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Plnt" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- PHA-3076: dark, quiet, PLNT — no light theme. -->
+    <style name="Theme.Plnt" parent="android:Theme.Material.NoActionBar" />
 </resources>

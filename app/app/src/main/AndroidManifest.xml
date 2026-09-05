@@ -15,6 +15,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- For the persistent connection notification's talk-state/mute/disconnect
+         actions (PHA-3078); requested from MainActivity so the toggle is granted
+         before that notification ever needs to post. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -31,6 +35,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            PHA-3077: owns the AudioEngine + plnt-core Client for the
+            lifetime of a call. foregroundServiceType=microphone matches the
+            FOREGROUND_SERVICE_MICROPHONE permission above (required on
+            API 29+ to keep RECORD_AUDIO alive while backgrounded).
+        -->
+        <service
+            android:name=".service.VoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
     </application>
 
