@@ -1,0 +1,15 @@
+# cargo-ndk defaults so `cargo build --target aarch64-linux-android` works
+# without `cargo-ndk` itself (we still call `cargo-ndk` in build.sh to set
+# the right linker and flags).
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android26-clang"
+ar = "llvm-ar"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android26-clang"
+ar = "llvm-ar"
+
+[build]
+# Cargo-ndk injects these, but include them for completeness when not
+# going through cargo-ndk.
+target = ["aarch64-linux-android", "x86_64-linux-android"]

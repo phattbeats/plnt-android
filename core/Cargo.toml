@@ -1,0 +1,42 @@
+[package]
+name = "plnt-core"
+version = "0.1.0"
+edition = "2021"
+description = "PLNT Android voice core: tsclientlib + audiopus wrapped via UniFFI for the Kotlin/Compose app"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/phattbeats/plnt-android"
+publish = false
+
+[lib]
+# Produce a `cdylib` so the Kotlin app can dlopen() the resulting .so.
+crate-type = ["cdylib", "rlib"]
+
+# Force the C symbol prefix; some Android tools trip on Rust's default-mangled names.
+[package.metadata.capi]
+prefix = "plnt_"
+
+[dependencies]
+# tsclientlib pinned by exact commit so the build is reproducible.
+# ee3bc6f45a7137db7793ba5593a321df400d53e5 ("Fix pulling partial packets from AudioQueue")
+# Upstream: https://github.com/ReSpeak/tsclientlib
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5" }
+
+# audiopus (Rust Opus bindings). Same version family tsclientlib depends on.
+audiopus = "0.3.0-rc.0"
+
+# UniFFI for the Rust → Kotlin binding layer.
+uniffi = "0.27"
+uniffi_macros = "0.27"
+
+# Logging — used by the embedded crate so logs surface in logcat via Android's
+# native bridge (the app wraps `core_version()` with a Timber call).
+log = "0.4"
+
+# Build script — needed by UniFFI to generate the Kotlin scaffolding.
+[build-dependencies]
+uniffi = { version = "0.27", features = ["build"] }
+
+[features]
+# Default features: audiopus + default-tls, mirroring tsclientlib.
+default = ["audio"]
+audio = []
