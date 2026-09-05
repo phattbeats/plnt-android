@@ -52,6 +52,7 @@ plnt-android/
 │           └── res/values/themes.xml
 ├── .github/workflows/
 │   └── build.yml                     CI: ubuntu-24.04, builds via build.sh
+├── Makefile                          Quick local targets (verify, version, bindings, clean)
 ├── build.sh                          One-command build
 ├── Cargo.toml                         Workspace root (members: core, tools/*)
 └── README.md                         (this file)
