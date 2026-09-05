@@ -37,6 +37,8 @@ interface CoreClient {
     fun joinChannel(channelId: Long, password: String?)
     fun setInputMuted(muted: Boolean)
     fun setOutputMuted(muted: Boolean)
+    /** Encode+send one 20 ms / 960-sample / 48 kHz mono frame. See PHA-3077's AudioEngine — the only caller. */
+    fun sendPcmFrame(samples: FloatArray)
     fun close()
 }
 
@@ -47,11 +49,24 @@ object CoreBridge {
         "unavailable: ${e.javaClass.simpleName}: ${e.message}"
     }
 
-    /** Create a native client. `onEvent` is called from a Rust-owned thread — hop to Main before touching UI state. */
-    fun newClient(onEvent: (CoreEvent) -> Unit): CoreClient {
+    /**
+     * Create a native client. `onEvent` is called from a Rust-owned thread —
+     * hop to Main before touching UI state. `onPcmFrame` (also off-thread) is
+     * PHA-3077's AudioEngine hook — every other event goes through `onEvent`
+     * as a [CoreEvent]; raw PCM samples bypass that translation because the
+     * UI layer never needs them (see the note on [CoreEvent] above).
+     */
+    fun newClient(
+        onEvent: (CoreEvent) -> Unit,
+        onPcmFrame: (clientId: Long, samples: FloatArray) -> Unit = { _, _ -> },
+    ): CoreClient {
         val sink = object : uniffi.plnt_core.EventSink {
             override fun onEvent(ev: uniffi.plnt_core.ConnEvent) {
-                onEvent(translate(ev))
+                if (ev is uniffi.plnt_core.ConnEvent.PcmFrame) {
+                    onPcmFrame(ev.clientId.toLong(), ev.samples.toFloatArray())
+                } else {
+                    onEvent(translate(ev))
+                }
             }
         }
         val native = uniffi.plnt_core.Client(sink)
@@ -64,6 +79,7 @@ object CoreBridge {
                 native.joinChannel(channelId.toULong(), password)
             override fun setInputMuted(muted: Boolean) = native.setInputMuted(muted)
             override fun setOutputMuted(muted: Boolean) = native.setOutputMuted(muted)
+            override fun sendPcmFrame(samples: FloatArray) = native.sendPcmFrame(samples.toList())
             override fun close() = native.destroy()
         }
     }
@@ -95,7 +111,11 @@ object CoreBridge {
             CoreEvent.ClientMoved(ev.clientId.toLong(), ev.channelId.toLong())
         is uniffi.plnt_core.ConnEvent.TalkStatus ->
             CoreEvent.TalkStatus(ev.clientId.toLong(), ev.talking)
-        is uniffi.plnt_core.ConnEvent.PcmFrame -> CoreEvent.TalkStatus(ev.clientId.toLong(), true)
+        // Filtered out in newClient()'s sink before translate() is ever called
+        // with one — routed to `onPcmFrame` instead. Kept here only so this
+        // `when` stays exhaustive over the sealed ConnEvent.
+        is uniffi.plnt_core.ConnEvent.PcmFrame ->
+            error("PcmFrame must be intercepted before translate() — see CoreBridge.newClient")
         is uniffi.plnt_core.ConnEvent.Error -> CoreEvent.Error(ev.v1)
     }
 }

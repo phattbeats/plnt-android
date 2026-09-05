@@ -19,6 +19,8 @@ TS6-only features.
 |---|---|
 | PHA-3073 voice spike (Rust core → TS6 server, 4 s of 440 Hz) | **PASS** — spike write-up + voicespike harness: <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download> |
 | PHA-3074 toolchain (this repo) | **SCAFFOLD COMPLETE + CI WIRED** — Cargo workspace + `plnt-core` (verified `cargo build`/`cargo test` clean host-side) + UniFFI bindings (generated, committed at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`) + Gradle/Compose app + `build.sh` + `.github/workflows/build.yml` (CI runs on Ubuntu 24.04). Live APK build needs a CI runner with Rust + JDK 17 + Android SDK 34 + NDK 27 — wired in the workflow. |
+| PHA-3075 voice client core | `Client`/`EventSink`/`ConnEvent`/`IdentityObj` over tsclientlib, 20 ms PCM frame API (`sendPcmFrame`/`PcmFrame`) — see `core/src/lib.rs`. |
+| PHA-3077 Android audio engine | **CODE WRITTEN, UNVERIFIED** — `AudioEngine` (VOICE_COMMUNICATION capture/playback, AEC/NS, Bluetooth SCO routing, `AudioDeviceCallback` rehoming, PTT gates send not capture) + `VoiceService` (foreground service owning it). See `AUDIO_ENGINE.md` for exactly what's verified vs. blocked on a real toolchain, and `MANUAL_TEST_CHECKLIST.md` for the device round. |
 
 ## Layout
 
