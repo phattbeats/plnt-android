@@ -22,6 +22,9 @@ TSCLIENTLIB_PIN="${TSCLIENTLIB_PIN:-ee3bc6f45a7137db7793ba5593a321df400d53e5}"
 # to the most common Linux locations.
 ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}"
 JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"
+# Google's cmdline-tools zip is keyed by an opaque build id, not the platform
+# name — see https://developer.android.com/studio#command-line-tools-only.
+CMDLINE_TOOLS_BUILD="${CMDLINE_TOOLS_BUILD:-11076708}"
 
 # ---- sanity checks ----------------------------------------------------------
 need() { command -v "$1" >/dev/null || { echo "build.sh: missing dependency: $1" >&2; exit 1; }; }
@@ -65,7 +68,7 @@ if [[ ! -d "$ANDROID_HOME/cmdline-tools" ]]; then
     mkdir -p "$ANDROID_HOME"
   fi
   pushd "$ANDROID_HOME" >/dev/null
-  curl -sSLo cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_PLATFORM}_latest.zip"
+  curl -sSLo cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_BUILD}_latest.zip"
   unzip -q cmdline-tools.zip
   mkdir -p cmdline-tools/latest
   mv cmdline-tools/bin cmdline-tools/lib cmdline-tools/NOTICE.txt cmdline-tools/source.properties cmdline-tools/latest/ 2>/dev/null || true
