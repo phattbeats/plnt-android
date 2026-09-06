@@ -55,7 +55,7 @@ in `ui/SettingsScreen.kt`, under **Settings → About** — reach it from the
 bookmarks screen's gear icon, or directly:
 
 ```bash
-adb -s emulator-5554 shell input tap 1000 140   # gear icon, 1080x2400 emulator
+adb -s emulator-5554 shell input tap 880 216    # gear icon, 1080x2400 emulator
 ```
 
 On a real x86_64 emulator, this prints (verified host-side) as:
