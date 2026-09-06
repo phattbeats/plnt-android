@@ -45,6 +45,10 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Identity export writes `<counter>V<base64(key.to_short())>`; same version
+# tsproto already pulls in, so this adds no new package to the lock file.
+base64 = "0.22"
+
 # Build script — needed by UniFFI to generate the Kotlin scaffolding.
 [build-dependencies]
 uniffi = { version = "0.27", features = ["build"] }

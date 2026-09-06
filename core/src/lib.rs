@@ -22,6 +22,8 @@ use std::sync::{Arc, Mutex};
 
 use audiopus::coder::Encoder;
 use audiopus::{Application, Channels, SampleRate};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use futures::prelude::*;
 use tsclientlib::audio::AudioHandler;
 use tsclientlib::messages::c2s::{OutClientMoveMessage, OutClientMovePart};
@@ -150,8 +152,7 @@ impl Client {
         identity_pem: String,
         password: Option<String>,
     ) -> Result<(), PlntError> {
-        let id = Identity::new_from_str(&identity_pem)
-            .map_err(|e| PlntError::Identity(format!("{e:?}")))?;
+        let id = parse_identity(&identity_pem)?;
 
         let address_str = format!("{address}:{port}");
         let mut opts = Connection::build(address_str)
@@ -327,20 +328,23 @@ impl IdentityObj {
     /// Import a previously exported identity.
     #[uniffi::constructor]
     pub fn import(s: String) -> Result<Arc<Self>, PlntError> {
-        let inner = Identity::new_from_str(&s)
-            .map_err(|e| PlntError::Identity(format!("{e:?}")))?;
-        Ok(Arc::new(Self { inner }))
+        Ok(Arc::new(Self { inner: parse_identity(&s)? }))
     }
 
-    /// Export as a portable string. Round-trips through `import`. We use the
-    /// standard TS3 identity format `"<counter>V<base64-key>"` — see tsproto
-    /// `Identity::new_from_str` which accepts both `N_V` prefixed and raw
-    /// base64 forms.
+    /// Export as a portable string. Round-trips through [`parse_identity`] —
+    /// and therefore through `import` and `Client::connect`, which both use it.
+    ///
+    /// The format is the standard TS3 identity string `"<counter>V<base64-key>"`,
+    /// the same shape the official client persists, so the counter (and with it
+    /// the hash-cash level) survives the round trip. The key half is
+    /// `base64(key.to_short())`, which is what tsproto's own `Serialize` impl
+    /// writes and what `EccKeyPrivP256::import_str` reads back.
     pub fn export(&self) -> String {
-        // Identity is `Serialize`; encode as JSON for portability. tsproto's
-        // `new_from_str` also accepts the raw base64 form, but the JSON form
-        // round-trips the counter so the level is preserved.
-        serde_json::to_string(&self.inner).unwrap_or_default()
+        format!(
+            "{}V{}",
+            self.inner.counter(),
+            BASE64_STANDARD.encode(self.inner.key().to_short()),
+        )
     }
 
     /// Current security level (8 by default).
@@ -352,6 +356,30 @@ impl IdentityObj {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Parse an identity string. The one parser behind both
+/// [`IdentityObj::import`] and [`Client::connect`] — they used to differ, and a
+/// value [`IdentityObj::export`] produced was not accepted by either (PHA-3238).
+///
+/// Accepts, in order:
+/// - the TS3 identity string `"<counter>V<base64-key>"` that `export()` writes,
+///   and bare base64/tomcrypt keys — both via tsproto's `new_from_str`;
+/// - the JSON object `{"key":…,"counter":…,"max_counter":…}` that `export()`
+///   wrote before this fix, so an identity already persisted by an installed
+///   build keeps working (and re-exports in the new form on next save).
+fn parse_identity(s: &str) -> Result<Identity, PlntError> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(PlntError::Identity(
+            "identity is empty — create or import one before connecting".into(),
+        ));
+    }
+    if s.starts_with('{') {
+        return serde_json::from_str::<Identity>(s)
+            .map_err(|e| PlntError::Identity(format!("malformed identity JSON: {e}")));
+    }
+    Identity::new_from_str(s).map_err(|e| PlntError::Identity(format!("{e:?}")))
+}
 
 /// Snapshot the channel tree into a `HashMap<id, Channel>`. ts-bookkeeping's
 /// `Connection` book view is the source of truth — we project the minimal
