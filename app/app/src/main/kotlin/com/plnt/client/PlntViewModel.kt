@@ -18,6 +18,7 @@ import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientPresence
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
+import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Screen
 import com.plnt.client.service.VoiceService
@@ -98,6 +99,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             runOnService {
                 it.setPttMode(settings.pttMode)
                 it.setHeadsetTriggerArmed(settings.pttOnHeadsetButton)
+                it.setPreferredInputRoute(settings.preferredInputRoute)
             }
         }
     }
@@ -199,6 +201,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.setHeadsetTriggerArmed(enabled) }
     }
 
+    fun setPreferredInputRoute(route: InputRoute) {
+        _state.update { it.copy(settings = it.settings.copy(preferredInputRoute = route)) }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+        runOnService { it.setPreferredInputRoute(route) }
+    }
+
     fun importIdentity(pem: String): Boolean {
         if (!identityStore.import(pem)) return false
         _state.update { it.copy(identityExport = pem) }
@@ -212,6 +220,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 inputMuted = st.inputMuted,
                 outputDeafened = st.outputMuted,
                 transmitting = st.transmitting,
+                settings = it.settings.copy(preferredInputRoute = st.preferredInputRoute),
+                availableInputRoutes = st.availableInputRoutes,
             )
         }
         // Own row's MIC/SND tags and talk ring come out of the same state.
