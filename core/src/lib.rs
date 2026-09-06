@@ -34,6 +34,13 @@ mod udl_types;
 
 pub use udl_types::{Channel, ConnEvent, ConnectionState};
 
+/// Build version string, surfaced to the Kotlin side for the settings screen
+/// and bug reports.
+#[uniffi::export]
+pub fn core_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------

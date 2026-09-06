@@ -31,6 +31,9 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        // TopAppBar and friends are still @ExperimentalMaterial3Api in the
+        // Material3 version this project pins.
+        freeCompilerArgs += "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
     }
     buildFeatures {
         compose = true

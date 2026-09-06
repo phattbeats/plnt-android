@@ -57,8 +57,8 @@ object CoreBridge {
      * UI layer never needs them (see the note on [CoreEvent] above).
      */
     fun newClient(
-        onEvent: (CoreEvent) -> Unit,
         onPcmFrame: (clientId: Long, samples: FloatArray) -> Unit = { _, _ -> },
+        onEvent: (CoreEvent) -> Unit,
     ): CoreClient {
         val sink = object : uniffi.plnt_core.EventSink {
             override fun onEvent(ev: uniffi.plnt_core.ConnEvent) {
