@@ -1,0 +1,25 @@
+# UniFFI codegen config for plnt-core.
+#
+# `cdylib_name` is the single string that decides which file JNA dlopen()s at
+# runtime: the generated Kotlin `findLibraryName()` returns it verbatim, and JNA
+# turns it into `lib<cdylib_name>.so`. It must therefore equal the stem of the
+# cdylib we actually ship in `app/app/src/main/jniLibs/<abi>/`, which cargo
+# names after `[lib] name` in core/Cargo.toml -> `libplnt_core.so`.
+#
+# Pin it, because uniffi 0.27 infers it differently depending on how bindgen is
+# invoked and the two answers disagree:
+#
+#   * library mode (`--library .../libplnt_core.so`, what build.sh does today)
+#     derives it from the file stem            -> "plnt_core"   (correct)
+#   * UDL mode (`generate src/plnt_core.udl`, what the Makefile target and
+#     build.sh before PHA-3079 do) falls back to `uniffi_{namespace}`
+#                                              -> "uniffi_plnt_core" (wrong)
+#
+# That second path is PHA-3235: CI regenerated the bindings in UDL mode, the
+# APK shipped `libplnt_core.so`, and the app died at launch with
+# `UnsatisfiedLinkError: dlopen failed: library "libuniffi_plnt_core.so" not
+# found`. An explicit value wins over both inferences (`update_from_cdylib_name`
+# and `update_from_ci` both `get_or_insert`), so the two modes now agree and the
+# committed bindings are reproducible no matter which one runs.
+[bindings.kotlin]
+cdylib_name = "plnt_core"

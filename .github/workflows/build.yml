@@ -125,6 +125,30 @@ jobs:
           ls -la app/app/src/main/jniLibs/arm64-v8a/libplnt_core.so
           ls -la app/app/src/main/jniLibs/x86_64/libplnt_core.so
 
+      - name: "Smoke: regenerated bindings are a no-op diff"
+        # build.sh regenerates plnt_core.kt in place over the committed copy.
+        # When the two disagree CI ships bindings nobody reviewed while the repo
+        # shows something else — that is how PHA-3235 shipped an APK whose
+        # Kotlin dlopen'd a library the APK did not contain. Fail on drift so
+        # regenerated output has to be committed.
+        run: git diff --exit-code -- app/app/src/main/kotlin/com/plnt/client/uniffi/
+
+      - name: "Smoke: APK ships the library the bindings load"
+        # The check the steps above miss: they assert the .so exists under its
+        # expected name, never that the generated bindings ask for that same
+        # name. Read the name back out of the Kotlin instead of hardcoding it.
+        run: |
+          set -euo pipefail
+          APK=app/app/build/outputs/apk/debug/app-debug.apk
+          LIB=$(awk '/^private fun findLibraryName/,/^}/' \
+              app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt \
+            | sed -n 's/.*return "\([^"]*\)".*/\1/p' | tail -n1)
+          echo "bindings dlopen: lib${LIB}.so"
+          for abi in arm64-v8a x86_64; do
+            unzip -l "$APK" | grep -qE " lib/${abi}/lib${LIB}\.so$" \
+              || { echo "APK is missing lib/${abi}/lib${LIB}.so" >&2; exit 1; }
+          done
+
       - name: Upload APK as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
