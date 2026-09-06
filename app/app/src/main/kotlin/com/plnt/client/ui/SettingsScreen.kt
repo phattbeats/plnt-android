@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.plnt.client.core.CoreBridge
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
 import com.plnt.client.ui.theme.Bg
@@ -126,6 +127,17 @@ fun SettingsScreen(
                     "push-to-talk / open mic, mute/deafen. No chat, no streams, no file transfer.",
                 style = MaterialTheme.typography.bodySmall,
                 color = BoneMuted,
+            )
+            // PHA-3074's acceptance criterion is that core_version() renders on screen: it is
+            // the one place the UI shows a string that only the Rust core can produce, so a
+            // broken JNI/UniFFI link is visible without a debugger. CoreBridge.coreVersion()
+            // catches its own failures and returns "unavailable: ...", so this never crashes
+            // Settings. remember{} keeps it to one FFI call per composition, not per frame.
+            Text(
+                remember { CoreBridge.coreVersion() },
+                style = MaterialTheme.typography.labelSmall,
+                color = BoneFaint,
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
     }

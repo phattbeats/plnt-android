@@ -132,8 +132,10 @@ adb shell am start -n com.plnt.client/.MainActivity
 adb logcat -d | grep -E 'plnt|plnt_core' | tail -20
 ```
 
-You should see "PLNT" and `core_version()` rendered on the device
-screen, plus a logcat line containing `plnt-core 0.1.0 (tsclientlib@ee3bc6f …)`.
+You should see the "PLNT" bookmarks screen. Tap the gear icon → **Settings →
+About**: the last line there is `core_version()`, rendered straight from the
+Rust core, e.g. `plnt-core 0.1.0 (tsclientlib@ee3bc6f …)`. If the native
+library failed to load it reads `unavailable: <exception>` instead.
 
 ## Architecture decisions (locked from the spike)
 

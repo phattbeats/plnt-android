@@ -50,7 +50,14 @@ adb -s emulator-5554 logcat -d | grep -E 'plnt|core_version' | head -50
 adb -s emulator-5554 exec-out screencap -p > screenshot.png
 ```
 
-The Compose UI calls `uniffi.plnt_core.coreVersion()` in `MainActivity.kt`.
+The Compose UI calls `CoreBridge.coreVersion()` (→ `uniffi.plnt_core.coreVersion()`)
+in `ui/SettingsScreen.kt`, under **Settings → About** — reach it from the
+bookmarks screen's gear icon, or directly:
+
+```bash
+adb -s emulator-5554 shell input tap 1000 140   # gear icon, 1080x2400 emulator
+```
+
 On a real x86_64 emulator, this prints (verified host-side) as:
 
 ```
