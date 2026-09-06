@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
@@ -15,6 +16,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
@@ -25,6 +27,7 @@ import com.plnt.client.audio.CORE_FRAME_SAMPLES
 import com.plnt.client.core.CoreBridge
 import com.plnt.client.core.CoreClient
 import com.plnt.client.core.CoreEvent
+import com.plnt.client.core.DisconnectCause
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
@@ -37,6 +40,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val TAG = "plnt.voice"
+// Separate tag so a repro capture can be filtered down to just the service's
+// lifecycle callbacks (PHA-3283) without the rest of the voice-path chatter.
+private const val LIFECYCLE_TAG = "plnt.lifecycle"
 // Bumped from "plnt-voice": that channel was created IMPORTANCE_LOW, which
 // makes the notification "Silent", and Android keeps silent notifications off
 // the lock screen entirely — so the Talk action the design requires from the
@@ -95,7 +101,16 @@ class VoiceService : Service() {
 
     private data class ConnectionParams(val bookmark: Bookmark, val identityPem: String)
     private var connectionParams: ConnectionParams? = null
-    private var userInitiatedDisconnect = false
+
+    /**
+     * Why the connection was torn down, or null while one is live or
+     * reconnecting. Replaces the old `userInitiatedDisconnect` boolean, which
+     * [onDestroy] also set — so an OS-initiated service kill reached the UI
+     * labelled as a user disconnect and diagnosis had nothing to go on
+     * (PHA-3283). Set in exactly one place, [shutdown], by the caller that
+     * actually knows the cause.
+     */
+    private var disconnectCause: DisconnectCause? = null
     private var hasConnectedOnce = false
     private var reconnecting = false
     private var reconnectAttempts = 0
@@ -104,6 +119,9 @@ class VoiceService : Service() {
 
     private var ownClientId: Long? = null
     private var lastChannelId: Long? = null
+
+    /** `SystemClock.elapsedRealtime()` of the last successful connect, for [logLifecycle]. */
+    private var connectedAtElapsedMs: Long? = null
 
     private var pttMode: PttMode = PttMode.PUSH_TO_TALK
     private var headsetTriggerArmed = false
@@ -143,6 +161,7 @@ class VoiceService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        logLifecycle("onCreate", "")
         createNotificationChannel()
         mediaSession = MediaSessionCompat(this, "PlntVoice").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -168,6 +187,15 @@ class VoiceService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground()
+        if (intent == null) {
+            // START_STICKY handed us a null Intent, which only happens when
+            // Android killed this service and restarted it. `connectionParams`
+            // died with the old instance, so there is nothing here to reconnect
+            // to — the user is simply left disconnected (PHA-3283 item 3).
+            logLifecycle("onStartCommand", "null intent — START_STICKY restart after a kill, flags=$flags")
+        } else {
+            logLifecycle("onStartCommand", "action=${intent.action} flags=$flags")
+        }
         when (intent?.action) {
             ACTION_TOGGLE_MUTE -> setInputMuted(!inputMuted)
             ACTION_TOGGLE_TALK -> setPushToTalk(!transmitting)
@@ -178,7 +206,7 @@ class VoiceService : Service() {
 
     /** Connect (or reconnect) using a bookmark + identity. `onEvent` observes app-level events. */
     fun connect(bookmark: Bookmark, identityPem: String) {
-        userInitiatedDisconnect = false
+        disconnectCause = null
         hasConnectedOnce = false
         reconnecting = false
         reconnectAttempts = 0
@@ -266,28 +294,117 @@ class VoiceService : Service() {
         engine.setSending(!inputMuted && transmitting)
     }
 
+    /**
+     * The user hung up — the notification's Disconnect action or the in-app
+     * button, and nothing else. [onDestroy] deliberately does not route
+     * through here; see the note there.
+     */
     fun disconnect() {
-        userInitiatedDisconnect = true
+        shutdown(DisconnectCause.USER, "disconnected by user")
+    }
+
+    /**
+     * The single teardown path. Every caller supplies the cause it actually
+     * knows, which is the whole point of PHA-3283: before this, [onDestroy]
+     * and a Disconnect tap both went through one `disconnect()` that stamped
+     * `userInitiatedDisconnect = true`, so an OS kill and a user hang-up were
+     * indistinguishable by the time they reached the UI.
+     *
+     * `notify = false` is for teardowns nobody is waiting to hear about (the
+     * service being stopped while idle), so the UI does not get a spurious
+     * "disconnected" for a connection that never existed.
+     */
+    private fun shutdown(cause: DisconnectCause, reason: String, notify: Boolean = true) {
+        Log.i(TAG, "shutdown: cause=$cause reason=$reason")
+        disconnectCause = cause
         reconnectJob?.cancel()
         reconnecting = false
         connectionParams = null
         hasConnectedOnce = false
         lastChannelId = null
         ownClientId = null
+        connectedAtElapsedMs = null
         teardownClientOnly()
         releaseWakeLock()
         mediaSession.isActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         transmitting = false
         emitState()
+        if (notify) eventListener?.invoke(CoreEvent.Disconnected(cause, reason))
     }
 
     override fun onDestroy() {
+        // Not `disconnect()`. onDestroy() fires whenever Android reclaims the
+        // service — low memory, an OEM background/battery policy, doze or a
+        // standby bucket restriction — none of which the user did. Routing it
+        // through the user path is what made the PHA-3238 drop surface as a
+        // bare "client.disconnect" with no hint it was not the user's own
+        // doing (PHA-3283).
+        val wasConnected = connectionParams != null || client != null
+        logLifecycle("onDestroy", "wasConnected=$wasConnected")
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
-        reconnectJob?.cancel()
-        disconnect()
+        shutdown(
+            DisconnectCause.SYSTEM_KILL,
+            "Android stopped the voice service",
+            notify = wasConnected,
+        )
         mediaSession.release()
         super.onDestroy()
+    }
+
+    // ---- lifecycle instrumentation (PHA-3283 item 1) ----------------------
+
+    /**
+     * The service was killed because its task was swiped out of Recents. A
+     * distinct cause from an OS reclaim, and the only one of these the user
+     * did on purpose — worth telling apart in a repro log.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        logLifecycle("onTaskRemoved", "task swiped from Recents")
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        logLifecycle("onTrimMemory", "level=$level (${trimLevelName(level)})")
+        super.onTrimMemory(level)
+    }
+
+    override fun onLowMemory() {
+        logLifecycle("onLowMemory", "")
+        super.onLowMemory()
+    }
+
+    /**
+     * One greppable line per service lifecycle callback, stamped with
+     * time-since-connect. PHA-3283 item 1 asks for the service kill to be
+     * *confirmed* rather than inferred; this is that evidence:
+     *
+     * ```
+     * adb logcat -b system -b main | grep -E 'plnt\.lifecycle|ActivityManager: Killing|lowmemorykiller'
+     * ```
+     *
+     * lines up the app's own view of the teardown with the system's reason for
+     * it, and `t+<n>s` answers "after how long idle" directly.
+     *
+     * Deliberately not debug-only and deliberately `Log.w` (survives release
+     * log levels): the drop being chased only reproduces on a real device over
+     * tens of minutes, so it has to be visible in whatever build the reporter
+     * happens to be running.
+     */
+    private fun logLifecycle(callback: String, detail: String) {
+        val since = connectedAtElapsedMs?.let { "t+${(SystemClock.elapsedRealtime() - it) / 1000}s" } ?: "t+-"
+        Log.w(LIFECYCLE_TAG, "$callback $since connected=${client != null} reconnecting=$reconnecting $detail")
+    }
+
+    private fun trimLevelName(level: Int): String = when (level) {
+        ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> "COMPLETE — next process to be killed"
+        ComponentCallbacks2.TRIM_MEMORY_MODERATE -> "MODERATE"
+        ComponentCallbacks2.TRIM_MEMORY_BACKGROUND -> "BACKGROUND"
+        ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> "UI_HIDDEN"
+        ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> "RUNNING_CRITICAL"
+        ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> "RUNNING_LOW"
+        ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE -> "RUNNING_MODERATE"
+        else -> "unknown"
     }
 
     // ---- connection lifecycle ----------------------------------------
@@ -346,9 +463,7 @@ class VoiceService : Service() {
                     if (hasConnectedOnce) {
                         scheduleReconnect(reconnectBackoffMs)
                     } else {
-                        connectionParams = null
-                        eventListener?.invoke(CoreEvent.Disconnected(t.message ?: t.javaClass.simpleName))
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        shutdown(DisconnectCause.ERROR, t.message ?: t.javaClass.simpleName)
                     }
                 }
             }
@@ -360,6 +475,7 @@ class VoiceService : Service() {
             is CoreEvent.Connected -> {
                 ownClientId = ev.ownClientId
                 hasConnectedOnce = true
+                connectedAtElapsedMs = SystemClock.elapsedRealtime()
                 reconnecting = false
                 reconnectAttempts = 0
                 reconnectBackoffMs = INITIAL_BACKOFF_MS
@@ -380,35 +496,38 @@ class VoiceService : Service() {
                 eventListener?.invoke(ev)
             }
             is CoreEvent.Disconnected -> {
-                if (hasConnectedOnce && connectionParams != null && !userInitiatedDisconnect) {
+                // APP_REQUESTED means our own shutdown()/teardownClientOnly()
+                // asked the core to stop, so the service already knows the real
+                // cause and has acted on it — only an unrequested drop is news.
+                // This used to be inferred from `userInitiatedDisconnect`, which
+                // missed the reconnect case: doConnect() tears the *old* client
+                // down first, and that echo arriving after the new attempt had
+                // started re-armed the backoff a second time.
+                if (ev.cause == DisconnectCause.APP_REQUESTED) return
+                // A drop that raced a teardown we have already reported.
+                if (disconnectCause != null) return
+                if (hasConnectedOnce && connectionParams != null) {
                     scheduleReconnect(reconnectBackoffMs)
-                } else if (!userInitiatedDisconnect) {
-                    // First-connect failure delivered async instead of thrown from
-                    // doConnect() — clean up the same way disconnect() would.
-                    teardownClientOnly()
-                    releaseWakeLock()
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    eventListener?.invoke(ev)
+                } else {
+                    // First-connect failure delivered async instead of thrown
+                    // from doConnect() — clean up the same way, but do not call
+                    // it a user disconnect.
+                    shutdown(ev.cause, ev.reason)
                 }
-                // else: a stray event from a client that disconnect() already tore
-                // down — swallow it so it can't stomp on a since-started new connect.
             }
             else -> eventListener?.invoke(ev)
         }
     }
 
     private fun scheduleReconnect(delayMs: Long) {
-        if (connectionParams == null || userInitiatedDisconnect) return
+        if (connectionParams == null || disconnectCause != null) return
         reconnectAttempts += 1
         if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
             Log.w(TAG, "giving up after $reconnectAttempts reconnect attempts")
-            connectionParams = null
-            reconnecting = false
-            teardownClientOnly()
-            releaseWakeLock()
-            mediaSession.isActive = false
-            eventListener?.invoke(CoreEvent.Disconnected("reconnect failed after $MAX_RECONNECT_ATTEMPTS attempts"))
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            shutdown(
+                DisconnectCause.RECONNECT_FAILED,
+                "reconnect failed after $MAX_RECONNECT_ATTEMPTS attempts",
+            )
             return
         }
         reconnecting = true

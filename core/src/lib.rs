@@ -34,7 +34,7 @@ use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
 
 mod udl_types;
 
-pub use udl_types::{Channel, ClientInfo, ConnEvent, ConnectionState};
+pub use udl_types::{Channel, ClientInfo, ConnEvent, ConnectionState, DisconnectCause};
 
 /// Build version string, surfaced to the Kotlin side for the settings screen
 /// and bug reports.
@@ -665,13 +665,18 @@ async fn run_connection_loop(
     }
 
     let _ = con.disconnect(DisconnectOptions::new());
-    sink.on_event(ConnEvent::Disconnected {
-        reason: if stream_ended {
-            "connection lost".into()
-        } else {
-            "client.disconnect".into()
-        },
-    });
+    // The cause is the load-bearing half here; the reason string is only for
+    // logs and bug reports. `Requested` says the loop exited because the app
+    // called `Client::disconnect()` — it does NOT say the *user* did, which is
+    // the conflation PHA-3283 is about. Only the Android service layer knows
+    // whether that request came from a Disconnect tap or from `onDestroy()`
+    // after Android reclaimed the service.
+    let (cause, reason) = if stream_ended {
+        (DisconnectCause::ConnectionLost, "connection lost")
+    } else {
+        (DisconnectCause::Requested, "client.disconnect")
+    };
+    sink.on_event(ConnEvent::Disconnected { cause, reason: reason.into() });
     let mut guard = shared_state.lock().unwrap();
     guard.connection = None;
 }

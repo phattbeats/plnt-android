@@ -2074,17 +2074,47 @@ public object FfiConverterTypeConnectionState: FfiConverterRustBuffer<Connection
 
 
 /**
+ * Why a connection ended, as far as the core can tell the cases apart.
+ */
+enum class DisconnectCause {
+
+    REQUESTED,
+    CONNECTION_LOST;
+    companion object
+}
+
+
+public object FfiConverterTypeDisconnectCause: FfiConverterRustBuffer<DisconnectCause> {
+    override fun read(buf: ByteBuffer) = try {
+        DisconnectCause.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: DisconnectCause) = 4UL
+
+    override fun write(value: DisconnectCause, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
  * All events the core emits to the sink. Flat enum over the variants the issue
  * specifies.
  */
 sealed class ConnEvent {
-    
+
     data class Connected(
         val v1: ConnectionState) : ConnEvent() {
         companion object
     }
-    
+
     data class Disconnected(
+        val `cause`: DisconnectCause,
         val `reason`: kotlin.String) : ConnEvent() {
         companion object
     }
@@ -2141,6 +2171,7 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 FfiConverterTypeConnectionState.read(buf),
                 )
             2 -> ConnEvent.Disconnected(
+                FfiConverterTypeDisconnectCause.read(buf),
                 FfiConverterString.read(buf),
                 )
             3 -> ConnEvent.ChannelTree(
@@ -2180,6 +2211,7 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
                 4UL
+                + FfiConverterTypeDisconnectCause.allocationSize(value.`cause`)
                 + FfiConverterString.allocationSize(value.`reason`)
             )
         }
@@ -2239,6 +2271,7 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             }
             is ConnEvent.Disconnected -> {
                 buf.putInt(2)
+                FfiConverterTypeDisconnectCause.write(value.`cause`, buf)
                 FfiConverterString.write(value.`reason`, buf)
                 Unit
             }

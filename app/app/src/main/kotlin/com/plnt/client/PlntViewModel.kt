@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.plnt.client.core.CoreEvent
+import com.plnt.client.core.DisconnectCause
 import com.plnt.client.data.IdentityStore
 import com.plnt.client.data.PlntDataStore
 import com.plnt.client.model.AppState
@@ -219,6 +220,26 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(identityExport = pem) }
     }
 
+    /**
+     * What to show after a disconnect, or null when there is nothing to
+     * explain. PHA-3283: every disconnect used to render the core's raw reason
+     * string, so a user who hung up saw "client.disconnect" as an error and —
+     * worse — so did a user whose service Android had just killed, with no way
+     * to tell the two apart. The cause carries that now.
+     */
+    private fun disconnectMessage(ev: CoreEvent.Disconnected): String? = when (ev.cause) {
+        // The user knows; saying so would render as an error banner.
+        DisconnectCause.USER -> null
+        DisconnectCause.SYSTEM_KILL ->
+            "Android stopped PLNT in the background, ending the call. " +
+                "Exempting PLNT from battery optimisation usually prevents this."
+        DisconnectCause.CONNECTION_LOST -> "Connection lost: ${ev.reason}"
+        DisconnectCause.RECONNECT_FAILED -> "Could not reconnect: ${ev.reason}"
+        DisconnectCause.ERROR -> ev.reason
+        // VoiceService replaces this with the real cause before it gets here.
+        DisconnectCause.APP_REQUESTED -> null
+    }
+
     /** Service is the source of truth for mic/output/transmit — mirror it verbatim. */
     private fun onVoiceState(st: VoiceState) {
         _state.update {
@@ -254,7 +275,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(phase = ConnectionPhase.RECONNECTING, lastError = null)
             }
             is CoreEvent.Disconnected -> _state.update {
-                it.copy(phase = ConnectionPhase.DISCONNECTED, lastError = ev.reason, screen = Screen.Bookmarks)
+                it.copy(
+                    phase = ConnectionPhase.DISCONNECTED,
+                    lastError = disconnectMessage(ev),
+                    screen = Screen.Bookmarks,
+                )
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.ChannelTree -> {

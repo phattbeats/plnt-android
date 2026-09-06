@@ -12,9 +12,47 @@ package com.plnt.client.core
  * every direct reference to a generated symbol lives in this one file. If a
  * real build fails here, this is the only file that needs adjusting.
  */
+/**
+ * Why a connection ended, at app level. Superset of plnt-core's own
+ * `DisconnectCause`: the core can only tell "this app asked" apart from "the
+ * transport went away", so every other cause is supplied by
+ * [com.plnt.client.service.VoiceService] — the only thing that knows whether a
+ * teardown it initiated was a user action or Android reclaiming the service
+ * (PHA-3283).
+ */
+enum class DisconnectCause {
+    /** Explicit user action: the notification's Disconnect action, or the in-app button. */
+    USER,
+
+    /**
+     * Android destroyed the foreground service out from under us — low memory,
+     * an OEM background/battery policy, doze/standby restrictions. The user did
+     * not hang up; before PHA-3283 this arrived wearing [USER]'s clothes.
+     */
+    SYSTEM_KILL,
+
+    /** The server or the transport dropped us and reconnect was not applicable. */
+    CONNECTION_LOST,
+
+    /** Automatic reconnect ran out of attempts. */
+    RECONNECT_FAILED,
+
+    /** The connect attempt itself failed (bad address, rejected identity, …). */
+    ERROR,
+
+    /**
+     * plnt-core exited because *this app* asked it to. Which part of the app,
+     * and why, is only knowable one layer up: VoiceService replaces this with
+     * the real cause before anything reaches the UI, and swallows the event
+     * outright when it is merely the echo of a teardown it already handled.
+     * Nothing downstream should ever render it.
+     */
+    APP_REQUESTED,
+}
+
 sealed class CoreEvent {
     data class Connected(val ownClientId: Long, val serverName: String) : CoreEvent()
-    data class Disconnected(val reason: String) : CoreEvent()
+    data class Disconnected(val cause: DisconnectCause, val reason: String) : CoreEvent()
     data class ChannelTree(val channels: List<CoreChannel>) : CoreEvent()
     /** Whole-roster snapshot, not a delta — replaces whatever the app had. */
     data class ClientList(val clients: List<CoreClientInfo>) : CoreEvent()
@@ -116,7 +154,13 @@ object CoreBridge {
     private fun translate(ev: uniffi.plnt_core.ConnEvent): CoreEvent = when (ev) {
         is uniffi.plnt_core.ConnEvent.Connected ->
             CoreEvent.Connected(ev.v1.ownClientId.toLong(), ev.v1.serverName)
-        is uniffi.plnt_core.ConnEvent.Disconnected -> CoreEvent.Disconnected(ev.reason)
+        is uniffi.plnt_core.ConnEvent.Disconnected -> CoreEvent.Disconnected(
+            when (ev.cause) {
+                uniffi.plnt_core.DisconnectCause.REQUESTED -> DisconnectCause.APP_REQUESTED
+                uniffi.plnt_core.DisconnectCause.CONNECTION_LOST -> DisconnectCause.CONNECTION_LOST
+            },
+            ev.reason,
+        )
         is uniffi.plnt_core.ConnEvent.ChannelTree -> CoreEvent.ChannelTree(
             ev.v1.map {
                 CoreChannel(

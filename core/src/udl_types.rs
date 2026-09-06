@@ -41,12 +41,32 @@ pub struct ClientInfo {
     pub away: bool,
 }
 
+/// Why a connection ended, as far as the core can tell the cases apart.
+///
+/// PHA-3283: `Disconnected` used to carry only a reason string, and the
+/// app-requested exit hardcoded `"client.disconnect"`. Downstream that was
+/// indistinguishable from the user hanging up, which is what blocked diagnosis
+/// of the PHA-3238 drop. The core deliberately does not model *why the app
+/// asked* — it cannot know — so the Android layer widens this into its own
+/// `DisconnectCause` (see `CoreBridge.kt`) with the causes only it can see,
+/// such as Android reclaiming the foreground service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
+pub enum DisconnectCause {
+    /// [`crate::Client::disconnect`] was called: the connection loop exited
+    /// because this app asked it to. Says nothing about who or what inside
+    /// the app asked.
+    Requested,
+    /// The event stream ended under us — server shutdown/kick, or the
+    /// transport died. Nobody on this side asked for it.
+    ConnectionLost,
+}
+
 /// All events the core emits to the sink. Flat enum over the variants the issue
 /// specifies.
 #[derive(Clone, Debug, Serialize, Deserialize, uniffi::Enum)]
 pub enum ConnEvent {
     Connected(ConnectionState),
-    Disconnected { reason: String },
+    Disconnected { cause: DisconnectCause, reason: String },
     ChannelTree(Vec<Channel>),
     /// Full roster snapshot, not a delta — emitted once on connect and again
     /// whenever the visible client set or its properties change.
