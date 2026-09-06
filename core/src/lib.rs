@@ -456,19 +456,21 @@ async fn run_connection_loop(
     let mut last_client_signature: Option<u64> = Some(initial_client_signature);
     // Track which queues currently exist so we can emit TalkStatus false on remove.
     let mut known_talkers: std::collections::HashSet<u16> = std::collections::HashSet::new();
-
-    let cmd_stream = futures::stream::poll_fn(move |_cx| {
-        match cmd_rx.recv() {
-            Ok(v) => std::task::Poll::Ready(Some(v)),
-            Err(_) => std::task::Poll::Ready(None),
-        }
-    });
-    tokio::pin!(cmd_stream);
+    // Distinguishes "we tore this down" from "the server did".
+    let mut stream_ended = false;
 
     loop {
-        // Drain control commands first (non-blocking poll) so high-rate sends
-        // don't get starved by the events stream.
-        while let std::task::Poll::Ready(Some(cmd)) = futures::Stream::poll_next(std::pin::Pin::new(&mut cmd_stream), &mut std::task::Context::from_waker(futures::task::noop_waker_ref())) {
+        // Drain control commands first — `try_recv`, never `recv`. Wrapping the
+        // blocking `recv()` in a `poll_fn` made this task park on a std channel
+        // inside an async poll: the connection's own stream then never got
+        // serviced, the server saw no acks, and it dropped us on resend timeout
+        // about 25 s in while the UI still said "connected".
+        loop {
+            let cmd = match cmd_rx.try_recv() {
+                Ok(v) => v,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            };
             match cmd {
                 ControlCommand::Disconnect => break,
                 ControlCommand::JoinChannel { channel_id, password } => {
@@ -526,13 +528,21 @@ async fn run_connection_loop(
         if shared_state.lock().unwrap().connection.is_none() {
             break;
         }
-        // Pull one event (or none if none ready, then yield).
+        // Pull one event (or none if none ready, then yield). Keep the two
+        // layers of Option apart: `None` is "nothing ready yet", `Some(None)`
+        // is "the stream ended" — flattening them together meant a connection
+        // the server had already torn down looked exactly like an idle one, so
+        // the loop spun forever and the UI never left "connected".
         let ev = {
             use futures::StreamExt;
-            con.events().next().now_or_never().flatten()
+            con.events().next().now_or_never()
         };
         let ev = match ev {
-            Some(e) => e,
+            Some(Some(e)) => e,
+            Some(None) => {
+                stream_ended = true;
+                break;
+            }
             None => {
                 tokio::task::yield_now().await;
                 continue;
@@ -628,7 +638,11 @@ async fn run_connection_loop(
 
     let _ = con.disconnect(DisconnectOptions::new());
     sink.on_event(ConnEvent::Disconnected {
-        reason: "client.disconnect".into(),
+        reason: if stream_ended {
+            "connection lost".into()
+        } else {
+            "client.disconnect".into()
+        },
     });
     let mut guard = shared_state.lock().unwrap();
     guard.connection = None;
