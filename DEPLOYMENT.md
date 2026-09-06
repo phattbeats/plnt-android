@@ -65,7 +65,8 @@ plnt-android/
 │           ├── AndroidManifest.xml               RECORD_AUDIO + BLUETOOTH_CONNECT +
 │           │                                      FOREGROUND_SERVICE_MICROPHONE
 │           ├── kotlin/com/plnt/client/
-│           │   ├── MainActivity.kt                 Calls uniffi.plnt_core.coreVersion()
+│           │   ├── MainActivity.kt                 Compose host; routes Bookmarks/Connected/Settings
+│           │   ├── ui/SettingsScreen.kt            Renders coreVersion() under About
 │           │   └── uniffi/plnt_core/
 │           │       └── plnt_core.kt              Generated UniFFI binding (35941 bytes)
 │           └── res/values/themes.xml
@@ -90,12 +91,17 @@ plnt-android/
    after the API-correctness fix (audiopus::version() vs audiopus::version_str();
    dropped uniffi::VERSION which doesn't exist in uniffi 0.27).
 2. **`cargo test -p plnt-core`** — `core_version_is_nonempty ... ok` (1/1).
-3. **`core_version()` runtime output**: `plnt-core 0.1.0 (tsclientlib@ee3bc6f,
-   audiopus libopus 1.3.1)`.
+3. **`core_version()` runtime output**: `0.1.0`. It is
+   `env!("CARGO_PKG_VERSION")` and nothing more — this line previously claimed
+   `plnt-core 0.1.0 (tsclientlib@ee3bc6f, audiopus libopus 1.3.1)`, which the
+   function has never returned (corrected from the on-device dump in PHA-3132).
 4. **UniFFI Kotlin binding** (35941 bytes at
    `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`)
    generated via `cargo run --bin plnt-uniffi-bindgen -- generate ...`.
-5. **`MainActivity.kt`** correctly calls `uniffi.plnt_core.coreVersion()`.
+5. **`ui/SettingsScreen.kt`** calls `CoreBridge.coreVersion()` →
+   `uniffi.plnt_core.coreVersion()` and renders it under **About**. (This was
+   `MainActivity.kt` when PHA-3074 shipped; PHA-3079's UI rebuild moved the
+   screens and dropped the call, and PHA-3132 restored it.)
 
 ## What requires CI (unverified in-container)
 
