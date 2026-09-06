@@ -43,6 +43,19 @@ private const val MAX_BACKOFF_MS = 30_000L
 private const val MAX_RECONNECT_ATTEMPTS = 10
 
 /**
+ * Mic/output/transmit state as the service holds it. The notification actions
+ * and the media-button PTT change these behind the UI's back, so the UI has to
+ * be told rather than assume its own optimistic value still holds (PHA-3079:
+ * talk state renders from events, never from polling).
+ */
+data class VoiceState(
+    val inputMuted: Boolean,
+    val outputMuted: Boolean,
+    val transmitting: Boolean,
+    val pttMode: PttMode,
+)
+
+/**
  * Foreground service that owns the single [AudioEngine] + [CoreClient] for
  * the lifetime of a call (PHA-3077/PHA-3078). This is the piece PHA-3079's
  * `PlntViewModel` originally bypassed — that ViewModel talked to a
@@ -70,6 +83,7 @@ class VoiceService : Service() {
     private var client: CoreClient? = null
     private var audioEngine: AudioEngine? = null
     private var eventListener: ((CoreEvent) -> Unit)? = null
+    private var stateListener: ((VoiceState) -> Unit)? = null
 
     private data class ConnectionParams(val bookmark: Bookmark, val identityPem: String)
     private var connectionParams: ConnectionParams? = null
@@ -84,6 +98,7 @@ class VoiceService : Service() {
     private var lastChannelId: Long? = null
 
     private var pttMode: PttMode = PttMode.PUSH_TO_TALK
+    private var headsetTriggerArmed = false
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
@@ -126,7 +141,9 @@ class VoiceService : Service() {
                         ?: return false
                     val isPttKey = event.keyCode == KeyEvent.KEYCODE_HEADSETHOOK ||
                         event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
-                    if (!isPttKey || pttMode != PttMode.PUSH_TO_TALK) return false
+                    // Settings > "Headset button" gates this: with the switch off
+                    // the media button must fall through untouched.
+                    if (!isPttKey || !headsetTriggerArmed || pttMode != PttMode.PUSH_TO_TALK) return false
                     when (event.action) {
                         KeyEvent.ACTION_DOWN -> setPushToTalk(true)
                         KeyEvent.ACTION_UP -> setPushToTalk(false)
@@ -166,6 +183,23 @@ class VoiceService : Service() {
         eventListener = listener
     }
 
+    /**
+     * Observe mute/transmit state. Fires immediately with the current value so a
+     * UI that binds mid-call (or rebinds after its Activity was recreated) shows
+     * what the service is actually doing, including changes made from the
+     * notification actions or a headset button while the app was backgrounded.
+     */
+    fun setStateListener(listener: ((VoiceState) -> Unit)?) {
+        stateListener = listener
+        listener?.invoke(currentState())
+    }
+
+    fun currentState(): VoiceState = VoiceState(inputMuted, outputMuted, transmitting, pttMode)
+
+    private fun emitState() {
+        stateListener?.invoke(currentState())
+    }
+
     fun joinChannel(channelId: Long, password: String?) {
         lastChannelId = channelId
         runCatching { client?.joinChannel(channelId, password) }
@@ -176,11 +210,13 @@ class VoiceService : Service() {
         runCatching { client?.setInputMuted(muted) }
         applySendingGate()
         updateNotification()
+        emitState()
     }
 
     fun setOutputMuted(muted: Boolean) {
         outputMuted = muted
         runCatching { client?.setOutputMuted(muted) }
+        emitState()
     }
 
     /** Press-and-hold PTT / media-button PTT gate. Capture keeps running, only forwarding toggles. */
@@ -188,12 +224,23 @@ class VoiceService : Service() {
         transmitting = pressed
         applySendingGate()
         updateNotification()
+        emitState()
+    }
+
+    /**
+     * Settings > "Headset button". Lives here rather than in the Activity
+     * because the media session that receives the button is owned by this
+     * service — that's what makes it work with the screen locked.
+     */
+    fun setHeadsetTriggerArmed(armed: Boolean) {
+        headsetTriggerArmed = armed
     }
 
     fun setPttMode(mode: PttMode) {
         pttMode = mode
         transmitting = mode == PttMode.OPEN_MIC
         applySendingGate()
+        emitState()
     }
 
     private fun applySendingGate() {
@@ -213,6 +260,8 @@ class VoiceService : Service() {
         releaseWakeLock()
         mediaSession.isActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
+        transmitting = false
+        emitState()
     }
 
     override fun onDestroy() {

@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- PHA-3076: dark, quiet, PLNT — no light theme. -->
-    <style name="Theme.Plnt" parent="android:Theme.Material.NoActionBar" />
+    <!-- PHA-3076: dark, quiet, PLNT — no light theme. windowBackground matches
+         the Compose `bg` token so the pre-Compose window doesn't flash a
+         lighter grey on cold start. -->
+    <color name="plnt_bg">#0E0E0D</color>
+    <color name="plnt_surface">#161513</color>
+
+    <style name="Theme.Plnt" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/plnt_bg</item>
+        <item name="android:statusBarColor">@color/plnt_surface</item>
+        <item name="android:navigationBarColor">@color/plnt_bg</item>
+    </style>
 </resources>

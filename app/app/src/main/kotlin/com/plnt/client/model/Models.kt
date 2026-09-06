@@ -10,7 +10,24 @@ data class Bookmark(
     val serverPassword: String? = null,
 )
 
-enum class PresenceKind { IDLE, TALKING, YOU_TALKING, MUTED, DEAFENED, AWAY }
+/**
+ * Per-client state as the design models it: independent axes, not one enum.
+ * PHA-3076's state table has MIC and SND as two separate tags that can show at
+ * once (mic muted *and* output muted), and "away" is a font-style change that
+ * coexists with the colour vocabulary rather than replacing it — a single-value
+ * enum can't express either, which is what the first cut of this file got wrong.
+ *
+ * Known core gap: plnt-core's event stream carries neither peer mute state nor
+ * idle time, so for anyone but yourself [micMuted]/[outputMuted]/[away] are
+ * always false today. Filed against PHA-3075/PHA-3076; the UI renders them
+ * correctly the moment core starts emitting them.
+ */
+data class ClientPresence(
+    val talking: Boolean = false,
+    val micMuted: Boolean = false,
+    val outputMuted: Boolean = false,
+    val away: Boolean = false,
+)
 
 /**
  * One row under a channel. `name` is a placeholder until plnt-core exposes a
@@ -21,7 +38,7 @@ data class ClientRow(
     val clientId: Long,
     val name: String,
     val isSelf: Boolean,
-    val presence: PresenceKind,
+    val presence: ClientPresence,
 )
 
 data class ChannelNode(
@@ -34,11 +51,14 @@ data class ChannelNode(
 )
 
 enum class PttMode { PUSH_TO_TALK, OPEN_MIC }
-enum class PttSource { TOUCH_ONLY, VOLUME_BUTTON, HEADSET_BUTTON }
 
 data class Settings(
     val pttMode: PttMode = PttMode.PUSH_TO_TALK,
-    val pttSource: PttSource = PttSource.TOUCH_ONLY,
+    // PHA-3076 §5: two independent switches, not a radio group — volume button
+    // AND headset button can both arm PTT, and the on-screen button is always
+    // live regardless of either.
+    val pttOnVolumeButton: Boolean = false,
+    val pttOnHeadsetButton: Boolean = false,
 )
 
 sealed class Screen {
@@ -52,6 +72,8 @@ enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, 
 data class AppState(
     val screen: Screen = Screen.Bookmarks,
     val bookmarks: List<Bookmark> = emptyList(),
+    /** Bookmark ids connected to during this app session — drives the sage row dot. */
+    val sessionConnected: Set<String> = emptySet(),
     val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED,
     val serverName: String = "",
     val ownClientId: Long? = null,

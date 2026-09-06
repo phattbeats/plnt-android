@@ -15,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.plnt.client.model.PttSource
 import com.plnt.client.model.Screen
 import com.plnt.client.ui.BookmarksScreen
 import com.plnt.client.ui.ConnectedScreen
@@ -41,6 +40,7 @@ class MainActivity : ComponentActivity() {
                     when (state.screen) {
                         Screen.Bookmarks -> BookmarksScreen(
                             bookmarks = state.bookmarks,
+                            sessionConnected = state.sessionConnected,
                             onConnect = viewModel::connect,
                             onSave = viewModel::addOrUpdateBookmark,
                             onDelete = viewModel::deleteBookmark,
@@ -62,12 +62,14 @@ class MainActivity : ComponentActivity() {
                             onPttPress = viewModel::pttPress,
                             onPttRelease = viewModel::pttRelease,
                             onDisconnect = viewModel::disconnect,
+                            onOpenSettings = { viewModel.navigate(Screen.Settings) },
                         )
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
                             onPttModeChange = viewModel::setPttMode,
-                            onPttSourceChange = viewModel::setPttSource,
+                            onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
+                            onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
                             onImportIdentity = viewModel::importIdentity,
                             onBack = {
                                 viewModel.navigate(
@@ -95,38 +97,31 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * In-foreground volume-button PTT (Settings > "Volume button"). Lock-screen /
-     * background media-button PTT requires a MediaSession owned by the
-     * foreground service — that's PHA-3078, not this activity.
+     * In-foreground hardware PTT (Settings > "Volume button" / "Headset
+     * button"). The headset/media button is *also* handled by VoiceService's
+     * MediaSession, which is what keeps it working with the screen locked;
+     * this path only covers the foreground case and the volume keys, which no
+     * media session delivers.
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        val state = viewModel.state.value
-        if (state.settings.pttSource == PttSource.VOLUME_BUTTON &&
-            (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
-            state.screen == Screen.Connected
-        ) {
-            viewModel.pttPress()
-            return true
-        }
-        if (state.settings.pttSource == PttSource.HEADSET_BUTTON &&
-            keyCode == KeyEvent.KEYCODE_HEADSETHOOK &&
-            state.screen == Screen.Connected
-        ) {
-            viewModel.pttPress()
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
+        if (!isArmedPttKey(keyCode)) return super.onKeyDown(keyCode, event)
+        viewModel.pttPress()
+        return true
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (!isArmedPttKey(keyCode)) return super.onKeyUp(keyCode, event)
+        viewModel.pttRelease()
+        return true
+    }
+
+    /** Both triggers are independent switches, so either (or both) can be armed. */
+    private fun isArmedPttKey(keyCode: Int): Boolean {
         val state = viewModel.state.value
-        val isPttKey = (state.settings.pttSource == PttSource.VOLUME_BUTTON &&
-            (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) ||
-            (state.settings.pttSource == PttSource.HEADSET_BUTTON && keyCode == KeyEvent.KEYCODE_HEADSETHOOK)
-        if (isPttKey && state.screen == Screen.Connected) {
-            viewModel.pttRelease()
-            return true
-        }
-        return super.onKeyUp(keyCode, event)
+        if (state.screen != Screen.Connected) return false
+        val volumeArmed = state.settings.pttOnVolumeButton &&
+            (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+        val headsetArmed = state.settings.pttOnHeadsetButton && keyCode == KeyEvent.KEYCODE_HEADSETHOOK
+        return volumeArmed || headsetArmed
     }
 }

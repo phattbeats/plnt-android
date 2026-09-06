@@ -15,13 +15,13 @@ import com.plnt.client.data.PlntDataStore
 import com.plnt.client.model.AppState
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.ChannelNode
+import com.plnt.client.model.ClientPresence
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
-import com.plnt.client.model.PresenceKind
 import com.plnt.client.model.PttMode
-import com.plnt.client.model.PttSource
 import com.plnt.client.model.Screen
 import com.plnt.client.service.VoiceService
+import com.plnt.client.service.VoiceState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -65,6 +65,10 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             val svc = (binder as VoiceService.LocalBinder).service()
             voiceService = svc
             svc.setEventListener { ev -> viewModelScope.launch { onCoreEvent(ev) } }
+            // Mute/PTT can be changed from the notification, the lock screen or a
+            // headset button while this UI isn't even on screen — take the
+            // service's word for it rather than trusting our own last write.
+            svc.setStateListener { st -> viewModelScope.launch { onVoiceState(st) } }
             val queued = pendingActions.toList()
             pendingActions.clear()
             queued.forEach { it(svc) }
@@ -78,12 +82,20 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     init {
         app.bindService(Intent(app, VoiceService::class.java), connection, Context.BIND_AUTO_CREATE)
         viewModelScope.launch {
+            val settings = dataStore.loadSettings()
             _state.update {
                 it.copy(
                     bookmarks = dataStore.loadBookmarks(),
-                    settings = dataStore.loadSettings(),
+                    settings = settings,
                     identityExport = identityStore.loadOrCreate(),
                 )
+            }
+            // The service starts on its own default (push-to-talk); hand it the
+            // persisted mode or an open-mic install stays silent until the user
+            // toggles the setting again.
+            runOnService {
+                it.setPttMode(settings.pttMode)
+                it.setHeadsetTriggerArmed(settings.pttOnHeadsetButton)
             }
         }
     }
@@ -112,7 +124,14 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         roster.clear()
         talking.clear()
         channelsById.clear()
-        _state.update { it.copy(phase = ConnectionPhase.CONNECTING, lastError = null, channelTree = emptyList()) }
+        _state.update {
+            it.copy(
+                phase = ConnectionPhase.CONNECTING,
+                lastError = null,
+                channelTree = emptyList(),
+                sessionConnected = it.sessionConnected + bookmark.id,
+            )
+        }
         val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
         val app = getApplication<Application>()
         ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
@@ -166,15 +185,34 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(transmitting = mode == PttMode.OPEN_MIC) }
     }
 
-    fun setPttSource(source: PttSource) {
-        _state.update { it.copy(settings = it.settings.copy(pttSource = source)) }
+    fun setPttOnVolumeButton(enabled: Boolean) {
+        _state.update { it.copy(settings = it.settings.copy(pttOnVolumeButton = enabled)) }
         viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+    }
+
+    fun setPttOnHeadsetButton(enabled: Boolean) {
+        _state.update { it.copy(settings = it.settings.copy(pttOnHeadsetButton = enabled)) }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+        runOnService { it.setHeadsetTriggerArmed(enabled) }
     }
 
     fun importIdentity(pem: String): Boolean {
         if (!identityStore.import(pem)) return false
         _state.update { it.copy(identityExport = pem) }
         return true
+    }
+
+    /** Service is the source of truth for mic/output/transmit — mirror it verbatim. */
+    private fun onVoiceState(st: VoiceState) {
+        _state.update {
+            it.copy(
+                inputMuted = st.inputMuted,
+                outputDeafened = st.outputMuted,
+                transmitting = st.transmitting,
+            )
+        }
+        // Own row's MIC/SND tags and talk ring come out of the same state.
+        rebuildTree()
     }
 
     private fun onCoreEvent(ev: CoreEvent) {
@@ -217,15 +255,19 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun rebuildTree() {
         val ownId = _state.value.ownClientId
+        val self = _state.value
         fun rowFor(clientId: Long): ClientRow {
             val isSelf = clientId == ownId
-            val presence = when {
-                isSelf && _state.value.inputMuted -> PresenceKind.MUTED
-                isSelf && _state.value.outputDeafened -> PresenceKind.DEAFENED
-                isSelf && _state.value.transmitting -> PresenceKind.YOU_TALKING
-                talking[clientId] == true -> PresenceKind.TALKING
-                else -> PresenceKind.IDLE
-            }
+            // Independent axes, per PHA-3076's state table: mic-muted and
+            // output-muted can both be true, and either can coexist with
+            // talking. Peer mute/away aren't in plnt-core's event stream yet, so
+            // they only ever light up for your own row today.
+            val presence = ClientPresence(
+                talking = if (isSelf) self.transmitting && !self.inputMuted else talking[clientId] == true,
+                micMuted = isSelf && self.inputMuted,
+                outputMuted = isSelf && self.outputDeafened,
+                away = false,
+            )
             // No nickname/initial-roster event exists yet on plnt-core's EventSink
             // (only client_id is carried by ClientMoved/TalkStatus) — see the
             // "known limitation" note filed against PHA-3075/PHA-3076.

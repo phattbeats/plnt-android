@@ -1,12 +1,12 @@
 package com.plnt.client.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.PttMode
-import com.plnt.client.model.PttSource
 import com.plnt.client.model.Settings
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
@@ -26,7 +26,16 @@ class PlntDataStore(private val context: Context) {
     private object Keys {
         val BOOKMARKS = stringPreferencesKey("bookmarks_json")
         val PTT_MODE = stringPreferencesKey("ptt_mode")
-        val PTT_SOURCE = stringPreferencesKey("ptt_source")
+        val PTT_VOLUME_BUTTON = booleanPreferencesKey("ptt_volume_button")
+        val PTT_HEADSET_BUTTON = booleanPreferencesKey("ptt_headset_button")
+
+        /**
+         * Superseded: PTT trigger used to be one mutually-exclusive enum
+         * (TOUCH_ONLY / VOLUME_BUTTON / HEADSET_BUTTON), which the design never
+         * called for — volume and headset are independent switches. Still read
+         * once so an existing install keeps whichever trigger it had.
+         */
+        val LEGACY_PTT_SOURCE = stringPreferencesKey("ptt_source")
     }
 
     suspend fun loadBookmarks(): List<Bookmark> {
@@ -68,15 +77,20 @@ class PlntDataStore(private val context: Context) {
         val prefs = context.plntDataStore.data.first()
         val mode = prefs[Keys.PTT_MODE]?.let { runCatching { PttMode.valueOf(it) }.getOrNull() }
             ?: PttMode.PUSH_TO_TALK
-        val source = prefs[Keys.PTT_SOURCE]?.let { runCatching { PttSource.valueOf(it) }.getOrNull() }
-            ?: PttSource.TOUCH_ONLY
-        return Settings(pttMode = mode, pttSource = source)
+        val legacy = prefs[Keys.LEGACY_PTT_SOURCE]
+        return Settings(
+            pttMode = mode,
+            pttOnVolumeButton = prefs[Keys.PTT_VOLUME_BUTTON] ?: (legacy == "VOLUME_BUTTON"),
+            pttOnHeadsetButton = prefs[Keys.PTT_HEADSET_BUTTON] ?: (legacy == "HEADSET_BUTTON"),
+        )
     }
 
     suspend fun saveSettings(settings: Settings) {
         context.plntDataStore.edit {
             it[Keys.PTT_MODE] = settings.pttMode.name
-            it[Keys.PTT_SOURCE] = settings.pttSource.name
+            it[Keys.PTT_VOLUME_BUTTON] = settings.pttOnVolumeButton
+            it[Keys.PTT_HEADSET_BUTTON] = settings.pttOnHeadsetButton
+            it.remove(Keys.LEGACY_PTT_SOURCE)
         }
     }
 }
