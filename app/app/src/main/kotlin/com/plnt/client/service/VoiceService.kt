@@ -36,7 +36,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val TAG = "plnt.voice"
-private const val NOTIFICATION_CHANNEL_ID = "plnt-voice"
+// Bumped from "plnt-voice": that channel was created IMPORTANCE_LOW, which
+// makes the notification "Silent", and Android keeps silent notifications off
+// the lock screen entirely — so the Talk action the design requires from the
+// lock screen was unreachable. A channel's importance cannot be raised after
+// it is created, so the fix needs a new id.
+private const val NOTIFICATION_CHANNEL_ID = "plnt-voice-call"
 private const val NOTIFICATION_ID = 1
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 30_000L
@@ -466,6 +471,13 @@ class VoiceService : Service() {
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.stat_sys_speakerphone)
             .setOngoing(connectionParams != null)
+            // CATEGORY_CALL + VISIBILITY_PUBLIC put the row (and its actions)
+            // on the lock screen with its content intact; setSilent stops the
+            // now-DEFAULT-importance channel from buzzing on every mute or
+            // talk-state update, which fires several times a second under PTT.
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSilent(true)
             .addAction(muteAction)
             .addAction(talkAction)
             .addAction(disconnectAction)
@@ -488,9 +500,16 @@ class VoiceService : Service() {
         val channel = NotificationChannel(
             NOTIFICATION_CHANNEL_ID,
             "Voice",
-            NotificationManager.IMPORTANCE_LOW,
-        )
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
         manager.createNotificationChannel(channel)
+        // Drop the old LOW channel so a user upgrading in place doesn't keep
+        // an orphaned "Voice" entry in the app's notification settings.
+        manager.deleteNotificationChannel("plnt-voice")
     }
 
     companion object {

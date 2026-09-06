@@ -59,6 +59,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val roster = HashMap<Long, MutableSet<Long>>()
     private val talking = HashMap<Long, Boolean>()
     private val channelsById = HashMap<Long, com.plnt.client.core.CoreChannel>()
+    // clientId -> last roster snapshot entry, for nicknames and peer mute state.
+    private val clientsById = HashMap<Long, com.plnt.client.core.CoreClientInfo>()
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -124,6 +126,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         roster.clear()
         talking.clear()
         channelsById.clear()
+        clientsById.clear()
         _state.update {
             it.copy(
                 phase = ConnectionPhase.CONNECTING,
@@ -221,6 +224,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 roster.clear()
                 talking.clear()
                 channelsById.clear()
+                clientsById.clear()
                 _state.update {
                     it.copy(
                         phase = ConnectionPhase.CONNECTED,
@@ -238,7 +242,23 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.ChannelTree -> {
+                // Snapshot, not a delta — same as ClientList below. Merging it
+                // left deleted channels on screen forever, so a server that had
+                // dropped a temporary channel and made a permanent one with the
+                // same name rendered both.
+                channelsById.clear()
                 ev.channels.forEach { channelsById[it.id] = it }
+                rebuildTree()
+            }
+            is CoreEvent.ClientList -> {
+                // Whole-roster snapshot: rebuild both maps rather than merging,
+                // so a client that left actually disappears from the tree.
+                clientsById.clear()
+                roster.clear()
+                ev.clients.forEach { c ->
+                    clientsById[c.id] = c
+                    roster.getOrPut(c.channelId) { mutableSetOf() }.add(c.id)
+                }
                 rebuildTree()
             }
             is CoreEvent.ClientMoved -> {
@@ -258,20 +278,25 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         val self = _state.value
         fun rowFor(clientId: Long): ClientRow {
             val isSelf = clientId == ownId
+            val info = clientsById[clientId]
             // Independent axes, per PHA-3076's state table: mic-muted and
             // output-muted can both be true, and either can coexist with
-            // talking. Peer mute/away aren't in plnt-core's event stream yet, so
-            // they only ever light up for your own row today.
+            // talking. For our own row the local toggles win — they apply the
+            // instant they are tapped, before the server echoes them back.
             val presence = ClientPresence(
                 talking = if (isSelf) self.transmitting && !self.inputMuted else talking[clientId] == true,
-                micMuted = isSelf && self.inputMuted,
-                outputMuted = isSelf && self.outputDeafened,
-                away = false,
+                micMuted = if (isSelf) self.inputMuted else info?.inputMuted == true,
+                outputMuted = if (isSelf) self.outputDeafened else info?.outputMuted == true,
+                away = info?.away == true,
             )
-            // No nickname/initial-roster event exists yet on plnt-core's EventSink
-            // (only client_id is carried by ClientMoved/TalkStatus) — see the
-            // "known limitation" note filed against PHA-3075/PHA-3076.
-            return ClientRow(clientId = clientId, name = "Client $clientId", isSelf = isSelf, presence = presence)
+            return ClientRow(
+                clientId = clientId,
+                // Fall back to the id only for a client we learned about from a
+                // bare ClientMoved before its roster snapshot landed.
+                name = info?.name ?: "Client $clientId",
+                isSelf = isSelf,
+                presence = presence,
+            )
         }
 
         val byParent = channelsById.values.groupBy { it.parentId }

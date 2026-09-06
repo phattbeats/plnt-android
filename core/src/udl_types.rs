@@ -26,6 +26,21 @@ pub struct ConnectionState {
     pub server_name: String,
 }
 
+/// One client visible on the server. `ClientMoved` only ever carried an id, so
+/// the app had no nicknames and no way to learn about anyone who was already
+/// connected — this record is the roster the channel tree hangs clients off.
+#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+pub struct ClientInfo {
+    pub id: u64,
+    pub name: String,
+    pub channel_id: u64,
+    /// Peer's own mic mute, as the server reports it (the MIC pill).
+    pub input_muted: bool,
+    /// Peer's own speaker mute / deafen, as the server reports it (the SND pill).
+    pub output_muted: bool,
+    pub away: bool,
+}
+
 /// All events the core emits to the sink. Flat enum over the variants the issue
 /// specifies.
 #[derive(Clone, Debug, Serialize, Deserialize, uniffi::Enum)]
@@ -33,6 +48,9 @@ pub enum ConnEvent {
     Connected(ConnectionState),
     Disconnected { reason: String },
     ChannelTree(Vec<Channel>),
+    /// Full roster snapshot, not a delta — emitted once on connect and again
+    /// whenever the visible client set or its properties change.
+    ClientList(Vec<ClientInfo>),
     ClientMoved { client_id: u64, channel_id: u64 },
     TalkStatus { client_id: u64, talking: bool },
     /// 960 mono f32 samples at 48 kHz (20 ms) — jitter-buffered mixed mono.

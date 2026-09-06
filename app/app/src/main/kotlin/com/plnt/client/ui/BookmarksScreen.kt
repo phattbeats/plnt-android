@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -66,7 +68,7 @@ import com.plnt.client.ui.theme.SurfaceRaised
 /**
  * PHA-3076 screens 1–3: bookmarks (empty + populated) and the add/edit bottom
  * sheet. Rows are swipe-to-reveal Edit/Delete and a plain tap connects — no
- * confirmation, no per-row buttons.
+ * per-row buttons. Delete confirms; edit and connect do not.
  */
 @Composable
 fun BookmarksScreen(
@@ -80,6 +82,7 @@ fun BookmarksScreen(
 ) {
     var editing by remember { mutableStateOf<Bookmark?>(null) }
     var isNew by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<Bookmark?>(null) }
 
     Scaffold(
         containerColor = Bg,
@@ -114,12 +117,34 @@ fun BookmarksScreen(
                         connectedThisSession = bookmark.id in sessionConnected,
                         onConnect = { onConnect(bookmark) },
                         onEdit = { editing = bookmark; isNew = false },
-                        onDelete = { onDelete(bookmark.id) },
+                        onDelete = { pendingDelete = bookmark },
                     )
                     HorizontalDivider(thickness = 1.dp, color = DividerLine)
                 }
             }
         }
+    }
+
+    pendingDelete?.let { target ->
+        // The swipe threshold is a quarter of the row width, so a stray
+        // horizontal drag on a list you meant to scroll used to wipe a server
+        // outright — a bookmark carries a nickname and a password nobody wants
+        // to retype. Deleting is the one destructive action on this screen, so
+        // it is the one that asks.
+        AlertDialog(
+            containerColor = SurfaceRaised,
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete server?", color = Bone) },
+            text = { Text(target.label.ifBlank { target.address }, color = BoneMuted) },
+            confirmButton = {
+                TextButton(onClick = { onDelete(target.id); pendingDelete = null }) {
+                    Text("DELETE", color = Oxblood)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("CANCEL", color = BoneMuted) }
+            },
+        )
     }
 
     editing?.let { current ->
