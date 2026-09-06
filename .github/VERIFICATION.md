@@ -21,10 +21,21 @@ push and PR against `ubuntu-24.04`. Successful completion satisfies:
    `Smoke: APK present` asserts the file exists; if it doesn't,
    the upload step fails with `if-no-files-found: error`.
 
-3. **jniLibs/<target>/ populated** — the workflow step
+3. **jniLibs/<abi>/ populated** — the workflow step
    `Smoke: jniLibs contains the right .so files` asserts that
-   `app/app/src/main/jniLibs/aarch64-linux-android/libplnt_core.so` and
-   `app/app/src/main/jniLibs/x86_64-linux-android/libplnt_core.so` both exist.
+   `app/app/src/main/jniLibs/arm64-v8a/libplnt_core.so` and
+   `app/app/src/main/jniLibs/x86_64/libplnt_core.so` both exist. Those are
+   Android ABI names, not Rust target triples — cargo-ndk and Gradle both want
+   the ABI form.
+
+4. **The APK ships the library the bindings load** — the step
+   `Smoke: APK ships the library the bindings load` reads the name back out of
+   the generated `findLibraryName()` and asserts `lib/<abi>/lib<name>.so` is
+   present inside the APK. Steps 1–3 all pass on an APK that cannot start
+   (PHA-3235): they check the `.so` against a hardcoded name rather than
+   against the name the Kotlin actually dlopen()s. The step
+   `Smoke: regenerated bindings are a no-op diff` covers the other half — that
+   what CI generates is what the repo has committed.
 
 ## On-device verification (manual / CI-extended)
 

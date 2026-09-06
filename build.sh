@@ -192,6 +192,25 @@ if [[ $BINDGEN_RC -ne 0 || -z "$HOST_LIB" || ! -f "$COMMITTED_BINDINGS" ]]; then
   fi
 fi
 
+# The generated Kotlin hardcodes the library name JNA will dlopen(): its
+# findLibraryName() returns `cdylib_name` (pinned in core/uniffi.toml) and JNA
+# expands that to lib<name>.so. If it ever drifts from the cdylib cargo actually
+# emits, every build stays green and the app dies on first FFI call with
+# `UnsatisfiedLinkError: dlopen failed: library "..." not found` — PHA-3235.
+# Catch the drift here, where the fix is one config line, not on a device.
+CDYLIB_NAME="plnt_core"
+generated_lib_name() {
+  awk '/^private fun findLibraryName/,/^}/' "$COMMITTED_BINDINGS" \
+    | sed -n 's/.*return "\([^"]*\)".*/\1/p' | tail -n1
+}
+BOUND_LIB_NAME=$(generated_lib_name)
+if [[ "$BOUND_LIB_NAME" != "$CDYLIB_NAME" ]]; then
+  echo "build.sh: ERROR — bindings load lib${BOUND_LIB_NAME}.so but we ship lib${CDYLIB_NAME}.so" >&2
+  echo "build.sh:   check [bindings.kotlin] cdylib_name in core/uniffi.toml" >&2
+  exit 1
+fi
+echo "build.sh: bindings will dlopen lib${BOUND_LIB_NAME}.so"
+
 # Cross-compile. cargo-ndk handles the linker glue; --target is per-arch.
 for tgt in $RUST_TARGETS; do
   echo "build.sh: cargo-ndk build for $tgt"
@@ -200,6 +219,14 @@ for tgt in $RUST_TARGETS; do
     --platform "${ANDROID_PLATFORM#android-}" \
     --output-dir "../app/app/src/main/jniLibs" \
     build --release
+done
+
+# ...and confirm each ABI really got the file the bindings ask for. cargo-ndk
+# names the output after `[lib] name`, so a rename in core/Cargo.toml silently
+# breaks the contract checked above.
+for abi in arm64-v8a x86_64; do
+  so="../app/app/src/main/jniLibs/$abi/lib${CDYLIB_NAME}.so"
+  [[ -f "$so" ]] || { echo "build.sh: ERROR — missing $so" >&2; exit 1; }
 done
 
 popd >/dev/null
