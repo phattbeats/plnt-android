@@ -12,14 +12,59 @@ package com.plnt.client.core
  * every direct reference to a generated symbol lives in this one file. If a
  * real build fails here, this is the only file that needs adjusting.
  */
+/**
+ * Why a connection ended, at app level. Superset of plnt-core's own
+ * `DisconnectCause`: the core can only tell "this app asked" apart from "the
+ * transport went away", so every other cause is supplied by
+ * [com.plnt.client.service.VoiceService] — the only thing that knows whether a
+ * teardown it initiated was a user action or Android reclaiming the service
+ * (PHA-3283).
+ */
+enum class DisconnectCause {
+    /** Explicit user action: the notification's Disconnect action, or the in-app button. */
+    USER,
+
+    /**
+     * Android destroyed the foreground service out from under us — low memory,
+     * an OEM background/battery policy, doze/standby restrictions. The user did
+     * not hang up; before PHA-3283 this arrived wearing [USER]'s clothes.
+     */
+    SYSTEM_KILL,
+
+    /** The server or the transport dropped us and reconnect was not applicable. */
+    CONNECTION_LOST,
+
+    /** Automatic reconnect ran out of attempts. */
+    RECONNECT_FAILED,
+
+    /** The connect attempt itself failed (bad address, rejected identity, …). */
+    ERROR,
+
+    /**
+     * plnt-core exited because *this app* asked it to. Which part of the app,
+     * and why, is only knowable one layer up: VoiceService replaces this with
+     * the real cause before anything reaches the UI, and swallows the event
+     * outright when it is merely the echo of a teardown it already handled.
+     * Nothing downstream should ever render it.
+     */
+    APP_REQUESTED,
+}
+
 sealed class CoreEvent {
     data class Connected(val ownClientId: Long, val serverName: String) : CoreEvent()
-    data class Disconnected(val reason: String) : CoreEvent()
+    data class Disconnected(val cause: DisconnectCause, val reason: String) : CoreEvent()
     data class ChannelTree(val channels: List<CoreChannel>) : CoreEvent()
     /** Whole-roster snapshot, not a delta — replaces whatever the app had. */
     data class ClientList(val clients: List<CoreClientInfo>) : CoreEvent()
     data class ClientMoved(val clientId: Long, val channelId: Long) : CoreEvent()
     data class TalkStatus(val clientId: Long, val talking: Boolean) : CoreEvent()
+    /** Inbound channel or private text message. Never one this app itself sent — see [CoreClient.sendTextMessage]. */
+    data class TextMessage(
+        val target: ChatMessageTarget,
+        val fromClientId: Long,
+        val fromName: String,
+        val text: String,
+    ) : CoreEvent()
     data class Error(val message: String) : CoreEvent()
     // PcmFrame is intentionally not surfaced here — audio I/O is PHA-3077's
     // AudioEngine; the UI only needs talk state, not the samples.
@@ -70,6 +115,15 @@ data class CoreClientInfo(
     val away: Boolean,
 )
 
+/**
+ * Where an outgoing text message goes. Server-wide chat and pokes exist in
+ * the protocol but are out of scope for v1 (PHA-3281).
+ */
+sealed class ChatMessageTarget {
+    data object Channel : ChatMessageTarget()
+    data class Direct(val clientId: Long) : ChatMessageTarget()
+}
+
 interface CoreClient {
     fun connect(address: String, port: Int, nickname: String, identityPem: String, password: String?)
     fun disconnect()
@@ -78,6 +132,7 @@ interface CoreClient {
     fun setOutputMuted(muted: Boolean)
     /** Encode+send one 20 ms / 960-sample / 48 kHz mono frame. See PHA-3077's AudioEngine — the only caller. */
     fun sendPcmFrame(samples: FloatArray)
+    fun sendTextMessage(target: ChatMessageTarget, text: String)
     fun close()
 }
 
@@ -119,6 +174,8 @@ object CoreBridge {
             override fun setInputMuted(muted: Boolean) = native.setInputMuted(muted)
             override fun setOutputMuted(muted: Boolean) = native.setOutputMuted(muted)
             override fun sendPcmFrame(samples: FloatArray) = native.sendPcmFrame(samples.toList())
+            override fun sendTextMessage(target: ChatMessageTarget, text: String) =
+                native.sendTextMessage(target.toNative(), text)
             override fun close() = native.destroy()
         }
     }
@@ -134,7 +191,13 @@ object CoreBridge {
     private fun translate(ev: uniffi.plnt_core.ConnEvent): CoreEvent = when (ev) {
         is uniffi.plnt_core.ConnEvent.Connected ->
             CoreEvent.Connected(ev.v1.ownClientId.toLong(), ev.v1.serverName)
-        is uniffi.plnt_core.ConnEvent.Disconnected -> CoreEvent.Disconnected(ev.reason)
+        is uniffi.plnt_core.ConnEvent.Disconnected -> CoreEvent.Disconnected(
+            when (ev.cause) {
+                uniffi.plnt_core.DisconnectCause.REQUESTED -> DisconnectCause.APP_REQUESTED
+                uniffi.plnt_core.DisconnectCause.CONNECTION_LOST -> DisconnectCause.CONNECTION_LOST
+            },
+            ev.reason,
+        )
         is uniffi.plnt_core.ConnEvent.ChannelTree -> CoreEvent.ChannelTree(
             ev.v1.map {
                 CoreChannel(
@@ -162,6 +225,12 @@ object CoreBridge {
             CoreEvent.ClientMoved(ev.clientId.toLong(), ev.channelId.toLong())
         is uniffi.plnt_core.ConnEvent.TalkStatus ->
             CoreEvent.TalkStatus(ev.clientId.toLong(), ev.talking)
+        is uniffi.plnt_core.ConnEvent.TextMessage -> CoreEvent.TextMessage(
+            target = ev.target.fromNative(),
+            fromClientId = ev.fromClientId.toLong(),
+            fromName = ev.fromName,
+            text = ev.text,
+        )
         // Filtered out in newClient()'s sink before translate() is ever called
         // with one — routed to `onPcmFrame` instead. Kept here only so this
         // `when` stays exhaustive over the sealed ConnEvent.
@@ -171,5 +240,15 @@ object CoreBridge {
         is uniffi.plnt_core.ConnEvent.TemporaryDisconnect -> CoreEvent.TemporaryDisconnect(ev.reason)
         is uniffi.plnt_core.ConnEvent.Resumed ->
             CoreEvent.Resumed(ev.v1.ownClientId.toLong(), ev.v1.serverName)
+    }
+
+    private fun ChatMessageTarget.toNative(): uniffi.plnt_core.ChatTarget = when (this) {
+        ChatMessageTarget.Channel -> uniffi.plnt_core.ChatTarget.Channel
+        is ChatMessageTarget.Direct -> uniffi.plnt_core.ChatTarget.Client(clientId.toULong())
+    }
+
+    private fun uniffi.plnt_core.ChatTarget.fromNative(): ChatMessageTarget = when (this) {
+        is uniffi.plnt_core.ChatTarget.Channel -> ChatMessageTarget.Channel
+        is uniffi.plnt_core.ChatTarget.Client -> ChatMessageTarget.Direct(clientId.toLong())
     }
 }

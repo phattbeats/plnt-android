@@ -34,7 +34,7 @@ use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
 
 mod udl_types;
 
-pub use udl_types::{Channel, ClientInfo, ConnEvent, ConnectionState};
+pub use udl_types::{Channel, ChatTarget, ClientInfo, ConnEvent, ConnectionState, DisconnectCause};
 
 /// Build version string, surfaced to the Kotlin side for the settings screen
 /// and bug reports.
@@ -117,6 +117,7 @@ enum ControlCommand {
     SetInputMuted(bool),
     SetOutputMuted(bool),
     SendPcmFrame(Vec<f32>),
+    SendTextMessage { target: ChatTarget, text: String },
 }
 
 #[uniffi::export]
@@ -284,6 +285,17 @@ impl Client {
         }
         self.cmd_tx()?
             .send(ControlCommand::JoinChannel { channel_id, password: None })
+            .map_err(|_| PlntError::NotConnected)
+    }
+
+    /// Send a text message to the current channel or to a specific client (a
+    /// private message). Server-wide chat is out of scope for v1 (PHA-3281).
+    pub fn send_text_message(&self, target: ChatTarget, text: String) -> Result<(), PlntError> {
+        if text.trim().is_empty() {
+            return Err(PlntError::Invalid("message text is empty".into()));
+        }
+        self.cmd_tx()?
+            .send(ControlCommand::SendTextMessage { target, text })
             .map_err(|_| PlntError::NotConnected)
     }
 
@@ -529,6 +541,20 @@ async fn run_connection_loop(
                         let _ = state.client_update().set_output_muted(muted).send(&mut con);
                     }
                 }
+                ControlCommand::SendTextMessage { target, text } => {
+                    if let Ok(state) = con.get_state() {
+                        let msg_target = match target {
+                            ChatTarget::Channel => tsclientlib::MessageTarget::Channel,
+                            ChatTarget::Client { client_id } => {
+                                tsclientlib::MessageTarget::Client(tsclientlib::ClientId(
+                                    client_id as u16,
+                                ))
+                            }
+                        };
+                        let cmd = state.send_message(msg_target, &text);
+                        let _ = cmd.send(&mut con);
+                    }
+                }
                 ControlCommand::SendPcmFrame(frame) => {
                     if encoder.is_none() {
                         match Encoder::new(SampleRate::Hz48000, Channels::Mono, Application::Voip) {
@@ -667,6 +693,27 @@ async fn run_connection_loop(
                                 });
                             }
                         }
+                        // Server-wide chat and pokes are out of scope for v1
+                        // (PHA-3281) — only surface channel and private (client
+                        // -to-client) messages.
+                        if let tsclientlib::events::Event::Message { target, invoker, message } = &ev {
+                            let chat_target = match target {
+                                tsclientlib::MessageTarget::Channel => Some(ChatTarget::Channel),
+                                tsclientlib::MessageTarget::Client(id) => {
+                                    Some(ChatTarget::Client { client_id: id.0 as u64 })
+                                }
+                                tsclientlib::MessageTarget::Server
+                                | tsclientlib::MessageTarget::Poke(_) => None,
+                            };
+                            if let Some(chat_target) = chat_target {
+                                sink.on_event(ConnEvent::TextMessage {
+                                    target: chat_target,
+                                    from_client_id: invoker.id.0 as u64,
+                                    from_name: invoker.name.clone(),
+                                    text: message.clone(),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -683,13 +730,18 @@ async fn run_connection_loop(
     }
 
     let _ = con.disconnect(DisconnectOptions::new());
-    sink.on_event(ConnEvent::Disconnected {
-        reason: if stream_ended {
-            "connection lost".into()
-        } else {
-            "client.disconnect".into()
-        },
-    });
+    // The cause is the load-bearing half here; the reason string is only for
+    // logs and bug reports. `Requested` says the loop exited because the app
+    // called `Client::disconnect()` — it does NOT say the *user* did, which is
+    // the conflation PHA-3283 is about. Only the Android service layer knows
+    // whether that request came from a Disconnect tap or from `onDestroy()`
+    // after Android reclaimed the service.
+    let (cause, reason) = if stream_ended {
+        (DisconnectCause::ConnectionLost, "connection lost")
+    } else {
+        (DisconnectCause::Requested, "client.disconnect")
+    };
+    sink.on_event(ConnEvent::Disconnected { cause, reason: reason.into() });
     let mut guard = shared_state.lock().unwrap();
     guard.connection = None;
 }

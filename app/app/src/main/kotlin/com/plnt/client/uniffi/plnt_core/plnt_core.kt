@@ -740,6 +740,8 @@ internal open class UniffiVTableCallbackInterfaceEventSink(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -773,6 +775,8 @@ internal interface UniffiLib : Library {
     fun uniffi_plnt_core_fn_method_client_join_channel(`ptr`: Pointer,`channelId`: Long,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_method_client_send_pcm_frame(`ptr`: Pointer,`frame`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_send_text_message(`ptr`: Pointer,`target`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_method_client_set_input_muted(`ptr`: Pointer,`muted`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -916,6 +920,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_plnt_core_checksum_method_client_send_pcm_frame(
     ): Short
+    fun uniffi_plnt_core_checksum_method_client_send_text_message(
+    ): Short
     fun uniffi_plnt_core_checksum_method_client_set_input_muted(
     ): Short
     fun uniffi_plnt_core_checksum_method_client_set_output_muted(
@@ -962,6 +968,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_send_pcm_frame() != 52815.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_send_text_message() != 26294.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_set_input_muted() != 20064.toShort()) {
@@ -1404,6 +1413,12 @@ public interface ClientInterface {
      */
     fun `sendPcmFrame`(`frame`: List<kotlin.Float>)
     
+    /**
+     * Send a text message to the current channel or to a specific client (a
+     * private message). Server-wide chat is out of scope for v1 (PHA-3281).
+     */
+    fun `sendTextMessage`(`target`: ChatTarget, `text`: kotlin.String)
+    
     fun `setInputMuted`(`muted`: kotlin.Boolean)
     
     fun `setOutputMuted`(`muted`: kotlin.Boolean)
@@ -1559,6 +1574,22 @@ open class Client: Disposable, AutoCloseable, ClientInterface {
     uniffiRustCallWithError(PlntException) { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_send_pcm_frame(
         it, FfiConverterSequenceFloat.lower(`frame`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Send a text message to the current channel or to a specific client (a
+     * private message). Server-wide chat is out of scope for v1 (PHA-3281).
+     */
+    @Throws(PlntException::class)override fun `sendTextMessage`(`target`: ChatTarget, `text`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_send_text_message(
+        it, FfiConverterTypeChatTarget.lower(`target`),FfiConverterString.lower(`text`),_status)
 }
     }
     
@@ -2082,6 +2113,72 @@ public object FfiConverterTypeConnectionState: FfiConverterRustBuffer<Connection
 
 
 /**
+ * Where a text message came from / should be sent to. Server-wide chat and
+ * pokes exist in the protocol but are out of scope for v1 (PHA-3281) —
+ * channel chat and client-to-client private messages only.
+ */
+sealed class ChatTarget {
+    
+    object Channel : ChatTarget()
+    
+    
+    data class Client(
+        val `clientId`: kotlin.ULong) : ChatTarget() {
+        companion object
+    }
+    
+
+    
+    companion object
+}
+
+public object FfiConverterTypeChatTarget : FfiConverterRustBuffer<ChatTarget>{
+    override fun read(buf: ByteBuffer): ChatTarget {
+        return when(buf.getInt()) {
+            1 -> ChatTarget.Channel
+            2 -> ChatTarget.Client(
+                FfiConverterULong.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ChatTarget) = when(value) {
+        is ChatTarget.Channel -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is ChatTarget.Client -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`clientId`)
+            )
+        }
+    }
+
+    override fun write(value: ChatTarget, buf: ByteBuffer) {
+        when(value) {
+            is ChatTarget.Channel -> {
+                buf.putInt(1)
+                Unit
+            }
+            is ChatTarget.Client -> {
+                buf.putInt(2)
+                FfiConverterULong.write(value.`clientId`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+/**
  * All events the core emits to the sink. Flat enum over the variants the issue
  * specifies.
  */
@@ -2093,6 +2190,7 @@ sealed class ConnEvent {
     }
     
     data class Disconnected(
+        val `cause`: DisconnectCause, 
         val `reason`: kotlin.String) : ConnEvent() {
         companion object
     }
@@ -2129,6 +2227,17 @@ sealed class ConnEvent {
     data class PcmFrame(
         val `clientId`: kotlin.ULong, 
         val `samples`: List<kotlin.Float>) : ConnEvent() {
+        companion object
+    }
+    
+    /**
+     * Inbound channel or private text message.
+     */
+    data class TextMessage(
+        val `target`: ChatTarget, 
+        val `fromClientId`: kotlin.ULong, 
+        val `fromName`: kotlin.String, 
+        val `text`: kotlin.String) : ConnEvent() {
         companion object
     }
     
@@ -2173,6 +2282,7 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 FfiConverterTypeConnectionState.read(buf),
                 )
             2 -> ConnEvent.Disconnected(
+                FfiConverterTypeDisconnectCause.read(buf),
                 FfiConverterString.read(buf),
                 )
             3 -> ConnEvent.ChannelTree(
@@ -2193,13 +2303,19 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 FfiConverterULong.read(buf),
                 FfiConverterSequenceFloat.read(buf),
                 )
-            8 -> ConnEvent.Error(
+            8 -> ConnEvent.TextMessage(
+                FfiConverterTypeChatTarget.read(buf),
+                FfiConverterULong.read(buf),
+                FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 )
-            9 -> ConnEvent.TemporaryDisconnect(
+            9 -> ConnEvent.Error(
                 FfiConverterString.read(buf),
                 )
-            10 -> ConnEvent.Resumed(
+            10 -> ConnEvent.TemporaryDisconnect(
+                FfiConverterString.read(buf),
+                )
+            11 -> ConnEvent.Resumed(
                 FfiConverterTypeConnectionState.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -2218,6 +2334,7 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
                 4UL
+                + FfiConverterTypeDisconnectCause.allocationSize(value.`cause`)
                 + FfiConverterString.allocationSize(value.`reason`)
             )
         }
@@ -2259,6 +2376,16 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 + FfiConverterSequenceFloat.allocationSize(value.`samples`)
             )
         }
+        is ConnEvent.TextMessage -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeChatTarget.allocationSize(value.`target`)
+                + FfiConverterULong.allocationSize(value.`fromClientId`)
+                + FfiConverterString.allocationSize(value.`fromName`)
+                + FfiConverterString.allocationSize(value.`text`)
+            )
+        }
         is ConnEvent.Error -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -2291,6 +2418,7 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             }
             is ConnEvent.Disconnected -> {
                 buf.putInt(2)
+                FfiConverterTypeDisconnectCause.write(value.`cause`, buf)
                 FfiConverterString.write(value.`reason`, buf)
                 Unit
             }
@@ -2322,22 +2450,77 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 FfiConverterSequenceFloat.write(value.`samples`, buf)
                 Unit
             }
-            is ConnEvent.Error -> {
+            is ConnEvent.TextMessage -> {
                 buf.putInt(8)
+                FfiConverterTypeChatTarget.write(value.`target`, buf)
+                FfiConverterULong.write(value.`fromClientId`, buf)
+                FfiConverterString.write(value.`fromName`, buf)
+                FfiConverterString.write(value.`text`, buf)
+                Unit
+            }
+            is ConnEvent.Error -> {
+                buf.putInt(9)
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
             is ConnEvent.TemporaryDisconnect -> {
-                buf.putInt(9)
+                buf.putInt(10)
                 FfiConverterString.write(value.`reason`, buf)
                 Unit
             }
             is ConnEvent.Resumed -> {
-                buf.putInt(10)
+                buf.putInt(11)
                 FfiConverterTypeConnectionState.write(value.v1, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+/**
+ * Why a connection ended, as far as the core can tell the cases apart.
+ *
+ * PHA-3283: `Disconnected` used to carry only a reason string, and the
+ * app-requested exit hardcoded `"client.disconnect"`. Downstream that was
+ * indistinguishable from the user hanging up, which is what blocked diagnosis
+ * of the PHA-3238 drop. The core deliberately does not model *why the app
+ * asked* — it cannot know — so the Android layer widens this into its own
+ * `DisconnectCause` (see `CoreBridge.kt`) with the causes only it can see,
+ * such as Android reclaiming the foreground service.
+ */
+
+enum class DisconnectCause {
+    
+    /**
+     * [`crate::Client::disconnect`] was called: the connection loop exited
+     * because this app asked it to. Says nothing about who or what inside
+     * the app asked.
+     */
+    REQUESTED,
+    /**
+     * The event stream ended under us — server shutdown/kick, or the
+     * transport died. Nobody on this side asked for it.
+     */
+    CONNECTION_LOST;
+    companion object
+}
+
+
+public object FfiConverterTypeDisconnectCause: FfiConverterRustBuffer<DisconnectCause> {
+    override fun read(buf: ByteBuffer) = try {
+        DisconnectCause.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: DisconnectCause) = 4UL
+
+    override fun write(value: DisconnectCause, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
     }
 }
 

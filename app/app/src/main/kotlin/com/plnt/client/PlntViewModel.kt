@@ -9,15 +9,19 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreEvent
+import com.plnt.client.core.DisconnectCause
 import com.plnt.client.data.IdentityStore
 import com.plnt.client.data.PlntDataStore
 import com.plnt.client.model.AppState
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.ChannelNode
+import com.plnt.client.model.ChatMessage
 import com.plnt.client.model.ClientPresence
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
+import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Screen
 import com.plnt.client.service.VoiceService
@@ -98,6 +102,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             runOnService {
                 it.setPttMode(settings.pttMode)
                 it.setHeadsetTriggerArmed(settings.pttOnHeadsetButton)
+                it.setPreferredInputRoute(settings.preferredInputRoute)
             }
         }
     }
@@ -133,6 +138,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 lastError = null,
                 channelTree = emptyList(),
                 sessionConnected = it.sessionConnected + bookmark.id,
+                chatMessages = emptyList(),
             )
         }
         val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
@@ -155,6 +161,30 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     fun joinChannel(channelId: Long) {
         runOnService { it.joinChannel(channelId, null) }
+    }
+
+    /**
+     * Send a channel or private message. Appended to [AppState.chatMessages]
+     * immediately (own sent messages are never echoed back by the server) —
+     * inbound messages arrive only via [CoreEvent.TextMessage].
+     */
+    fun sendChatMessage(target: ChatMessageTarget, text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val ownId = _state.value.ownClientId ?: return
+        _state.update {
+            it.copy(
+                chatMessages = it.chatMessages + ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    fromClientId = ownId,
+                    fromName = clientsById[ownId]?.name ?: "you",
+                    isSelf = true,
+                    isDirect = target is ChatMessageTarget.Direct,
+                    text = trimmed,
+                ),
+            )
+        }
+        runOnService { it.sendTextMessage(target, trimmed) }
     }
 
     fun setMuted(muted: Boolean) {
@@ -199,10 +229,42 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.setHeadsetTriggerArmed(enabled) }
     }
 
+    fun setPreferredInputRoute(route: InputRoute) {
+        _state.update { it.copy(settings = it.settings.copy(preferredInputRoute = route)) }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+        runOnService { it.setPreferredInputRoute(route) }
+    }
+
     fun importIdentity(pem: String): Boolean {
         if (!identityStore.import(pem)) return false
         _state.update { it.copy(identityExport = pem) }
         return true
+    }
+
+    /** Replaces the on-device identity with a freshly generated one. */
+    fun createNewIdentity() {
+        val pem = identityStore.createNew()
+        _state.update { it.copy(identityExport = pem) }
+    }
+
+    /**
+     * What to show after a disconnect, or null when there is nothing to
+     * explain. PHA-3283: every disconnect used to render the core's raw reason
+     * string, so a user who hung up saw "client.disconnect" as an error and —
+     * worse — so did a user whose service Android had just killed, with no way
+     * to tell the two apart. The cause carries that now.
+     */
+    private fun disconnectMessage(ev: CoreEvent.Disconnected): String? = when (ev.cause) {
+        // The user knows; saying so would render as an error banner.
+        DisconnectCause.USER -> null
+        DisconnectCause.SYSTEM_KILL ->
+            "Android stopped PLNT in the background, ending the call. " +
+                "Exempting PLNT from battery optimisation usually prevents this."
+        DisconnectCause.CONNECTION_LOST -> "Connection lost: ${ev.reason}"
+        DisconnectCause.RECONNECT_FAILED -> "Could not reconnect: ${ev.reason}"
+        DisconnectCause.ERROR -> ev.reason
+        // VoiceService replaces this with the real cause before it gets here.
+        DisconnectCause.APP_REQUESTED -> null
     }
 
     /** Service is the source of truth for mic/output/transmit — mirror it verbatim. */
@@ -212,6 +274,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 inputMuted = st.inputMuted,
                 outputDeafened = st.outputMuted,
                 transmitting = st.transmitting,
+                settings = it.settings.copy(preferredInputRoute = st.preferredInputRoute),
+                availableInputRoutes = st.availableInputRoutes,
             )
         }
         // Own row's MIC/SND tags and talk ring come out of the same state.
@@ -238,7 +302,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(phase = ConnectionPhase.RECONNECTING, lastError = null)
             }
             is CoreEvent.Disconnected -> _state.update {
-                it.copy(phase = ConnectionPhase.DISCONNECTED, lastError = ev.reason, screen = Screen.Bookmarks)
+                it.copy(
+                    phase = ConnectionPhase.DISCONNECTED,
+                    lastError = disconnectMessage(ev),
+                    screen = Screen.Bookmarks,
+                )
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.TemporaryDisconnect -> _state.update {
@@ -279,6 +347,18 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             is CoreEvent.TalkStatus -> {
                 talking[ev.clientId] = ev.talking
                 rebuildTree()
+            }
+            is CoreEvent.TextMessage -> _state.update {
+                it.copy(
+                    chatMessages = it.chatMessages + ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        fromClientId = ev.fromClientId,
+                        fromName = ev.fromName,
+                        isSelf = false,
+                        isDirect = ev.target is ChatMessageTarget.Direct,
+                        text = ev.text,
+                    ),
+                )
             }
         }
     }

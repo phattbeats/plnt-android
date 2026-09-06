@@ -50,7 +50,29 @@ data class ChannelNode(
     val children: List<ChannelNode> = emptyList(),
 )
 
+/**
+ * One chat line, channel or private. `isDirect` mirrors whether the message
+ * was sent/received as a private (client-to-client) message rather than
+ * channel chat — server-wide chat is out of scope for v1 (PHA-3281).
+ */
+data class ChatMessage(
+    val id: String,
+    val fromClientId: Long,
+    val fromName: String,
+    val isSelf: Boolean,
+    val isDirect: Boolean,
+    val text: String,
+)
+
 enum class PttMode { PUSH_TO_TALK, OPEN_MIC }
+
+/**
+ * User-facing mic/output route preference. AUTO keeps [com.plnt.client.audio.AudioEngine]'s
+ * existing priority chain (Bluetooth SCO > wired > USB > built-in); the rest force that
+ * chain to skip straight to the named device type, so a user can e.g. keep talking on the
+ * phone's own mic while a paired Bluetooth headset stays connected for media.
+ */
+enum class InputRoute { AUTO, BUILTIN_MIC, WIRED_HEADSET, BLUETOOTH, USB_HEADSET }
 
 data class Settings(
     val pttMode: PttMode = PttMode.PUSH_TO_TALK,
@@ -59,12 +81,14 @@ data class Settings(
     // live regardless of either.
     val pttOnVolumeButton: Boolean = false,
     val pttOnHeadsetButton: Boolean = false,
+    val preferredInputRoute: InputRoute = InputRoute.AUTO,
 )
 
 sealed class Screen {
     data object Bookmarks : Screen()
     data object Connected : Screen()
     data object Settings : Screen()
+    data object Chat : Screen()
 }
 
 enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
@@ -84,4 +108,7 @@ data class AppState(
     val lastError: String? = null,
     val settings: Settings = Settings(),
     val identityExport: String? = null,
+    /** Which [InputRoute]s the current hardware actually offers right now (updates as devices plug/unplug). */
+    val availableInputRoutes: Set<InputRoute> = setOf(InputRoute.AUTO, InputRoute.BUILTIN_MIC),
+    val chatMessages: List<ChatMessage> = emptyList(),
 )

@@ -15,8 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.plnt.client.model.ChannelNode
+import com.plnt.client.model.ClientRow
 import com.plnt.client.model.Screen
 import com.plnt.client.ui.BookmarksScreen
+import com.plnt.client.ui.ChatScreen
 import com.plnt.client.ui.ConnectedScreen
 import com.plnt.client.ui.SettingsScreen
 import com.plnt.client.ui.theme.PlntTheme
@@ -63,14 +66,24 @@ class MainActivity : ComponentActivity() {
                             onPttRelease = viewModel::pttRelease,
                             onDisconnect = viewModel::disconnect,
                             onOpenSettings = { viewModel.navigate(Screen.Settings) },
+                            onOpenChat = { viewModel.navigate(Screen.Chat) },
+                        )
+                        Screen.Chat -> ChatScreen(
+                            messages = state.chatMessages,
+                            peers = flattenClients(state.channelTree).filterNot { it.isSelf },
+                            onSend = viewModel::sendChatMessage,
+                            onBack = { viewModel.navigate(Screen.Connected) },
                         )
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
+                            availableInputRoutes = state.availableInputRoutes,
                             onPttModeChange = viewModel::setPttMode,
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
+                            onInputRouteChange = viewModel::setPreferredInputRoute,
                             onImportIdentity = viewModel::importIdentity,
+                            onCreateIdentity = viewModel::createNewIdentity,
                             onBack = {
                                 viewModel.navigate(
                                     if (state.phase == com.plnt.client.model.ConnectionPhase.CONNECTED) {
@@ -125,3 +138,7 @@ class MainActivity : ComponentActivity() {
         return volumeArmed || headsetArmed
     }
 }
+
+/** Flattens the channel tree into a single roster list for the chat DM picker. */
+private fun flattenClients(nodes: List<ChannelNode>): List<ClientRow> =
+    nodes.flatMap { it.clients + flattenClients(it.children) }

@@ -99,3 +99,30 @@ toolchain, and no emulator**. Concretely:
    `default network changed` / `default network lost` lines bracketing the reconnect, and no crash.
 6. Tap "Disconnect" from the notification mid-reconnect-backoff; expect the retry loop to stop
    immediately (no further `connect()` attempts in logcat) and the notification to clear.
+
+## Telling an OS service kill apart from a user disconnect (PHA-3283)
+
+`onDestroy()` used to call the same `disconnect()` a Disconnect tap does, so an Android-initiated
+service teardown — low memory, an OEM background/battery policy, doze/standby — reached the UI as a
+user-initiated disconnect carrying the core's generic `client.disconnect` reason. Every teardown now
+goes through `VoiceService.shutdown(cause, reason)`, and the cause is supplied by the caller that
+knows it: `USER` for the Disconnect action and the in-app button, `SYSTEM_KILL` for `onDestroy()`,
+`CONNECTION_LOST` / `RECONNECT_FAILED` / `ERROR` for the failure paths.
+
+To confirm a suspected kill on a device, capture both buffers across the repro window:
+
+```
+adb logcat -b system -b main | grep -E 'plnt\.lifecycle|plnt\.voice|ActivityManager: Killing|lowmemorykiller'
+```
+
+`plnt.lifecycle` carries one line per service lifecycle callback — `onCreate`, `onStartCommand`,
+`onTrimMemory`, `onTaskRemoved`, `onLowMemory`, `onDestroy` — each stamped `t+<n>s` since the last
+successful connect, so "it timed out after a while" becomes an exact idle duration. Two signatures
+worth knowing:
+
+- `onTrimMemory ... COMPLETE` followed by `onDestroy` (and an `ActivityManager: Killing` line in the
+  system buffer) is a memory reclaim.
+- `onStartCommand ... null intent — START_STICKY restart after a kill` is Android restarting the
+  service after it died. Nothing reconnects there: `connectionParams` lived only in the dead
+  instance, so the restarted service comes up idle. Persisting it is deliberately left to the
+  follow-up that decides between hardening for survival and auto-reconnecting.
