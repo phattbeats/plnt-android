@@ -107,6 +107,66 @@ Watch `adb logcat -s plnt.voice`.
       client hears you only while held. (Volume-key PTT with the screen off
       is a known gap, not expected to work — see `FOREGROUND_SERVICE.md`.)
 
+## 7. UI screenshot matrix (PHA-3079, emulator)
+
+This section is the acceptance evidence for PHA-3079: one screenshot per
+screen/state, taken on the emulator against a local TeamSpeak 3.13.8 server
+with two bot clients (the `voicespike` example from the spike is the "other
+person"). Unlike sections 1–5, none of this needs real audio hardware.
+
+Setup:
+
+```bash
+# 1. local test server + two bots (from the spike write-up in PHA-3072)
+cargo run --release -p tsclientlib --example voicespike -- --server 127.0.0.1 --nick jess
+# 2. emulator + APK (build.sh output, or the CI artifact)
+emulator -avd <avd> -no-snapshot -netdelay none -netspeed full &
+adb install -r app/app/build/outputs/apk/debug/app-debug.apk
+# 3. capture
+adb exec-out screencap -p > shots/<name>.png
+```
+
+Capture each of these; the name in brackets maps to the mockup in PHA-3076's
+**PLNT UI Design** document:
+
+- [ ] `bookmarks-empty` [§1] — no servers, ghost icon + hint, `+` in the app bar.
+- [ ] `bookmarks-list` [§2] — two or more rows, 72dp each, trailing dot sage on
+      the one connected this session and `#4a4840` on the others.
+- [ ] `bookmarks-swipe-edit` [§2] — mid-swipe right, mauve EDIT strip showing.
+- [ ] `bookmarks-swipe-del` [§2] — mid-swipe left, oxblood DEL strip showing.
+- [ ] `sheet-add` [§3] — bottom sheet, "Add server", SAVE at 40% (address empty).
+- [ ] `sheet-edit-password` [§3] — "Edit server", password masked, then a second
+      shot with the eye toggled on.
+- [ ] `connected-tree` [§4] — channel tree with a collapsed channel (`▸`), an
+      expanded one (`▾`) and an "(empty)" channel.
+- [ ] `connected-other-talking` [§4] — bot talking: sage bar + ring + caption,
+      row background lifted to `#141813`.
+- [ ] `connected-you-talking` [§4] — PTT held: gold bar/ring/caption, bold name,
+      row background `#1a1710`, PTT circle filled gold.
+- [ ] `connected-muted` [§4] — mic muted: MIC pill; then deafened as well so
+      both MIC and SND show on the same row (this is the case the old
+      single-value presence enum could not render).
+- [ ] `settings` [§5] — mauve section headers, gold radio, both PTT switches on
+      at once.
+- [ ] `settings-identity` [§5] — export sheet and import sheet.
+- [ ] `notification` [§6] — shade, connected and muted variants.
+- [ ] `lockscreen` [§7] — notification on the lock screen; then a shot taken
+      while holding the notification's Talk action with the bot confirming
+      audio.
+
+Two states in the design's table **cannot** be produced from live data yet and
+should be reported as not-captured rather than faked: a peer showing MIC/SND
+(plnt-core reports no peer mute state) and the away treatment (no idle time in
+the event stream). Both are implemented in Compose and flagged on PHA-3076.
+
+Also confirm while capturing:
+
+- [ ] Talk state appears/disappears in step with the bot's audio, with no
+      visible lag — it is driven by `ConnEvent`, so a delay means something is
+      polling.
+- [ ] Toggling mute from the notification updates the on-screen mute circle
+      and your own row's MIC pill (service → UI state listener).
+
 ## Report format
 
 For each numbered section above, report pass/fail + a one-line note per
