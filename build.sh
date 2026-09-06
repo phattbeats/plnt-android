@@ -79,14 +79,31 @@ fi
 export ANDROID_HOME
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 
+# `yes | sdkmanager --install X` under `set -o pipefail` is a race, not a
+# pipeline: when the package is already present (the CI workflow installs the
+# platform itself before build.sh runs) sdkmanager exits before draining stdin,
+# `yes` takes SIGPIPE, and the pipeline's non-zero status fails the build even
+# though nothing went wrong — "yes: standard output: Broken pipe" then exit 1.
+# Turn pipefail off for the pipe so the exit status is sdkmanager's alone.
+sdk_install() {
+  local pkg="$1" rc=0
+  set +o pipefail
+  yes | sdkmanager --install "$pkg" || rc=$?
+  set -o pipefail
+  if [[ $rc -ne 0 ]]; then
+    echo "build.sh: sdkmanager --install $pkg failed (exit $rc)" >&2
+    return "$rc"
+  fi
+}
+
 if [[ ! -d "$ANDROID_HOME/ndk/$NDK_VERSION" ]]; then
   echo "build.sh: installing NDK $NDK_VERSION"
-  yes | sdkmanager --install "ndk;$NDK_VERSION"
+  sdk_install "ndk;$NDK_VERSION"
 fi
 
 if [[ ! -d "$ANDROID_HOME/platforms/$ANDROID_PLATFORM" ]]; then
   echo "build.sh: installing platform $ANDROID_PLATFORM"
-  yes | sdkmanager --install "platforms;$ANDROID_PLATFORM"
+  sdk_install "platforms;$ANDROID_PLATFORM"
 fi
 
 # app/app/build.gradle.kts pins compileSdk/targetSdk = 35 independently of
@@ -95,19 +112,19 @@ fi
 COMPILE_SDK_PLATFORM="${COMPILE_SDK_PLATFORM:-android-35}"
 if [[ ! -d "$ANDROID_HOME/platforms/$COMPILE_SDK_PLATFORM" ]]; then
   echo "build.sh: installing platform $COMPILE_SDK_PLATFORM"
-  yes | sdkmanager --install "platforms;$COMPILE_SDK_PLATFORM"
+  sdk_install "platforms;$COMPILE_SDK_PLATFORM"
 fi
 
 if [[ ! -d "$ANDROID_HOME/build-tools/35.0.0" ]]; then
   echo "build.sh: installing build-tools 35.0.0"
-  yes | sdkmanager --install "build-tools;35.0.0"
+  sdk_install "build-tools;35.0.0"
 fi
 
 # AGP 8.5.2 also resolves build-tools 34.0.0 for some tasks even though
 # compileSdk is 35 — install it too or Gradle fails on unaccepted licenses.
 if [[ ! -d "$ANDROID_HOME/build-tools/34.0.0" ]]; then
   echo "build.sh: installing build-tools 34.0.0"
-  yes | sdkmanager --install "build-tools;34.0.0"
+  sdk_install "build-tools;34.0.0"
 fi
 
 # ---- Java / Gradle wrapper --------------------------------------------------
