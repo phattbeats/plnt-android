@@ -32,7 +32,7 @@ use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
 
 mod udl_types;
 
-pub use udl_types::{Channel, ConnEvent, ConnectionState};
+pub use udl_types::{Channel, ClientInfo, ConnEvent, ConnectionState};
 
 /// Build version string, surfaced to the Kotlin side for the settings screen
 /// and bug reports.
@@ -193,6 +193,7 @@ impl Client {
         let own_client_id = state_snapshot.own_client.0;
         let server_name = state_snapshot.server.name.clone();
         let channel_tree = snapshot_channel_tree(&state_snapshot);
+        let clients = snapshot_clients(&state_snapshot);
 
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<ControlCommand>();
 
@@ -207,6 +208,33 @@ impl Client {
         let initial_channel_tree = channel_tree.clone();
         let sink_for_connected = Arc::clone(&sink_for_task);
 
+        // Publish state before spawning the loop: the loop's first act is to
+        // check `connection.is_some()` and bail if it isn't set yet.
+        {
+            let mut guard = self.state.lock().unwrap();
+            guard.own_client_id = own_client_id;
+            guard.server_name = server_name.clone();
+            guard.channel_tree = channel_tree.clone();
+            guard.connection = Some(ConnectionHandle { cmd_tx });
+        }
+
+        // `connect()` above consumed the server's first BookEvents batch itself,
+        // so the loop never sees it and — on a quiet server — never emits a
+        // tree at all. That is why the connected screen came up empty. Replay
+        // the snapshot here, and seed the loop's signatures so it does not
+        // immediately emit the identical pair again.
+        let initial_tree_signature = tree_signature(&channel_tree);
+        let initial_client_signature = clients_signature(&clients);
+
+        sink_for_connected.on_event(ConnEvent::Connected(ConnectionState {
+            own_client_id: own_client_id.into(),
+            server_name,
+        }));
+        sink_for_connected.on_event(ConnEvent::ChannelTree(
+            channel_tree.values().cloned().collect(),
+        ));
+        sink_for_connected.on_event(ConnEvent::ClientList(clients));
+
         self.runtime.spawn(async move {
             run_connection_loop(
                 con,
@@ -214,22 +242,12 @@ impl Client {
                 sink_for_task,
                 state_for_task,
                 initial_channel_tree,
+                initial_tree_signature,
+                initial_client_signature,
             )
             .await;
         });
 
-        {
-            let mut guard = self.state.lock().unwrap();
-            guard.own_client_id = own_client_id;
-            guard.server_name = server_name.clone();
-            guard.channel_tree = channel_tree;
-            guard.connection = Some(ConnectionHandle { cmd_tx });
-        }
-
-        sink_for_connected.on_event(ConnEvent::Connected(ConnectionState {
-            own_client_id: own_client_id.into(),
-            server_name,
-        }));
         Ok(())
     }
 
@@ -383,22 +401,59 @@ fn snapshot_channel_tree(
         .collect()
 }
 
+/// Snapshot every client the server has told us about, with the properties the
+/// roster rows render. Sorted by id so the signature below is stable.
+fn snapshot_clients(state: &tsclientlib::data::Connection) -> Vec<ClientInfo> {
+    let mut clients: Vec<ClientInfo> = state
+        .clients
+        .iter()
+        .map(|(id, c)| ClientInfo {
+            id: id.0 as u64,
+            name: c.name.clone(),
+            channel_id: c.channel.0,
+            input_muted: c.input_muted,
+            output_muted: c.output_muted,
+            away: c.away_message.is_some(),
+        })
+        .collect();
+    clients.sort_unstable_by_key(|c| c.id);
+    clients
+}
+
+fn clients_signature(clients: &[ClientInfo]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for c in clients {
+        c.id.hash(&mut hasher);
+        c.name.hash(&mut hasher);
+        c.channel_id.hash(&mut hasher);
+        c.input_muted.hash(&mut hasher);
+        c.output_muted.hash(&mut hasher);
+        c.away.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 // ---------------------------------------------------------------------------
 // Background connection task
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn run_connection_loop(
     mut con: Connection,
     cmd_rx: std::sync::mpsc::Receiver<ControlCommand>,
     sink: Arc<dyn EventSink>,
     shared_state: Arc<Mutex<ClientState>>,
     initial_channel_tree: HashMap<u64, Channel>,
+    initial_tree_signature: u64,
+    initial_client_signature: u64,
 ) {
     let mut encoder: Option<Encoder> = None;
     let mut out_packet_buf: Vec<u8> = vec![0u8; MAX_OPUS_PACKET_BYTES];
     let mut audio: AudioHandler = AudioHandler::default();
     let mut channel_tree = initial_channel_tree;
-    let mut last_tree_signature: Option<u64> = None;
+    let mut last_tree_signature: Option<u64> = Some(initial_tree_signature);
+    let mut last_client_signature: Option<u64> = Some(initial_client_signature);
     // Track which queues currently exist so we can emit TalkStatus false on remove.
     let mut known_talkers: std::collections::HashSet<u16> = std::collections::HashSet::new();
 
@@ -534,6 +589,15 @@ async fn run_connection_loop(
                         let channels: Vec<Channel> = channel_tree.values().cloned().collect();
                         sink.on_event(ConnEvent::ChannelTree(channels));
                         last_tree_signature = Some(signature);
+                    }
+                    // Roster snapshot covers joins, parts, moves, renames and
+                    // peer mute changes in one event — `ClientMoved` below only
+                    // ever fires for someone who moves while we are watching.
+                    let clients = snapshot_clients(&state);
+                    let client_signature = clients_signature(&clients);
+                    if last_client_signature != Some(client_signature) {
+                        sink.on_event(ConnEvent::ClientList(clients));
+                        last_client_signature = Some(client_signature);
                     }
                     for ev in events {
                         if let tsclientlib::events::Event::PropertyChanged {

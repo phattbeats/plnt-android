@@ -1986,6 +1986,62 @@ public object FfiConverterTypeChannel: FfiConverterRustBuffer<Channel> {
 
 
 /**
+ * One client visible on the server. `ClientMoved` only ever carried an id, so
+ * the app had no nicknames and no way to learn about anyone who was already
+ * connected — this record is the roster the channel tree hangs clients off.
+ */
+data class ClientInfo (
+    var `id`: kotlin.ULong, 
+    var `name`: kotlin.String, 
+    var `channelId`: kotlin.ULong, 
+    /**
+     * Peer's own mic mute, as the server reports it (the MIC pill).
+     */
+    var `inputMuted`: kotlin.Boolean, 
+    /**
+     * Peer's own speaker mute / deafen, as the server reports it (the SND pill).
+     */
+    var `outputMuted`: kotlin.Boolean, 
+    var `away`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+public object FfiConverterTypeClientInfo: FfiConverterRustBuffer<ClientInfo> {
+    override fun read(buf: ByteBuffer): ClientInfo {
+        return ClientInfo(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ClientInfo) = (
+            FfiConverterULong.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterULong.allocationSize(value.`channelId`) +
+            FfiConverterBoolean.allocationSize(value.`inputMuted`) +
+            FfiConverterBoolean.allocationSize(value.`outputMuted`) +
+            FfiConverterBoolean.allocationSize(value.`away`)
+    )
+
+    override fun write(value: ClientInfo, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`id`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterULong.write(value.`channelId`, buf)
+            FfiConverterBoolean.write(value.`inputMuted`, buf)
+            FfiConverterBoolean.write(value.`outputMuted`, buf)
+            FfiConverterBoolean.write(value.`away`, buf)
+    }
+}
+
+
+
+/**
  * Connection-state snapshot, emitted on `Connected`.
  */
 data class ConnectionState (
@@ -2038,6 +2094,15 @@ sealed class ConnEvent {
         companion object
     }
     
+    /**
+     * Full roster snapshot, not a delta — emitted once on connect and again
+     * whenever the visible client set or its properties change.
+     */
+    data class ClientList(
+        val v1: List<ClientInfo>) : ConnEvent() {
+        companion object
+    }
+    
     data class ClientMoved(
         val `clientId`: kotlin.ULong, 
         val `channelId`: kotlin.ULong) : ConnEvent() {
@@ -2081,19 +2146,22 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             3 -> ConnEvent.ChannelTree(
                 FfiConverterSequenceTypeChannel.read(buf),
                 )
-            4 -> ConnEvent.ClientMoved(
+            4 -> ConnEvent.ClientList(
+                FfiConverterSequenceTypeClientInfo.read(buf),
+                )
+            5 -> ConnEvent.ClientMoved(
                 FfiConverterULong.read(buf),
                 FfiConverterULong.read(buf),
                 )
-            5 -> ConnEvent.TalkStatus(
+            6 -> ConnEvent.TalkStatus(
                 FfiConverterULong.read(buf),
                 FfiConverterBoolean.read(buf),
                 )
-            6 -> ConnEvent.PcmFrame(
+            7 -> ConnEvent.PcmFrame(
                 FfiConverterULong.read(buf),
                 FfiConverterSequenceFloat.read(buf),
                 )
-            7 -> ConnEvent.Error(
+            8 -> ConnEvent.Error(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -2120,6 +2188,13 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             (
                 4UL
                 + FfiConverterSequenceTypeChannel.allocationSize(value.v1)
+            )
+        }
+        is ConnEvent.ClientList -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterSequenceTypeClientInfo.allocationSize(value.v1)
             )
         }
         is ConnEvent.ClientMoved -> {
@@ -2172,26 +2247,31 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 FfiConverterSequenceTypeChannel.write(value.v1, buf)
                 Unit
             }
-            is ConnEvent.ClientMoved -> {
+            is ConnEvent.ClientList -> {
                 buf.putInt(4)
+                FfiConverterSequenceTypeClientInfo.write(value.v1, buf)
+                Unit
+            }
+            is ConnEvent.ClientMoved -> {
+                buf.putInt(5)
                 FfiConverterULong.write(value.`clientId`, buf)
                 FfiConverterULong.write(value.`channelId`, buf)
                 Unit
             }
             is ConnEvent.TalkStatus -> {
-                buf.putInt(5)
+                buf.putInt(6)
                 FfiConverterULong.write(value.`clientId`, buf)
                 FfiConverterBoolean.write(value.`talking`, buf)
                 Unit
             }
             is ConnEvent.PcmFrame -> {
-                buf.putInt(6)
+                buf.putInt(7)
                 FfiConverterULong.write(value.`clientId`, buf)
                 FfiConverterSequenceFloat.write(value.`samples`, buf)
                 Unit
             }
             is ConnEvent.Error -> {
-                buf.putInt(7)
+                buf.putInt(8)
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
@@ -2485,6 +2565,31 @@ public object FfiConverterSequenceTypeChannel: FfiConverterRustBuffer<List<Chann
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeChannel.write(it, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterSequenceTypeClientInfo: FfiConverterRustBuffer<List<ClientInfo>> {
+    override fun read(buf: ByteBuffer): List<ClientInfo> {
+        val len = buf.getInt()
+        return List<ClientInfo>(len) {
+            FfiConverterTypeClientInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ClientInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeClientInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ClientInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeClientInfo.write(it, buf)
         }
     }
 }

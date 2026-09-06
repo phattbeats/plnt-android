@@ -16,6 +16,8 @@ sealed class CoreEvent {
     data class Connected(val ownClientId: Long, val serverName: String) : CoreEvent()
     data class Disconnected(val reason: String) : CoreEvent()
     data class ChannelTree(val channels: List<CoreChannel>) : CoreEvent()
+    /** Whole-roster snapshot, not a delta — replaces whatever the app had. */
+    data class ClientList(val clients: List<CoreClientInfo>) : CoreEvent()
     data class ClientMoved(val clientId: Long, val channelId: Long) : CoreEvent()
     data class TalkStatus(val clientId: Long, val talking: Boolean) : CoreEvent()
     data class Error(val message: String) : CoreEvent()
@@ -39,6 +41,15 @@ data class CoreChannel(
     val parentId: Long?,
     val hasPassword: Boolean,
     val talkPower: Long,
+)
+
+data class CoreClientInfo(
+    val id: Long,
+    val name: String,
+    val channelId: Long,
+    val inputMuted: Boolean,
+    val outputMuted: Boolean,
+    val away: Boolean,
 )
 
 interface CoreClient {
@@ -114,6 +125,18 @@ object CoreBridge {
                     parentId = it.parentId?.toLong(),
                     hasPassword = it.hasPassword,
                     talkPower = it.talkPower,
+                )
+            }
+        )
+        is uniffi.plnt_core.ConnEvent.ClientList -> CoreEvent.ClientList(
+            ev.v1.map {
+                CoreClientInfo(
+                    id = it.id.toLong(),
+                    name = it.name,
+                    channelId = it.channelId.toLong(),
+                    inputMuted = it.inputMuted,
+                    outputMuted = it.outputMuted,
+                    away = it.away,
                 )
             }
         )
