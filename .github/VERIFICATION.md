@@ -50,14 +50,29 @@ adb -s emulator-5554 logcat -d | grep -E 'plnt|core_version' | head -50
 adb -s emulator-5554 exec-out screencap -p > screenshot.png
 ```
 
-The Compose UI calls `uniffi.plnt_core.coreVersion()` in `MainActivity.kt`.
-On a real x86_64 emulator, this prints (verified host-side) as:
+The Compose UI calls `CoreBridge.coreVersion()` (→ `uniffi.plnt_core.coreVersion()`)
+in `ui/SettingsScreen.kt`, under **Settings → About** — reach it from the
+bookmarks screen's gear icon, or directly:
+
+```bash
+adb -s emulator-5554 shell input tap 880 216    # gear icon, 1080x2400 emulator
+```
+
+`core_version()` is `env!("CARGO_PKG_VERSION")` (`core/src/lib.rs`), so the
+Text widget renders exactly:
 
 ```
-plnt-core 0.1.0 (tsclientlib@ee3bc6f, audiopus libopus 1.3.1)
+0.1.0
 ```
 
-…and the on-screen Text widget renders the same string.
+Earlier revisions of this file and of `DEPLOYMENT.md` claimed
+`plnt-core 0.1.0 (tsclientlib@ee3bc6f, audiopus libopus 1.3.1)`. The function
+has never returned that — corrected against the on-device dump in PHA-3132.
+
+What you are checking is **not** the version number, it is that the string is a
+version at all. On a broken native link `CoreBridge.coreVersion()` catches the
+throwable and renders `unavailable: UnsatisfiedLinkError: dlopen failed: …`
+instead. That is the PHA-3235 failure mode, visible without a logcat dive.
 
 ## First successful CI run
 
