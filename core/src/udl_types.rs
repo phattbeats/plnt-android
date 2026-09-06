@@ -61,6 +61,15 @@ pub enum DisconnectCause {
     ConnectionLost,
 }
 
+/// Where a text message came from / should be sent to. Server-wide chat and
+/// pokes exist in the protocol but are out of scope for v1 (PHA-3281) —
+/// channel chat and client-to-client private messages only.
+#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Enum)]
+pub enum ChatTarget {
+    Channel,
+    Client { client_id: u64 },
+}
+
 /// All events the core emits to the sink. Flat enum over the variants the issue
 /// specifies.
 #[derive(Clone, Debug, Serialize, Deserialize, uniffi::Enum)]
@@ -75,5 +84,12 @@ pub enum ConnEvent {
     TalkStatus { client_id: u64, talking: bool },
     /// 960 mono f32 samples at 48 kHz (20 ms) — jitter-buffered mixed mono.
     PcmFrame { client_id: u64, samples: Vec<f32> },
+    /// Inbound channel or private text message.
+    TextMessage {
+        target: ChatTarget,
+        from_client_id: u64,
+        from_name: String,
+        text: String,
+    },
     Error(String),
 }

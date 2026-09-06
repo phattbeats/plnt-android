@@ -9,6 +9,7 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreEvent
 import com.plnt.client.core.DisconnectCause
 import com.plnt.client.data.IdentityStore
@@ -16,6 +17,7 @@ import com.plnt.client.data.PlntDataStore
 import com.plnt.client.model.AppState
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.ChannelNode
+import com.plnt.client.model.ChatMessage
 import com.plnt.client.model.ClientPresence
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
@@ -136,6 +138,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 lastError = null,
                 channelTree = emptyList(),
                 sessionConnected = it.sessionConnected + bookmark.id,
+                chatMessages = emptyList(),
             )
         }
         val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
@@ -158,6 +161,30 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     fun joinChannel(channelId: Long) {
         runOnService { it.joinChannel(channelId, null) }
+    }
+
+    /**
+     * Send a channel or private message. Appended to [AppState.chatMessages]
+     * immediately (own sent messages are never echoed back by the server) —
+     * inbound messages arrive only via [CoreEvent.TextMessage].
+     */
+    fun sendChatMessage(target: ChatMessageTarget, text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val ownId = _state.value.ownClientId ?: return
+        _state.update {
+            it.copy(
+                chatMessages = it.chatMessages + ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    fromClientId = ownId,
+                    fromName = clientsById[ownId]?.name ?: "you",
+                    isSelf = true,
+                    isDirect = target is ChatMessageTarget.Direct,
+                    text = trimmed,
+                ),
+            )
+        }
+        runOnService { it.sendTextMessage(target, trimmed) }
     }
 
     fun setMuted(muted: Boolean) {
@@ -310,6 +337,18 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             is CoreEvent.TalkStatus -> {
                 talking[ev.clientId] = ev.talking
                 rebuildTree()
+            }
+            is CoreEvent.TextMessage -> _state.update {
+                it.copy(
+                    chatMessages = it.chatMessages + ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        fromClientId = ev.fromClientId,
+                        fromName = ev.fromName,
+                        isSelf = false,
+                        isDirect = ev.target is ChatMessageTarget.Direct,
+                        text = ev.text,
+                    ),
+                )
             }
         }
     }

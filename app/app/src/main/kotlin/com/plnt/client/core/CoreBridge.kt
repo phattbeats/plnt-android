@@ -58,6 +58,13 @@ sealed class CoreEvent {
     data class ClientList(val clients: List<CoreClientInfo>) : CoreEvent()
     data class ClientMoved(val clientId: Long, val channelId: Long) : CoreEvent()
     data class TalkStatus(val clientId: Long, val talking: Boolean) : CoreEvent()
+    /** Inbound channel or private text message. Never one this app itself sent — see [CoreClient.sendTextMessage]. */
+    data class TextMessage(
+        val target: ChatMessageTarget,
+        val fromClientId: Long,
+        val fromName: String,
+        val text: String,
+    ) : CoreEvent()
     data class Error(val message: String) : CoreEvent()
     // PcmFrame is intentionally not surfaced here — audio I/O is PHA-3077's
     // AudioEngine; the UI only needs talk state, not the samples.
@@ -90,6 +97,15 @@ data class CoreClientInfo(
     val away: Boolean,
 )
 
+/**
+ * Where an outgoing text message goes. Server-wide chat and pokes exist in
+ * the protocol but are out of scope for v1 (PHA-3281).
+ */
+sealed class ChatMessageTarget {
+    data object Channel : ChatMessageTarget()
+    data class Direct(val clientId: Long) : ChatMessageTarget()
+}
+
 interface CoreClient {
     fun connect(address: String, port: Int, nickname: String, identityPem: String, password: String?)
     fun disconnect()
@@ -98,6 +114,7 @@ interface CoreClient {
     fun setOutputMuted(muted: Boolean)
     /** Encode+send one 20 ms / 960-sample / 48 kHz mono frame. See PHA-3077's AudioEngine — the only caller. */
     fun sendPcmFrame(samples: FloatArray)
+    fun sendTextMessage(target: ChatMessageTarget, text: String)
     fun close()
 }
 
@@ -139,6 +156,8 @@ object CoreBridge {
             override fun setInputMuted(muted: Boolean) = native.setInputMuted(muted)
             override fun setOutputMuted(muted: Boolean) = native.setOutputMuted(muted)
             override fun sendPcmFrame(samples: FloatArray) = native.sendPcmFrame(samples.toList())
+            override fun sendTextMessage(target: ChatMessageTarget, text: String) =
+                native.sendTextMessage(target.toNative(), text)
             override fun close() = native.destroy()
         }
     }
@@ -188,11 +207,27 @@ object CoreBridge {
             CoreEvent.ClientMoved(ev.clientId.toLong(), ev.channelId.toLong())
         is uniffi.plnt_core.ConnEvent.TalkStatus ->
             CoreEvent.TalkStatus(ev.clientId.toLong(), ev.talking)
+        is uniffi.plnt_core.ConnEvent.TextMessage -> CoreEvent.TextMessage(
+            target = ev.target.fromNative(),
+            fromClientId = ev.fromClientId.toLong(),
+            fromName = ev.fromName,
+            text = ev.text,
+        )
         // Filtered out in newClient()'s sink before translate() is ever called
         // with one — routed to `onPcmFrame` instead. Kept here only so this
         // `when` stays exhaustive over the sealed ConnEvent.
         is uniffi.plnt_core.ConnEvent.PcmFrame ->
             error("PcmFrame must be intercepted before translate() — see CoreBridge.newClient")
         is uniffi.plnt_core.ConnEvent.Error -> CoreEvent.Error(ev.v1)
+    }
+
+    private fun ChatMessageTarget.toNative(): uniffi.plnt_core.ChatTarget = when (this) {
+        ChatMessageTarget.Channel -> uniffi.plnt_core.ChatTarget.Channel
+        is ChatMessageTarget.Direct -> uniffi.plnt_core.ChatTarget.Client(clientId.toULong())
+    }
+
+    private fun uniffi.plnt_core.ChatTarget.fromNative(): ChatMessageTarget = when (this) {
+        is uniffi.plnt_core.ChatTarget.Channel -> ChatMessageTarget.Channel
+        is uniffi.plnt_core.ChatTarget.Client -> ChatMessageTarget.Direct(clientId.toLong())
     }
 }
