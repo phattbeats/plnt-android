@@ -67,12 +67,22 @@ data class ChatMessage(
 enum class PttMode { PUSH_TO_TALK, OPEN_MIC }
 
 /**
- * User-facing mic/output route preference. AUTO keeps [com.plnt.client.audio.AudioEngine]'s
- * existing priority chain (Bluetooth SCO > wired > USB > built-in); the rest force that
- * chain to skip straight to the named device type, so a user can e.g. keep talking on the
- * phone's own mic while a paired Bluetooth headset stays connected for media.
+ * One selectable entry in the Settings audio input/output pickers — a single
+ * `AudioDeviceInfo` the hardware currently reports (PHA-3282).
+ *
+ * [key] is `"<AudioDeviceInfo.type>:<address>"`. The platform's own
+ * `AudioDeviceInfo.id` is deliberately not used: it is only documented as
+ * unique among one `getDevices()` call, so it churns when a headset drops out
+ * and comes back, whereas type+address is what a user means by "my headset"
+ * and survives a reconnect.
+ *
+ * This supersedes PHA-3132's `InputRoute` enum, which could only name a device
+ * *category* (phone mic / wired / Bluetooth / USB) and had no output half at
+ * all. Selecting a device here still drives the same communication-device
+ * routing that enum drove, so the "keep using the phone mic while a Bluetooth
+ * headset stays paired" case it existed for still works — just per-device.
  */
-enum class InputRoute { AUTO, BUILTIN_MIC, WIRED_HEADSET, BLUETOOTH, USB_HEADSET }
+data class AudioDeviceOption(val key: String, val label: String)
 
 data class Settings(
     val pttMode: PttMode = PttMode.PUSH_TO_TALK,
@@ -81,7 +91,11 @@ data class Settings(
     // live regardless of either.
     val pttOnVolumeButton: Boolean = false,
     val pttOnHeadsetButton: Boolean = false,
-    val preferredInputRoute: InputRoute = InputRoute.AUTO,
+    // null = Automatic, the default. Nothing calls setPreferredDevice() and
+    // BluetoothScoRouter's priority chain decides the route on its own, exactly
+    // as it did before PHA-3282 (so PHA-3077/PHA-3080's SCO behaviour is intact).
+    val preferredInputDeviceKey: String? = null,
+    val preferredOutputDeviceKey: String? = null,
 )
 
 sealed class Screen {
@@ -108,7 +122,9 @@ data class AppState(
     val lastError: String? = null,
     val settings: Settings = Settings(),
     val identityExport: String? = null,
-    /** Which [InputRoute]s the current hardware actually offers right now (updates as devices plug/unplug). */
-    val availableInputRoutes: Set<InputRoute> = setOf(InputRoute.AUTO, InputRoute.BUILTIN_MIC),
+    /** Input devices the hardware offers right now — refreshed on plug/unplug and on entering Settings. */
+    val availableInputDevices: List<AudioDeviceOption> = emptyList(),
+    /** Output devices the hardware offers right now. Same refresh rules as [availableInputDevices]. */
+    val availableOutputDevices: List<AudioDeviceOption> = emptyList(),
     val chatMessages: List<ChatMessage> = emptyList(),
 )

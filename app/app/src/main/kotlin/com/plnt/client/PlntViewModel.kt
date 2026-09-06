@@ -9,6 +9,7 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.plnt.client.audio.AudioDevices
 import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreEvent
 import com.plnt.client.core.DisconnectCause
@@ -21,7 +22,6 @@ import com.plnt.client.model.ChatMessage
 import com.plnt.client.model.ClientPresence
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
-import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Screen
 import com.plnt.client.service.VoiceService
@@ -102,8 +102,10 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             runOnService {
                 it.setPttMode(settings.pttMode)
                 it.setHeadsetTriggerArmed(settings.pttOnHeadsetButton)
-                it.setPreferredInputRoute(settings.preferredInputRoute)
+                it.setPreferredInputDevice(settings.preferredInputDeviceKey)
+                it.setPreferredOutputDevice(settings.preferredOutputDeviceKey)
             }
+            refreshAudioDevices()
         }
     }
 
@@ -111,7 +113,13 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         voiceService?.let(action) ?: pendingActions.add(action)
     }
 
-    fun navigate(screen: Screen) = _state.update { it.copy(screen = screen) }
+    fun navigate(screen: Screen) {
+        // Settings lists audio devices, and a headset may have been plugged in since
+        // the last enumeration. With no call running there is no AudioEngine device
+        // callback to push an update, so re-read on the way in (PHA-3282).
+        if (screen == Screen.Settings) refreshAudioDevices()
+        _state.update { it.copy(screen = screen) }
+    }
 
     fun addOrUpdateBookmark(bookmark: Bookmark) {
         val next = _state.value.bookmarks.filterNot { it.id == bookmark.id } + bookmark
@@ -229,10 +237,29 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.setHeadsetTriggerArmed(enabled) }
     }
 
-    fun setPreferredInputRoute(route: InputRoute) {
-        _state.update { it.copy(settings = it.settings.copy(preferredInputRoute = route)) }
+    /** PHA-3282: pin the mic to one device, or `null` for Automatic. */
+    fun setPreferredInputDevice(key: String?) {
+        _state.update { it.copy(settings = it.settings.copy(preferredInputDeviceKey = key)) }
         viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
-        runOnService { it.setPreferredInputRoute(route) }
+        runOnService { it.setPreferredInputDevice(key) }
+    }
+
+    /** Output half of [setPreferredInputDevice]. */
+    fun setPreferredOutputDevice(key: String?) {
+        _state.update { it.copy(settings = it.settings.copy(preferredOutputDeviceKey = key)) }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+        runOnService { it.setPreferredOutputDevice(key) }
+    }
+
+    /** Enumerates without going through the service — works before the first connect. */
+    private fun refreshAudioDevices() {
+        val app = getApplication<Application>()
+        _state.update {
+            it.copy(
+                availableInputDevices = AudioDevices.listInputs(app),
+                availableOutputDevices = AudioDevices.listOutputs(app),
+            )
+        }
     }
 
     fun importIdentity(pem: String): Boolean {
@@ -274,8 +301,15 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 inputMuted = st.inputMuted,
                 outputDeafened = st.outputMuted,
                 transmitting = st.transmitting,
-                settings = it.settings.copy(preferredInputRoute = st.preferredInputRoute),
-                availableInputRoutes = st.availableInputRoutes,
+                settings = it.settings.copy(
+                    preferredInputDeviceKey = st.preferredInputDeviceKey,
+                    preferredOutputDeviceKey = st.preferredOutputDeviceKey,
+                ),
+                // Only while a call is live does the service hold device lists (they come
+                // off the AudioEngine's device callback); before the first connect it
+                // reports empty, which must not wipe what refreshAudioDevices() found.
+                availableInputDevices = st.availableInputDevices.ifEmpty { it.availableInputDevices },
+                availableOutputDevices = st.availableOutputDevices.ifEmpty { it.availableOutputDevices },
             )
         }
         // Own row's MIC/SND tags and talk ring come out of the same state.
