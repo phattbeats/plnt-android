@@ -132,13 +132,20 @@ COMMITTED_BINDINGS="$BINDINGS_DIR/uniffi/plnt_core/plnt_core.kt"
 mkdir -p "$BINDINGS_DIR"
 set +e
 echo "build.sh: building host cdylib for bindgen metadata"
-cargo build --release -p plnt-core 2>/dev/null
-HOST_LIB=$(find ../target/release -maxdepth 1 -name "libplnt_core.so" -o -name "libplnt_core.dylib" 2>/dev/null | head -n1)
+# core/.cargo/config.toml pins `[build] target` to the two Android triples
+# so plain `cargo build` (no --target) cross-compiles instead of producing a
+# host .so — pass --target explicitly for the host triple to override that
+# default (an explicit --target always wins over the config default).
+HOST_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
+cargo build --release -p plnt-core --target "$HOST_TRIPLE" 2>/dev/null
+HOST_LIB=$(find "../target/$HOST_TRIPLE/release" -maxdepth 1 -name "libplnt_core.so" -o -name "libplnt_core.dylib" 2>/dev/null | head -n1)
 if [[ -z "$HOST_LIB" ]]; then
-  HOST_LIB=$(find ../target/release -maxdepth 1 -name "libplnt_core.*" 2>/dev/null | head -n1)
+  HOST_LIB=$(find "../target/$HOST_TRIPLE/release" -maxdepth 1 -name "libplnt_core.*" 2>/dev/null | head -n1)
 fi
 echo "build.sh: generating Kotlin bindings via workspace-local CLI shim (library mode)"
-cargo run --manifest-path ../Cargo.toml --bin plnt-uniffi-bindgen -- generate \
+# Same override as above — cwd is still core/, so its .cargo/config.toml
+# would otherwise force this to cross-compile the bindgen shim itself too.
+cargo run --manifest-path ../Cargo.toml --target "$HOST_TRIPLE" --bin plnt-uniffi-bindgen -- generate \
   --language kotlin \
   --out-dir "$BINDINGS_DIR" \
   --library "$HOST_LIB" 2>/dev/null
