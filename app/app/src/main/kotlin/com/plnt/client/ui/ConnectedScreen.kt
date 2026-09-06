@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.HeadsetOff
 import androidx.compose.material.icons.filled.Lock
@@ -88,6 +89,7 @@ fun ConnectedScreen(
     onPttRelease: () -> Unit,
     onDisconnect: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenChat: () -> Unit,
 ) {
     // Collapse state is per-channel and sticky; channels with nothing in them
     // start collapsed (design §4), everything else starts open.
@@ -118,6 +120,9 @@ fun ConnectedScreen(
                     // Not in the mockup, but disconnect moved to the control bar
                     // pill and settings would otherwise be unreachable while
                     // connected. Implementer's call; flagged on PHA-3076.
+                    IconButton(onClick = onOpenChat) {
+                        Icon(Icons.Filled.Chat, contentDescription = "Chat", tint = Mauve)
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Mauve)
                     }

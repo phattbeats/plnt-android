@@ -24,6 +24,7 @@ import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import com.plnt.client.audio.AudioEngine
 import com.plnt.client.audio.CORE_FRAME_SAMPLES
+import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreBridge
 import com.plnt.client.core.CoreClient
 import com.plnt.client.core.CoreEvent
@@ -263,6 +264,10 @@ class VoiceService : Service() {
         outputMuted = muted
         runCatching { client?.setOutputMuted(muted) }
         emitState()
+    }
+
+    fun sendTextMessage(target: ChatMessageTarget, text: String) {
+        runCatching { client?.sendTextMessage(target, text) }
     }
 
     /** Press-and-hold PTT / media-button PTT gate. Capture keeps running, only forwarding toggles. */
