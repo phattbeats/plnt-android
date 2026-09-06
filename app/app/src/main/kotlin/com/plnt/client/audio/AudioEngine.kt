@@ -148,8 +148,8 @@ class AudioEngine(
 
     private fun emitDeviceLists() {
         onAudioDevicesChanged(
-            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).map { it.toOption() },
-            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.toOption() },
+            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toOptions(),
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toOptions(),
         )
     }
 
@@ -358,6 +358,17 @@ internal fun AudioDeviceInfo.routeLabel(): String {
 
 internal fun AudioDeviceInfo.toOption(): AudioDeviceOption = AudioDeviceOption(routeKey(), routeLabel())
 
+/**
+ * A `getDevices()` result as picker rows, collapsing entries that share a
+ * [routeKey]. Handsets routinely report several `TYPE_BUILTIN_MIC` elements —
+ * bottom, top, back — all with an empty address, which would otherwise render as
+ * two or three identical "Phone mic" rows that highlight as one. They really are
+ * a single choice here: [AudioEngine.findDevice] takes the first key match
+ * either way, and the platform picks among the physical capsules itself.
+ */
+internal fun Array<AudioDeviceInfo>.toOptions(): List<AudioDeviceOption> =
+    map { it.toOption() }.distinctBy { it.key }
+
 private val bluetoothDeviceTypes = setOf(
     AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
     AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
@@ -384,7 +395,7 @@ object AudioDevices {
 
     private fun list(context: Context, flags: Int): List<AudioDeviceOption> {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        return audioManager.getDevices(flags).map { it.toOption() }
+        return audioManager.getDevices(flags).toOptions()
     }
 }
 
