@@ -242,6 +242,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.ChannelTree -> {
+                // Snapshot, not a delta — same as ClientList below. Merging it
+                // left deleted channels on screen forever, so a server that had
+                // dropped a temporary channel and made a permanent one with the
+                // same name rendered both.
+                channelsById.clear()
                 ev.channels.forEach { channelsById[it.id] = it }
                 rebuildTree()
             }
