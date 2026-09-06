@@ -66,10 +66,12 @@ fun SettingsScreen(
     onPttOnVolumeButtonChange: (Boolean) -> Unit,
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
     onImportIdentity: (String) -> Boolean,
+    onCreateIdentity: () -> Unit,
     onBack: () -> Unit,
 ) {
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    var showCreate by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Bg,
@@ -116,6 +118,7 @@ fun SettingsScreen(
             SectionGap()
 
             SectionHeader("Identity")
+            ChevronRow("Create new identity") { showCreate = true }
             ChevronRow("Export identity", enabled = identityExport != null) { showExport = true }
             ChevronRow("Import identity") { showImport = true }
 
@@ -165,6 +168,24 @@ fun SettingsScreen(
             SheetAction("COPY") {
                 clipboard.setText(AnnotatedString(identityExport))
                 showExport = false
+            }
+        }
+    }
+
+    if (showCreate) {
+        SettingsSheet(title = "Create new identity", onDismiss = { showCreate = false }) {
+            Text(
+                "Generates a brand new TeamSpeak identity and discards the one on this " +
+                    "device. Servers that recognize this device by its old identity (server " +
+                    "groups, bans) will see a stranger. Export the current identity first if " +
+                    "you want to keep it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = BoneFaint,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            SheetAction("CREATE") {
+                onCreateIdentity()
+                showCreate = false
             }
         }
     }

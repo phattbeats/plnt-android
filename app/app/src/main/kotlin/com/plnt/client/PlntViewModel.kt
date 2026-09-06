@@ -205,6 +205,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    /** Replaces the on-device identity with a freshly generated one. */
+    fun createNewIdentity() {
+        val pem = identityStore.createNew()
+        _state.update { it.copy(identityExport = pem) }
+    }
+
     /** Service is the source of truth for mic/output/transmit — mirror it verbatim. */
     private fun onVoiceState(st: VoiceState) {
         _state.update {

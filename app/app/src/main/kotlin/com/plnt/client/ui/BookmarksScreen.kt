@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.plnt.client.data.NicknameGenerator
 import com.plnt.client.model.Bookmark
 import com.plnt.client.ui.theme.Bg
 import com.plnt.client.ui.theme.Bone
@@ -98,7 +100,13 @@ fun BookmarksScreen(
                     // (design §1) — deliberately not a FAB, since it is a rare,
                     // deliberate action and the thumb zone belongs to PTT.
                     IconButton(onClick = {
-                        editing = Bookmark(id = newId(), label = "", address = "", port = 9987, nickname = "")
+                        editing = Bookmark(
+                            id = newId(),
+                            label = "",
+                            address = "",
+                            port = 9987,
+                            nickname = NicknameGenerator.random(),
+                        )
                         isNew = true
                     }) {
                         Icon(Icons.Filled.Add, contentDescription = "Add server", tint = Mauve)
@@ -300,7 +308,24 @@ private fun BookmarkSheet(
                 keyboardType = KeyboardType.Number,
             )
             Spacer(modifier = Modifier.height(12.dp))
-            PlntTextField("Nickname", nickname, { nickname = it })
+            PlntTextField(
+                "Nickname",
+                nickname,
+                { nickname = it },
+                trailing = {
+                    IconButton(
+                        onClick = { nickname = NicknameGenerator.random() },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = "Generate nickname",
+                            tint = Bone,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                },
+            )
             Spacer(modifier = Modifier.height(12.dp))
             PlntTextField(
                 "Server password",

@@ -41,6 +41,13 @@ class IdentityStore(context: Context) {
         return true
     }
 
+    /** Discards the current identity and persists a freshly generated one. */
+    fun createNew(): String {
+        val created = CoreBridge.createIdentity()
+        prefs.edit().putString(KEY_IDENTITY_PEM, created).apply()
+        return created
+    }
+
     private companion object {
         const val KEY_IDENTITY_PEM = "identity_pem"
     }
