@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
                             onImportIdentity = viewModel::importIdentity,
+                            onCreateIdentity = viewModel::createNewIdentity,
                             onBack = {
                                 viewModel.navigate(
                                     if (state.phase == com.plnt.client.model.ConnectionPhase.CONNECTED) {
