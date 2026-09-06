@@ -25,6 +25,24 @@ sealed class CoreEvent {
     // AudioEngine; the UI only needs talk state, not the samples.
 
     /**
+     * tsclientlib is resending unacked packets and hasn't heard back — it may
+     * resolve this on its own (see [Resumed]) without ever tearing the
+     * connection down, so this is distinct from [Error]/[Disconnected]
+     * (PHA-3277: a generic [Error] here had no matching "all clear" event, so
+     * the banner it drove stuck forever).
+     */
+    data class TemporaryDisconnect(val reason: String) : CoreEvent()
+
+    /**
+     * The first roster tick after a [TemporaryDisconnect] resolves. Carries a
+     * fresh `ownClientId` because tsclientlib's internal reconnect rebuilds
+     * its session state from scratch and can hand back a different id than
+     * before the blip (PHA-3277) — the UI must re-sync from this rather than
+     * trusting the id cached at the original [Connected].
+     */
+    data class Resumed(val ownClientId: Long, val serverName: String) : CoreEvent()
+
+    /**
      * Synthetic — never comes from `translate()`/uniffi. PHA-3078's
      * VoiceService emits this itself when it starts an automatic
      * reconnect (network change or dropped connection after a prior
@@ -150,5 +168,8 @@ object CoreBridge {
         is uniffi.plnt_core.ConnEvent.PcmFrame ->
             error("PcmFrame must be intercepted before translate() — see CoreBridge.newClient")
         is uniffi.plnt_core.ConnEvent.Error -> CoreEvent.Error(ev.v1)
+        is uniffi.plnt_core.ConnEvent.TemporaryDisconnect -> CoreEvent.TemporaryDisconnect(ev.reason)
+        is uniffi.plnt_core.ConnEvent.Resumed ->
+            CoreEvent.Resumed(ev.v1.ownClientId.toLong(), ev.v1.serverName)
     }
 }

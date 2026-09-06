@@ -361,6 +361,13 @@ class VoiceService : Service() {
                 if (ev.clientId == ownClientId) lastChannelId = ev.channelId
                 eventListener?.invoke(ev)
             }
+            is CoreEvent.Resumed -> {
+                // tsclientlib's internal reconnect can hand back a different
+                // own_client_id than before the blip (PHA-3277) — re-sync the
+                // copy `ClientMoved` above compares against, same as Connected.
+                ownClientId = ev.ownClientId
+                eventListener?.invoke(ev)
+            }
             is CoreEvent.Disconnected -> {
                 if (hasConnectedOnce && connectionParams != null && !userInitiatedDisconnect) {
                     scheduleReconnect(reconnectBackoffMs)

@@ -486,6 +486,11 @@ async fn run_connection_loop(
     let mut known_talkers: std::collections::HashSet<u16> = std::collections::HashSet::new();
     // Distinguishes "we tore this down" from "the server did".
     let mut stream_ended = false;
+    // Set on `DisconnectedTemporarily`, cleared on the `BookEvents` batch that
+    // follows tsclientlib's internal reconnect — that batch is the earliest
+    // point `con.get_state()` reflects the resumed session's (possibly new)
+    // own_client id.
+    let mut awaiting_resume = false;
 
     loop {
         // Drain control commands first — `try_recv`, never `recv`. Wrapping the
@@ -617,6 +622,18 @@ async fn run_connection_loop(
             }
             Ok(StreamItem::BookEvents(events)) => {
                 if let Ok(state) = con.get_state() {
+                    if awaiting_resume {
+                        awaiting_resume = false;
+                        let resumed_own_client_id = state.own_client.0;
+                        {
+                            let mut guard = shared_state.lock().unwrap();
+                            guard.own_client_id = resumed_own_client_id;
+                        }
+                        sink.on_event(ConnEvent::Resumed(ConnectionState {
+                            own_client_id: resumed_own_client_id.into(),
+                            server_name: state.server.name.clone(),
+                        }));
+                    }
                     channel_tree = snapshot_channel_tree(&state);
                     {
                         let mut guard = shared_state.lock().unwrap();
@@ -655,7 +672,8 @@ async fn run_connection_loop(
             }
             Ok(StreamItem::NetworkStatsUpdated) => {}
             Ok(StreamItem::DisconnectedTemporarily(reason)) => {
-                sink.on_event(ConnEvent::Error(format!("temp disconnect: {reason:?}")));
+                awaiting_resume = true;
+                sink.on_event(ConnEvent::TemporaryDisconnect { reason: format!("{reason:?}") });
             }
             Ok(_) => {}
             Err(e) => {

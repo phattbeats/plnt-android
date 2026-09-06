@@ -970,7 +970,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_plnt_core_checksum_method_client_set_output_muted() != 36648.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_plnt_core_checksum_method_identityobj_export() != 33362.toShort()) {
+    if (lib.uniffi_plnt_core_checksum_method_identityobj_export() != 42603.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_identityobj_level() != 11117.toShort()) {
@@ -1728,10 +1728,14 @@ public object FfiConverterTypeClient: FfiConverter<Client, Pointer> {
 public interface IdentityObjInterface {
     
     /**
-     * Export as a portable string. Round-trips through `import`. We use the
-     * standard TS3 identity format `"<counter>V<base64-key>"` — see tsproto
-     * `Identity::new_from_str` which accepts both `N_V` prefixed and raw
-     * base64 forms.
+     * Export as a portable string. Round-trips through [`parse_identity`] —
+     * and therefore through `import` and `Client::connect`, which both use it.
+     *
+     * The format is the standard TS3 identity string `"<counter>V<base64-key>"`,
+     * the same shape the official client persists, so the counter (and with it
+     * the hash-cash level) survives the round trip. The key half is
+     * `base64(key.to_short())`, which is what tsproto's own `Serialize` impl
+     * writes and what `EccKeyPrivP256::import_str` reads back.
      */
     fun `export`(): kotlin.String
     
@@ -1831,10 +1835,14 @@ open class IdentityObj: Disposable, AutoCloseable, IdentityObjInterface {
 
     
     /**
-     * Export as a portable string. Round-trips through `import`. We use the
-     * standard TS3 identity format `"<counter>V<base64-key>"` — see tsproto
-     * `Identity::new_from_str` which accepts both `N_V` prefixed and raw
-     * base64 forms.
+     * Export as a portable string. Round-trips through [`parse_identity`] —
+     * and therefore through `import` and `Client::connect`, which both use it.
+     *
+     * The format is the standard TS3 identity string `"<counter>V<base64-key>"`,
+     * the same shape the official client persists, so the counter (and with it
+     * the hash-cash level) survives the round trip. The key half is
+     * `base64(key.to_short())`, which is what tsproto's own `Serialize` impl
+     * writes and what `EccKeyPrivP256::import_str` reads back.
      */override fun `export`(): kotlin.String {
             return FfiConverterString.lift(
     callWithPointer {
@@ -2129,6 +2137,30 @@ sealed class ConnEvent {
         companion object
     }
     
+    /**
+     * tsclientlib is resending unacked packets and hasn't heard back yet. It
+     * resolves this internally (reconnect + resume) without ever tearing the
+     * `Client` down, so unlike `Disconnected` no `Connected` follows — the UI
+     * must clear whatever this sets itself, once `Resumed` arrives.
+     */
+    data class TemporaryDisconnect(
+        val `reason`: kotlin.String) : ConnEvent() {
+        companion object
+    }
+    
+    /**
+     * Emitted once, on the first `BookEvents` batch after a `TemporaryDisconnect`
+     * resolves. tsclientlib's internal reconnect rebuilds its session state from
+     * scratch, which can hand back a different `own_client_id` than before the
+     * blip even though nothing about the app's session looks different from the
+     * outside (PHA-3277) — carrying the fresh id here is what lets the roster's
+     * "(you)" row re-sync instead of silently going stale.
+     */
+    data class Resumed(
+        val v1: ConnectionState) : ConnEvent() {
+        companion object
+    }
+    
 
     
     companion object
@@ -2163,6 +2195,12 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 )
             8 -> ConnEvent.Error(
                 FfiConverterString.read(buf),
+                )
+            9 -> ConnEvent.TemporaryDisconnect(
+                FfiConverterString.read(buf),
+                )
+            10 -> ConnEvent.Resumed(
+                FfiConverterTypeConnectionState.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
@@ -2228,6 +2266,20 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 + FfiConverterString.allocationSize(value.v1)
             )
         }
+        is ConnEvent.TemporaryDisconnect -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`reason`)
+            )
+        }
+        is ConnEvent.Resumed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeConnectionState.allocationSize(value.v1)
+            )
+        }
     }
 
     override fun write(value: ConnEvent, buf: ByteBuffer) {
@@ -2273,6 +2325,16 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             is ConnEvent.Error -> {
                 buf.putInt(8)
                 FfiConverterString.write(value.v1, buf)
+                Unit
+            }
+            is ConnEvent.TemporaryDisconnect -> {
+                buf.putInt(9)
+                FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+            is ConnEvent.Resumed -> {
+                buf.putInt(10)
+                FfiConverterTypeConnectionState.write(value.v1, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
