@@ -63,7 +63,11 @@ fn legacy_json_export_still_imports() {
 
 #[test]
 fn empty_identity_is_a_clear_error_not_a_key_decode_error() {
-    let err = IdentityObj::import(String::new()).expect_err("empty string must not import");
+    // Not `expect_err` — the Ok side is `Arc<IdentityObj>`, which is not `Debug`.
+    let err = match IdentityObj::import(String::new()) {
+        Ok(_) => panic!("empty string must not import"),
+        Err(e) => e,
+    };
     let msg = err.to_string();
     assert!(msg.contains("empty"), "unhelpful error for empty identity: {msg}");
 }
