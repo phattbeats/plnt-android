@@ -106,6 +106,15 @@ Watch `adb logcat -s plnt.voice`.
       backgrounded/screen off, hold the headset button. Confirm the other
       client hears you only while held. (Volume-key PTT with the screen off
       is a known gap, not expected to work — see `FOREGROUND_SERVICE.md`.)
+- [ ] Transient disconnect (PHA-3277): blackhole the server's voice UDP port
+      (not airplane mode — this must stay short enough that tsclientlib
+      resumes the session itself rather than the app's own reconnect loop
+      taking over) for ~30–40 s, past the ~26 s resend-timeout but well
+      under this checklist's other full-drop tests. Confirm the red "temp
+      disconnect" banner appears, then clears on its own within a few
+      seconds of restoring the network — it must not still be showing 30 s+
+      later. Confirm the own row keeps its "(you)" label the whole time,
+      including after the banner clears.
 
 ## 7. UI screenshot matrix (PHA-3079, emulator)
 

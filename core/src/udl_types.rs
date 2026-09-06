@@ -92,4 +92,16 @@ pub enum ConnEvent {
         text: String,
     },
     Error(String),
+    /// tsclientlib is resending unacked packets and hasn't heard back yet. It
+    /// resolves this internally (reconnect + resume) without ever tearing the
+    /// `Client` down, so unlike `Disconnected` no `Connected` follows — the UI
+    /// must clear whatever this sets itself, once `Resumed` arrives.
+    TemporaryDisconnect { reason: String },
+    /// Emitted once, on the first `BookEvents` batch after a `TemporaryDisconnect`
+    /// resolves. tsclientlib's internal reconnect rebuilds its session state from
+    /// scratch, which can hand back a different `own_client_id` than before the
+    /// blip even though nothing about the app's session looks different from the
+    /// outside (PHA-3277) — carrying the fresh id here is what lets the roster's
+    /// "(you)" row re-sync instead of silently going stale.
+    Resumed(ConnectionState),
 }

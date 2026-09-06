@@ -309,6 +309,16 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
+            is CoreEvent.TemporaryDisconnect -> _state.update {
+                it.copy(lastError = "temp disconnect: ${ev.reason}")
+            }
+            is CoreEvent.Resumed -> {
+                _state.update { it.copy(lastError = null, ownClientId = ev.ownClientId, serverName = ev.serverName) }
+                // Roster rows already reflect the resumed session (ClientList
+                // ticks kept flowing all along) — only isSelf needs redoing
+                // now that ownClientId has moved.
+                rebuildTree()
+            }
             is CoreEvent.ChannelTree -> {
                 // Snapshot, not a delta — same as ClientList below. Merging it
                 // left deleted channels on screen forever, so a server that had

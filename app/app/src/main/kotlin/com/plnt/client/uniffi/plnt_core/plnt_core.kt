@@ -2246,6 +2246,30 @@ sealed class ConnEvent {
         companion object
     }
     
+    /**
+     * tsclientlib is resending unacked packets and hasn't heard back yet. It
+     * resolves this internally (reconnect + resume) without ever tearing the
+     * `Client` down, so unlike `Disconnected` no `Connected` follows — the UI
+     * must clear whatever this sets itself, once `Resumed` arrives.
+     */
+    data class TemporaryDisconnect(
+        val `reason`: kotlin.String) : ConnEvent() {
+        companion object
+    }
+    
+    /**
+     * Emitted once, on the first `BookEvents` batch after a `TemporaryDisconnect`
+     * resolves. tsclientlib's internal reconnect rebuilds its session state from
+     * scratch, which can hand back a different `own_client_id` than before the
+     * blip even though nothing about the app's session looks different from the
+     * outside (PHA-3277) — carrying the fresh id here is what lets the roster's
+     * "(you)" row re-sync instead of silently going stale.
+     */
+    data class Resumed(
+        val v1: ConnectionState) : ConnEvent() {
+        companion object
+    }
+    
 
     
     companion object
@@ -2287,6 +2311,12 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 )
             9 -> ConnEvent.Error(
                 FfiConverterString.read(buf),
+                )
+            10 -> ConnEvent.TemporaryDisconnect(
+                FfiConverterString.read(buf),
+                )
+            11 -> ConnEvent.Resumed(
+                FfiConverterTypeConnectionState.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
@@ -2363,6 +2393,20 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 + FfiConverterString.allocationSize(value.v1)
             )
         }
+        is ConnEvent.TemporaryDisconnect -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`reason`)
+            )
+        }
+        is ConnEvent.Resumed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeConnectionState.allocationSize(value.v1)
+            )
+        }
     }
 
     override fun write(value: ConnEvent, buf: ByteBuffer) {
@@ -2417,6 +2461,16 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             is ConnEvent.Error -> {
                 buf.putInt(9)
                 FfiConverterString.write(value.v1, buf)
+                Unit
+            }
+            is ConnEvent.TemporaryDisconnect -> {
+                buf.putInt(10)
+                FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+            is ConnEvent.Resumed -> {
+                buf.putInt(11)
+                FfiConverterTypeConnectionState.write(value.v1, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
