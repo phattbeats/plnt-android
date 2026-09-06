@@ -21,6 +21,16 @@ sealed class CoreEvent {
     data class Error(val message: String) : CoreEvent()
     // PcmFrame is intentionally not surfaced here — audio I/O is PHA-3077's
     // AudioEngine; the UI only needs talk state, not the samples.
+
+    /**
+     * Synthetic — never comes from `translate()`/uniffi. PHA-3078's
+     * VoiceService emits this itself when it starts an automatic
+     * reconnect (network change or dropped connection after a prior
+     * successful connect), so the UI can show "reconnecting" without
+     * bouncing back to the bookmarks screen the way a real [Disconnected]
+     * would.
+     */
+    data object Reconnecting : CoreEvent()
 }
 
 data class CoreChannel(

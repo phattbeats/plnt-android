@@ -19,6 +19,10 @@
          actions (PHA-3078); requested from MainActivity so the toggle is granted
          before that notification ever needs to post. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- PHA-3078: VoiceService's ConnectivityManager.NetworkCallback (wifi<->LTE
+         handoff detection) and the partial wake lock held while connected. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"

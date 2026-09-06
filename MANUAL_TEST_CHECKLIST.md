@@ -76,6 +76,37 @@ plnt.voice` while testing.
       the notification stays posted (`VoiceService` foreground) and audio
       keeps flowing both ways.
 
+## 6. Network handoff / reconnect (PHA-3078)
+
+Run against a local TeamSpeak 3.13.8 test server so a drop is easy to force.
+Watch `adb logcat -s plnt.voice`.
+
+- [ ] Connect, join a non-default channel. Toggle airplane mode on, wait
+      3–5 s, toggle it back off. Confirm the notification content flips to
+      "Reconnecting…" within ~1 s of the drop, the client reconnects and is
+      back in the *same* channel within 10 s of the network returning, and
+      the UI never bounces to the bookmarks screen during the whole window.
+- [ ] Same test, but switch wifi → mobile data (or vice versa) instead of
+      airplane mode — this is the actual wifi↔LTE handoff case, not just a
+      full network loss.
+- [ ] Background the app (press Home) before triggering the network change.
+      Confirm the reconnect still happens and the notification still
+      updates even with the Activity gone (this is what proves the
+      connection lives in `VoiceService`, not `PlntViewModel`).
+- [ ] From the notification: tap Mute, confirm the action label flips to
+      "Unmute" and the other client sees you go silent. Tap Talk, confirm
+      the other client hears you without touching the app. Tap Disconnect,
+      confirm the notification clears and, if this is fired mid-reconnect
+      backoff, no further `connect()` attempts appear in logcat afterward.
+- [ ] Force a permanent failure (wrong server password) on a fresh connect.
+      Confirm it surfaces as an error/returns to bookmarks immediately —
+      it must NOT enter the reconnect-retry loop (only network-triggered
+      drops after a successful connect should retry).
+- [ ] Headset-button PTT: with a wired or BT headset connected and the app
+      backgrounded/screen off, hold the headset button. Confirm the other
+      client hears you only while held. (Volume-key PTT with the screen off
+      is a known gap, not expected to work — see `FOREGROUND_SERVICE.md`.)
+
 ## Report format
 
 For each numbered section above, report pass/fail + a one-line note per

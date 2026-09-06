@@ -61,6 +61,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    // PHA-3078: identity store, bookmarks/settings store, media-button PTT.
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.media)
+
     // plnt-core generated Kotlin bindings + JNA-compatible loader.
     // The generated file is written to src/main/kotlin/com/plnt/client/plnt by
     // `cargo run --bin uniffi-bindgen generate src/plnt_core.udl --language kotlin`

@@ -1,12 +1,17 @@
 package com.plnt.client
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.plnt.client.core.CoreBridge
-import com.plnt.client.core.CoreClient
 import com.plnt.client.core.CoreEvent
+import com.plnt.client.data.IdentityStore
+import com.plnt.client.data.PlntDataStore
 import com.plnt.client.model.AppState
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.ChannelNode
@@ -16,7 +21,7 @@ import com.plnt.client.model.PresenceKind
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.PttSource
 import com.plnt.client.model.Screen
-import com.plnt.client.model.Settings
+import com.plnt.client.service.VoiceService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -27,72 +32,64 @@ import java.util.UUID
  * Owns UI state as a single [StateFlow] so Compose renders every core event on
  * the next frame (collectAsStateWithLifecycle), no polling.
  *
- * Bookmarks/identity are kept in plain SharedPreferences here as a stopgap.
- * PHA-3078 owns the real EncryptedSharedPreferences (identity) + DataStore
- * (bookmarks/settings) and the ForegroundService that should end up owning
- * the [CoreClient] instead of this ViewModel so the connection survives
- * process death / screen-off. Swapping that in is a follow-up once PHA-3078
- * lands; this ViewModel's public surface (connect/disconnect/joinChannel/ptt*)
- * is written so it can delegate to a service binding instead of a local
- * client without changing any Compose call site.
+ * PHA-3078: the [com.plnt.client.core.CoreClient] this app talks to lives in
+ * [VoiceService], not here — this ViewModel binds to it and forwards UI
+ * intents (connect/disconnect/joinChannel/ptt*) rather than owning a client
+ * of its own. PHA-3079's version of this file created its own `CoreClient`
+ * directly, which meant `VoiceService`'s `AudioEngine` was never in the loop
+ * and no captured audio ever reached plnt-core; routing everything through
+ * the bound service both fixes that and is what lets the connection survive
+ * this ViewModel being cleared (app backgrounded hard enough to drop the
+ * Activity) as long as the foreground service is still alive.
+ *
+ * Identity moved to [IdentityStore] (EncryptedSharedPreferences); bookmarks
+ * and PTT settings to [PlntDataStore] (Preferences DataStore).
  */
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
-    private val prefs = app.getSharedPreferences("plnt_prefs", Context.MODE_PRIVATE)
+    private val identityStore = IdentityStore(app)
+    private val dataStore = PlntDataStore(app)
 
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state
 
-    private var client: CoreClient? = null
+    private var voiceService: VoiceService? = null
+    private val pendingActions = mutableListOf<(VoiceService) -> Unit>()
 
     // channelId -> talk-power-flat list of client ids we've observed there.
     private val roster = HashMap<Long, MutableSet<Long>>()
     private val talking = HashMap<Long, Boolean>()
     private val channelsById = HashMap<Long, com.plnt.client.core.CoreChannel>()
 
-    init {
-        _state.update { it.copy(bookmarks = loadBookmarks(), identityExport = loadOrCreateIdentity()) }
-    }
-
-    private fun loadOrCreateIdentity(): String {
-        prefs.getString("identity_pem", null)?.let { return it }
-        val created = CoreBridge.createIdentity()
-        prefs.edit().putString("identity_pem", created).apply()
-        return created
-    }
-
-    private fun loadBookmarks(): List<Bookmark> {
-        val raw = prefs.getString("bookmarks_json", null) ?: return emptyList()
-        return runCatching {
-            org.json.JSONArray(raw).let { arr ->
-                (0 until arr.length()).map { i ->
-                    val o = arr.getJSONObject(i)
-                    Bookmark(
-                        id = o.getString("id"),
-                        label = o.getString("label"),
-                        address = o.getString("address"),
-                        port = o.getInt("port"),
-                        nickname = o.getString("nickname"),
-                        serverPassword = o.optString("password", "").ifEmpty { null },
-                    )
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
-
-    private fun saveBookmarks(bookmarks: List<Bookmark>) {
-        val arr = org.json.JSONArray()
-        bookmarks.forEach { b ->
-            arr.put(
-                org.json.JSONObject()
-                    .put("id", b.id)
-                    .put("label", b.label)
-                    .put("address", b.address)
-                    .put("port", b.port)
-                    .put("nickname", b.nickname)
-                    .put("password", b.serverPassword ?: "")
-            )
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val svc = (binder as VoiceService.LocalBinder).service()
+            voiceService = svc
+            svc.setEventListener { ev -> viewModelScope.launch { onCoreEvent(ev) } }
+            val queued = pendingActions.toList()
+            pendingActions.clear()
+            queued.forEach { it(svc) }
         }
-        prefs.edit().putString("bookmarks_json", arr.toString()).apply()
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            voiceService = null
+        }
+    }
+
+    init {
+        app.bindService(Intent(app, VoiceService::class.java), connection, Context.BIND_AUTO_CREATE)
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    bookmarks = dataStore.loadBookmarks(),
+                    settings = dataStore.loadSettings(),
+                    identityExport = identityStore.loadOrCreate(),
+                )
+            }
+        }
+    }
+
+    private fun runOnService(action: (VoiceService) -> Unit) {
+        voiceService?.let(action) ?: pendingActions.add(action)
     }
 
     fun navigate(screen: Screen) = _state.update { it.copy(screen = screen) }
@@ -100,43 +97,30 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun addOrUpdateBookmark(bookmark: Bookmark) {
         val next = _state.value.bookmarks.filterNot { it.id == bookmark.id } + bookmark
         _state.update { it.copy(bookmarks = next) }
-        saveBookmarks(next)
+        viewModelScope.launch { dataStore.saveBookmarks(next) }
     }
 
     fun deleteBookmark(id: String) {
         val next = _state.value.bookmarks.filterNot { it.id == id }
         _state.update { it.copy(bookmarks = next) }
-        saveBookmarks(next)
+        viewModelScope.launch { dataStore.saveBookmarks(next) }
     }
 
     fun newBookmarkId(): String = UUID.randomUUID().toString()
 
     fun connect(bookmark: Bookmark) {
-        disconnect()
         roster.clear()
         talking.clear()
         channelsById.clear()
-        _state.update { it.copy(phase = ConnectionPhase.CONNECTING, lastError = null) }
-        val identity = _state.value.identityExport ?: loadOrCreateIdentity()
-        val c = CoreBridge.newClient { ev -> viewModelScope.launch { onCoreEvent(ev) } }
-        client = c
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                c.connect(bookmark.address, bookmark.port, bookmark.nickname, identity, bookmark.serverPassword)
-            } catch (e: Throwable) {
-                _state.update {
-                    it.copy(phase = ConnectionPhase.ERROR, lastError = e.message ?: e.javaClass.simpleName)
-                }
-            }
-        }
+        _state.update { it.copy(phase = ConnectionPhase.CONNECTING, lastError = null, channelTree = emptyList()) }
+        val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
+        val app = getApplication<Application>()
+        ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
+        runOnService { it.connect(bookmark, identity) }
     }
 
     fun disconnect() {
-        client?.let {
-            runCatching { it.disconnect() }
-            runCatching { it.close() }
-        }
-        client = null
+        runOnService { it.disconnect() }
         _state.update {
             it.copy(
                 phase = ConnectionPhase.DISCONNECTED,
@@ -148,60 +132,68 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun joinChannel(channelId: Long) {
-        runCatching { client?.joinChannel(channelId, null) }
+        runOnService { it.joinChannel(channelId, null) }
     }
 
     fun setMuted(muted: Boolean) {
         _state.update { it.copy(inputMuted = muted) }
-        runCatching { client?.setInputMuted(muted) }
+        runOnService { it.setInputMuted(muted) }
     }
 
     fun setDeafened(deafened: Boolean) {
         _state.update { it.copy(outputDeafened = deafened, inputMuted = if (deafened) true else it.inputMuted) }
-        runCatching { client?.setOutputMuted(deafened) }
+        runOnService { it.setOutputMuted(deafened) }
+        if (deafened) runOnService { it.setInputMuted(true) }
     }
 
     /** Press-and-hold PTT. Gates *sending*, not capture — mirrors PHA-3077's AudioEngine contract. */
     fun pttPress() {
         if (_state.value.settings.pttMode != PttMode.PUSH_TO_TALK) return
         _state.update { it.copy(transmitting = true) }
-        runCatching { client?.setInputMuted(false) }
+        runOnService { it.setPushToTalk(true) }
     }
 
     fun pttRelease() {
         if (_state.value.settings.pttMode != PttMode.PUSH_TO_TALK) return
         _state.update { it.copy(transmitting = false) }
-        runCatching { client?.setInputMuted(_state.value.inputMuted) }
+        runOnService { it.setPushToTalk(false) }
     }
 
     fun setPttMode(mode: PttMode) {
         _state.update { it.copy(settings = it.settings.copy(pttMode = mode)) }
-        if (mode == PttMode.OPEN_MIC) {
-            _state.update { it.copy(transmitting = true) }
-            runCatching { client?.setInputMuted(_state.value.inputMuted) }
-        }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+        runOnService { it.setPttMode(mode) }
+        _state.update { it.copy(transmitting = mode == PttMode.OPEN_MIC) }
     }
 
     fun setPttSource(source: PttSource) {
         _state.update { it.copy(settings = it.settings.copy(pttSource = source)) }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
     }
 
     fun importIdentity(pem: String): Boolean {
-        if (!CoreBridge.importIdentity(pem)) return false
-        prefs.edit().putString("identity_pem", pem).apply()
+        if (!identityStore.import(pem)) return false
         _state.update { it.copy(identityExport = pem) }
         return true
     }
 
     private fun onCoreEvent(ev: CoreEvent) {
         when (ev) {
-            is CoreEvent.Connected -> _state.update {
-                it.copy(
-                    phase = ConnectionPhase.CONNECTED,
-                    ownClientId = ev.ownClientId,
-                    serverName = ev.serverName,
-                    screen = Screen.Connected,
-                )
+            is CoreEvent.Connected -> {
+                roster.clear()
+                talking.clear()
+                channelsById.clear()
+                _state.update {
+                    it.copy(
+                        phase = ConnectionPhase.CONNECTED,
+                        ownClientId = ev.ownClientId,
+                        serverName = ev.serverName,
+                        screen = Screen.Connected,
+                    )
+                }
+            }
+            is CoreEvent.Reconnecting -> _state.update {
+                it.copy(phase = ConnectionPhase.RECONNECTING, lastError = null)
             }
             is CoreEvent.Disconnected -> _state.update {
                 it.copy(phase = ConnectionPhase.DISCONNECTED, lastError = ev.reason, screen = Screen.Bookmarks)
@@ -257,7 +249,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        disconnect()
+        // Deliberately does NOT disconnect — the whole point of PHA-3078 is
+        // that the call outlives this ViewModel. Only drop the binding.
+        runCatching { getApplication<Application>().unbindService(connection) }
         super.onCleared()
     }
 }

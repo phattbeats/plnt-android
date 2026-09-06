@@ -47,7 +47,7 @@ sealed class Screen {
     data object Settings : Screen()
 }
 
-enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, ERROR }
+enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
 
 data class AppState(
     val screen: Screen = Screen.Bookmarks,
