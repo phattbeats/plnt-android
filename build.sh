@@ -89,9 +89,25 @@ if [[ ! -d "$ANDROID_HOME/platforms/$ANDROID_PLATFORM" ]]; then
   yes | sdkmanager --install "platforms;$ANDROID_PLATFORM"
 fi
 
+# app/app/build.gradle.kts pins compileSdk/targetSdk = 35 independently of
+# $ANDROID_PLATFORM (which only controls the NDK's native --platform level,
+# e.g. android-34 for the Rust cdylib's min API) — install its platform too.
+COMPILE_SDK_PLATFORM="${COMPILE_SDK_PLATFORM:-android-35}"
+if [[ ! -d "$ANDROID_HOME/platforms/$COMPILE_SDK_PLATFORM" ]]; then
+  echo "build.sh: installing platform $COMPILE_SDK_PLATFORM"
+  yes | sdkmanager --install "platforms;$COMPILE_SDK_PLATFORM"
+fi
+
 if [[ ! -d "$ANDROID_HOME/build-tools/35.0.0" ]]; then
   echo "build.sh: installing build-tools 35.0.0"
   yes | sdkmanager --install "build-tools;35.0.0"
+fi
+
+# AGP 8.5.2 also resolves build-tools 34.0.0 for some tasks even though
+# compileSdk is 35 — install it too or Gradle fails on unaccepted licenses.
+if [[ ! -d "$ANDROID_HOME/build-tools/34.0.0" ]]; then
+  echo "build.sh: installing build-tools 34.0.0"
+  yes | sdkmanager --install "build-tools;34.0.0"
 fi
 
 # ---- Java / Gradle wrapper --------------------------------------------------
@@ -165,7 +181,7 @@ for tgt in $RUST_TARGETS; do
   cargo ndk \
     --target "$tgt" \
     --platform "${ANDROID_PLATFORM#android-}" \
-    --output-dir "../app/app/src/main/jniLibs/$tgt" \
+    --output-dir "../app/app/src/main/jniLibs" \
     build --release
 done
 

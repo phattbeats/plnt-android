@@ -1662,8 +1662,15 @@ name = "plnt-core"
 version = "0.1.0"
 dependencies = [
  "audiopus",
+ "futures",
  "log",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
  "tsclientlib",
+ "tsproto-packets",
  "uniffi",
  "uniffi_macros",
 ]

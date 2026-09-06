@@ -30,6 +30,7 @@ import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
 // A rust-owned buffer is represented by its capacity, its current length, and a
@@ -353,7 +354,7 @@ private fun findLibraryName(componentName: String): String {
     if (libOverride != null) {
         return libOverride
     }
-    return "uniffi_plnt_core"
+    return "plnt_core"
 }
 
 private inline fun <reified Lib : Library> loadIndirect(
@@ -632,6 +633,53 @@ internal open class UniffiForeignFutureStructVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceEventSinkMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`ev`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("onEvent", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceEventSink(
+    @JvmField internal var `onEvent`: UniffiCallbackInterfaceEventSinkMethod0? = null,
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+) : Structure() {
+    class UniffiByValue(
+        `onEvent`: UniffiCallbackInterfaceEventSinkMethod0? = null,
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    ): UniffiVTableCallbackInterfaceEventSink(`onEvent`,`uniffiFree`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceEventSink) {
+        `onEvent` = other.`onEvent`
+        `uniffiFree` = other.`uniffiFree`
+    }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -702,11 +750,48 @@ internal interface UniffiLib : Library {
             .also { lib: UniffiLib ->
                 uniffiCheckContractApiVersion(lib)
                 uniffiCheckApiChecksums(lib)
+                uniffiCallbackInterfaceEventSink.register(lib)
                 }
         }
         
+        // The Cleaner for the whole library
+        internal val CLEANER: UniffiCleaner by lazy {
+            UniffiCleaner.create()
+        }
     }
 
+    fun uniffi_plnt_core_fn_clone_client(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_plnt_core_fn_free_client(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_constructor_client_new(`sink`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_plnt_core_fn_method_client_connect(`ptr`: Pointer,`address`: RustBuffer.ByValue,`port`: Short,`nickname`: RustBuffer.ByValue,`identityPem`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_disconnect(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_join_channel(`ptr`: Pointer,`channelId`: Long,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_send_pcm_frame(`ptr`: Pointer,`frame`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_set_input_muted(`ptr`: Pointer,`muted`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_set_output_muted(`ptr`: Pointer,`muted`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_clone_identityobj(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_plnt_core_fn_free_identityobj(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_constructor_identityobj_create(uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_plnt_core_fn_constructor_identityobj_import(`s`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_plnt_core_fn_method_identityobj_export(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_plnt_core_fn_method_identityobj_level(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    fun uniffi_plnt_core_fn_init_callback_vtable_eventsink(`vtable`: UniffiVTableCallbackInterfaceEventSink,
+    ): Unit
     fun uniffi_plnt_core_fn_func_core_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_plnt_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -823,6 +908,30 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_plnt_core_checksum_func_core_version(
     ): Short
+    fun uniffi_plnt_core_checksum_method_client_connect(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_client_disconnect(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_client_join_channel(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_client_send_pcm_frame(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_client_set_input_muted(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_client_set_output_muted(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_identityobj_export(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_identityobj_level(
+    ): Short
+    fun uniffi_plnt_core_checksum_constructor_client_new(
+    ): Short
+    fun uniffi_plnt_core_checksum_constructor_identityobj_create(
+    ): Short
+    fun uniffi_plnt_core_checksum_constructor_identityobj_import(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_eventsink_on_event(
+    ): Short
     fun ffi_plnt_core_uniffi_contract_version(
     ): Int
     
@@ -840,7 +949,43 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
-    if (lib.uniffi_plnt_core_checksum_func_core_version() != 25167.toShort()) {
+    if (lib.uniffi_plnt_core_checksum_func_core_version() != 51390.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_connect() != 26877.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_disconnect() != 49375.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_join_channel() != 32077.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_send_pcm_frame() != 52815.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_set_input_muted() != 20064.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_set_output_muted() != 36648.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_identityobj_export() != 33362.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_identityobj_level() != 11117.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_constructor_client_new() != 40795.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_constructor_identityobj_create() != 109.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_constructor_identityobj_import() != 51032.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_eventsink_on_event() != 36507.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -882,6 +1027,146 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
 
 /** Used to instantiate an interface without an actual pointer, for fakes in tests, mostly. */
 object NoPointer
+
+public object FfiConverterUByte: FfiConverter<UByte, Byte> {
+    override fun lift(value: Byte): UByte {
+        return value.toUByte()
+    }
+
+    override fun read(buf: ByteBuffer): UByte {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: UByte): Byte {
+        return value.toByte()
+    }
+
+    override fun allocationSize(value: UByte) = 1UL
+
+    override fun write(value: UByte, buf: ByteBuffer) {
+        buf.put(value.toByte())
+    }
+}
+
+public object FfiConverterUShort: FfiConverter<UShort, Short> {
+    override fun lift(value: Short): UShort {
+        return value.toUShort()
+    }
+
+    override fun read(buf: ByteBuffer): UShort {
+        return lift(buf.getShort())
+    }
+
+    override fun lower(value: UShort): Short {
+        return value.toShort()
+    }
+
+    override fun allocationSize(value: UShort) = 2UL
+
+    override fun write(value: UShort, buf: ByteBuffer) {
+        buf.putShort(value.toShort())
+    }
+}
+
+public object FfiConverterUInt: FfiConverter<UInt, Int> {
+    override fun lift(value: Int): UInt {
+        return value.toUInt()
+    }
+
+    override fun read(buf: ByteBuffer): UInt {
+        return lift(buf.getInt())
+    }
+
+    override fun lower(value: UInt): Int {
+        return value.toInt()
+    }
+
+    override fun allocationSize(value: UInt) = 4UL
+
+    override fun write(value: UInt, buf: ByteBuffer) {
+        buf.putInt(value.toInt())
+    }
+}
+
+public object FfiConverterULong: FfiConverter<ULong, Long> {
+    override fun lift(value: Long): ULong {
+        return value.toULong()
+    }
+
+    override fun read(buf: ByteBuffer): ULong {
+        return lift(buf.getLong())
+    }
+
+    override fun lower(value: ULong): Long {
+        return value.toLong()
+    }
+
+    override fun allocationSize(value: ULong) = 8UL
+
+    override fun write(value: ULong, buf: ByteBuffer) {
+        buf.putLong(value.toLong())
+    }
+}
+
+public object FfiConverterLong: FfiConverter<Long, Long> {
+    override fun lift(value: Long): Long {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Long {
+        return buf.getLong()
+    }
+
+    override fun lower(value: Long): Long {
+        return value
+    }
+
+    override fun allocationSize(value: Long) = 8UL
+
+    override fun write(value: Long, buf: ByteBuffer) {
+        buf.putLong(value)
+    }
+}
+
+public object FfiConverterFloat: FfiConverter<Float, Float> {
+    override fun lift(value: Float): Float {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Float {
+        return buf.getFloat()
+    }
+
+    override fun lower(value: Float): Float {
+        return value
+    }
+
+    override fun allocationSize(value: Float) = 4UL
+
+    override fun write(value: Float, buf: ByteBuffer) {
+        buf.putFloat(value)
+    }
+}
+
+public object FfiConverterBoolean: FfiConverter<Boolean, Byte> {
+    override fun lift(value: Byte): Boolean {
+        return value.toInt() != 0
+    }
+
+    override fun read(buf: ByteBuffer): Boolean {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: Boolean): Byte {
+        return if (value) 1.toByte() else 0.toByte()
+    }
+
+    override fun allocationSize(value: Boolean) = 1UL
+
+    override fun write(value: Boolean, buf: ByteBuffer) {
+        buf.put(lower(value))
+    }
+}
 
 public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     // Note: we don't inherit from FfiConverterRustBuffer, because we use a
@@ -935,7 +1220,1278 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
         buf.putInt(byteBuf.limit())
         buf.put(byteBuf)
     }
-} fun `coreVersion`(): kotlin.String {
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+// The cleaner interface for Object finalization code to run.
+// This is the entry point to any implementation that we're using.
+//
+// The cleaner registers objects and returns cleanables, so now we are
+// defining a `UniffiCleaner` with a `UniffiClenaer.Cleanable` to abstract the
+// different implmentations available at compile time.
+interface UniffiCleaner {
+    interface Cleanable {
+        fun clean()
+    }
+
+    fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable
+
+    companion object
+}
+
+// The fallback Jna cleaner, which is available for both Android, and the JVM.
+private class UniffiJnaCleaner : UniffiCleaner {
+    private val cleaner = com.sun.jna.internal.Cleaner.getCleaner()
+
+    override fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable =
+        UniffiJnaCleanable(cleaner.register(value, cleanUpTask))
+}
+
+private class UniffiJnaCleanable(
+    private val cleanable: com.sun.jna.internal.Cleaner.Cleanable,
+) : UniffiCleaner.Cleanable {
+    override fun clean() = cleanable.clean()
+}
+
+// We decide at uniffi binding generation time whether we were
+// using Android or not.
+// There are further runtime checks to chose the correct implementation
+// of the cleaner.
+private fun UniffiCleaner.Companion.create(): UniffiCleaner =
+    try {
+        // For safety's sake: if the library hasn't been run in android_cleaner = true
+        // mode, but is being run on Android, then we still need to think about
+        // Android API versions.
+        // So we check if java.lang.ref.Cleaner is there, and use that…
+        java.lang.Class.forName("java.lang.ref.Cleaner")
+        JavaLangRefCleaner()
+    } catch (e: ClassNotFoundException) {
+        // … otherwise, fallback to the JNA cleaner.
+        UniffiJnaCleaner()
+    }
+
+private class JavaLangRefCleaner : UniffiCleaner {
+    val cleaner = java.lang.ref.Cleaner.create()
+
+    override fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable =
+        JavaLangRefCleanable(cleaner.register(value, cleanUpTask))
+}
+
+private class JavaLangRefCleanable(
+    val cleanable: java.lang.ref.Cleaner.Cleanable
+) : UniffiCleaner.Cleanable {
+    override fun clean() = cleanable.clean()
+}
+public interface ClientInterface {
+    
+    /**
+     * Connect to a TeamSpeak 3 server and wait until the first `BookEvents` batch
+     * has been received (the server has accepted us and sent the initial state).
+     */
+    fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `nickname`: kotlin.String, `identityPem`: kotlin.String, `password`: kotlin.String?)
+    
+    /**
+     * Disconnect cleanly. Drops the command channel; the background task exits.
+     */
+    fun `disconnect`()
+    
+    /**
+     * Move the own client to a channel by id. The channel's current name is
+     * resolved from the cached tree.
+     */
+    fun `joinChannel`(`channelId`: kotlin.ULong, `password`: kotlin.String?)
+    
+    /**
+     * Encode a 960-sample mono f32 frame (20 ms @ 48 kHz) as Opus and send it.
+     */
+    fun `sendPcmFrame`(`frame`: List<kotlin.Float>)
+    
+    fun `setInputMuted`(`muted`: kotlin.Boolean)
+    
+    fun `setOutputMuted`(`muted`: kotlin.Boolean)
+    
+    companion object
+}
+
+open class Client: Disposable, AutoCloseable, ClientInterface {
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+    /**
+     * Build a new, unconnected client. The `sink` receives all events.
+     */
+    constructor(`sink`: EventSink) :
+        this(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_constructor_client_new(
+        FfiConverterTypeEventSink.lower(`sink`),_status)
+}
+    )
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_plnt_core_fn_free_client(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_plnt_core_fn_clone_client(pointer!!, status)
+        }
+    }
+
+    
+    /**
+     * Connect to a TeamSpeak 3 server and wait until the first `BookEvents` batch
+     * has been received (the server has accepted us and sent the initial state).
+     */
+    @Throws(PlntException::class)override fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `nickname`: kotlin.String, `identityPem`: kotlin.String, `password`: kotlin.String?)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_connect(
+        it, FfiConverterString.lower(`address`),FfiConverterUShort.lower(`port`),FfiConverterString.lower(`nickname`),FfiConverterString.lower(`identityPem`),FfiConverterOptionalString.lower(`password`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Disconnect cleanly. Drops the command channel; the background task exits.
+     */
+    @Throws(PlntException::class)override fun `disconnect`()
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_disconnect(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Move the own client to a channel by id. The channel's current name is
+     * resolved from the cached tree.
+     */
+    @Throws(PlntException::class)override fun `joinChannel`(`channelId`: kotlin.ULong, `password`: kotlin.String?)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_join_channel(
+        it, FfiConverterULong.lower(`channelId`),FfiConverterOptionalString.lower(`password`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Encode a 960-sample mono f32 frame (20 ms @ 48 kHz) as Opus and send it.
+     */
+    @Throws(PlntException::class)override fun `sendPcmFrame`(`frame`: List<kotlin.Float>)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_send_pcm_frame(
+        it, FfiConverterSequenceFloat.lower(`frame`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(PlntException::class)override fun `setInputMuted`(`muted`: kotlin.Boolean)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_set_input_muted(
+        it, FfiConverterBoolean.lower(`muted`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(PlntException::class)override fun `setOutputMuted`(`muted`: kotlin.Boolean)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_set_output_muted(
+        it, FfiConverterBoolean.lower(`muted`),_status)
+}
+    }
+    
+    
+
+    
+
+    
+    
+    companion object
+    
+}
+
+public object FfiConverterTypeClient: FfiConverter<Client, Pointer> {
+
+    override fun lower(value: Client): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): Client {
+        return Client(value)
+    }
+
+    override fun read(buf: ByteBuffer): Client {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: Client) = 8UL
+
+    override fun write(value: Client, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * Portable, persistent TeamSpeak identity. The export string is the standard
+ * TS3 identity format `"<counter>V<base64-key>"` — the same shape the official
+ * client persists.
+ */
+public interface IdentityObjInterface {
+    
+    /**
+     * Export as a portable string. Round-trips through `import`. We use the
+     * standard TS3 identity format `"<counter>V<base64-key>"` — see tsproto
+     * `Identity::new_from_str` which accepts both `N_V` prefixed and raw
+     * base64 forms.
+     */
+    fun `export`(): kotlin.String
+    
+    /**
+     * Current security level (8 by default).
+     */
+    fun `level`(): kotlin.UByte
+    
+    companion object
+}
+
+/**
+ * Portable, persistent TeamSpeak identity. The export string is the standard
+ * TS3 identity format `"<counter>V<base64-key>"` — the same shape the official
+ * client persists.
+ */
+open class IdentityObj: Disposable, AutoCloseable, IdentityObjInterface {
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_plnt_core_fn_free_identityobj(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_plnt_core_fn_clone_identityobj(pointer!!, status)
+        }
+    }
+
+    
+    /**
+     * Export as a portable string. Round-trips through `import`. We use the
+     * standard TS3 identity format `"<counter>V<base64-key>"` — see tsproto
+     * `Identity::new_from_str` which accepts both `N_V` prefixed and raw
+     * base64 forms.
+     */override fun `export`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_identityobj_export(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Current security level (8 by default).
+     */override fun `level`(): kotlin.UByte {
+            return FfiConverterUByte.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_identityobj_level(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+    companion object {
+        
+    /**
+     * Create a new identity with the default level (8).
+     */ fun `create`(): IdentityObj {
+            return FfiConverterTypeIdentityObj.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_constructor_identityobj_create(
+        _status)
+}
+    )
+    }
+    
+
+        
+    /**
+     * Import a previously exported identity.
+     */
+    @Throws(PlntException::class) fun `import`(`s`: kotlin.String): IdentityObj {
+            return FfiConverterTypeIdentityObj.lift(
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_constructor_identityobj_import(
+        FfiConverterString.lower(`s`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+public object FfiConverterTypeIdentityObj: FfiConverter<IdentityObj, Pointer> {
+
+    override fun lower(value: IdentityObj): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): IdentityObj {
+        return IdentityObj(value)
+    }
+
+    override fun read(buf: ByteBuffer): IdentityObj {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: IdentityObj) = 8UL
+
+    override fun write(value: IdentityObj, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+
+/**
+ * A single channel in the TeamSpeak tree. Projects the bookkeeping `Channel`
+ * into the minimum the app needs.
+ */
+data class Channel (
+    var `id`: kotlin.ULong, 
+    var `name`: kotlin.String, 
+    var `parentId`: kotlin.ULong?, 
+    var `hasPassword`: kotlin.Boolean, 
+    /**
+     * None means unlimited (or inherited; app shouldn't distinguish for v1).
+     */
+    var `maxClients`: kotlin.UInt?, 
+    var `talkPower`: kotlin.Long, 
+    var `codecLatencyFactor`: kotlin.UByte, 
+    var `codecIsOpusMusic`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+public object FfiConverterTypeChannel: FfiConverterRustBuffer<Channel> {
+    override fun read(buf: ByteBuffer): Channel {
+        return Channel(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: Channel) = (
+            FfiConverterULong.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterOptionalULong.allocationSize(value.`parentId`) +
+            FfiConverterBoolean.allocationSize(value.`hasPassword`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxClients`) +
+            FfiConverterLong.allocationSize(value.`talkPower`) +
+            FfiConverterUByte.allocationSize(value.`codecLatencyFactor`) +
+            FfiConverterBoolean.allocationSize(value.`codecIsOpusMusic`)
+    )
+
+    override fun write(value: Channel, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`id`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterOptionalULong.write(value.`parentId`, buf)
+            FfiConverterBoolean.write(value.`hasPassword`, buf)
+            FfiConverterOptionalUInt.write(value.`maxClients`, buf)
+            FfiConverterLong.write(value.`talkPower`, buf)
+            FfiConverterUByte.write(value.`codecLatencyFactor`, buf)
+            FfiConverterBoolean.write(value.`codecIsOpusMusic`, buf)
+    }
+}
+
+
+
+/**
+ * Connection-state snapshot, emitted on `Connected`.
+ */
+data class ConnectionState (
+    var `ownClientId`: kotlin.ULong, 
+    var `serverName`: kotlin.String
+) {
+    
+    companion object
+}
+
+public object FfiConverterTypeConnectionState: FfiConverterRustBuffer<ConnectionState> {
+    override fun read(buf: ByteBuffer): ConnectionState {
+        return ConnectionState(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ConnectionState) = (
+            FfiConverterULong.allocationSize(value.`ownClientId`) +
+            FfiConverterString.allocationSize(value.`serverName`)
+    )
+
+    override fun write(value: ConnectionState, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`ownClientId`, buf)
+            FfiConverterString.write(value.`serverName`, buf)
+    }
+}
+
+
+
+/**
+ * All events the core emits to the sink. Flat enum over the variants the issue
+ * specifies.
+ */
+sealed class ConnEvent {
+    
+    data class Connected(
+        val v1: ConnectionState) : ConnEvent() {
+        companion object
+    }
+    
+    data class Disconnected(
+        val `reason`: kotlin.String) : ConnEvent() {
+        companion object
+    }
+    
+    data class ChannelTree(
+        val v1: List<Channel>) : ConnEvent() {
+        companion object
+    }
+    
+    data class ClientMoved(
+        val `clientId`: kotlin.ULong, 
+        val `channelId`: kotlin.ULong) : ConnEvent() {
+        companion object
+    }
+    
+    data class TalkStatus(
+        val `clientId`: kotlin.ULong, 
+        val `talking`: kotlin.Boolean) : ConnEvent() {
+        companion object
+    }
+    
+    /**
+     * 960 mono f32 samples at 48 kHz (20 ms) — jitter-buffered mixed mono.
+     */
+    data class PcmFrame(
+        val `clientId`: kotlin.ULong, 
+        val `samples`: List<kotlin.Float>) : ConnEvent() {
+        companion object
+    }
+    
+    data class Error(
+        val v1: kotlin.String) : ConnEvent() {
+        companion object
+    }
+    
+
+    
+    companion object
+}
+
+public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
+    override fun read(buf: ByteBuffer): ConnEvent {
+        return when(buf.getInt()) {
+            1 -> ConnEvent.Connected(
+                FfiConverterTypeConnectionState.read(buf),
+                )
+            2 -> ConnEvent.Disconnected(
+                FfiConverterString.read(buf),
+                )
+            3 -> ConnEvent.ChannelTree(
+                FfiConverterSequenceTypeChannel.read(buf),
+                )
+            4 -> ConnEvent.ClientMoved(
+                FfiConverterULong.read(buf),
+                FfiConverterULong.read(buf),
+                )
+            5 -> ConnEvent.TalkStatus(
+                FfiConverterULong.read(buf),
+                FfiConverterBoolean.read(buf),
+                )
+            6 -> ConnEvent.PcmFrame(
+                FfiConverterULong.read(buf),
+                FfiConverterSequenceFloat.read(buf),
+                )
+            7 -> ConnEvent.Error(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ConnEvent) = when(value) {
+        is ConnEvent.Connected -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeConnectionState.allocationSize(value.v1)
+            )
+        }
+        is ConnEvent.Disconnected -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`reason`)
+            )
+        }
+        is ConnEvent.ChannelTree -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterSequenceTypeChannel.allocationSize(value.v1)
+            )
+        }
+        is ConnEvent.ClientMoved -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`clientId`)
+                + FfiConverterULong.allocationSize(value.`channelId`)
+            )
+        }
+        is ConnEvent.TalkStatus -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`clientId`)
+                + FfiConverterBoolean.allocationSize(value.`talking`)
+            )
+        }
+        is ConnEvent.PcmFrame -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`clientId`)
+                + FfiConverterSequenceFloat.allocationSize(value.`samples`)
+            )
+        }
+        is ConnEvent.Error -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.v1)
+            )
+        }
+    }
+
+    override fun write(value: ConnEvent, buf: ByteBuffer) {
+        when(value) {
+            is ConnEvent.Connected -> {
+                buf.putInt(1)
+                FfiConverterTypeConnectionState.write(value.v1, buf)
+                Unit
+            }
+            is ConnEvent.Disconnected -> {
+                buf.putInt(2)
+                FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+            is ConnEvent.ChannelTree -> {
+                buf.putInt(3)
+                FfiConverterSequenceTypeChannel.write(value.v1, buf)
+                Unit
+            }
+            is ConnEvent.ClientMoved -> {
+                buf.putInt(4)
+                FfiConverterULong.write(value.`clientId`, buf)
+                FfiConverterULong.write(value.`channelId`, buf)
+                Unit
+            }
+            is ConnEvent.TalkStatus -> {
+                buf.putInt(5)
+                FfiConverterULong.write(value.`clientId`, buf)
+                FfiConverterBoolean.write(value.`talking`, buf)
+                Unit
+            }
+            is ConnEvent.PcmFrame -> {
+                buf.putInt(6)
+                FfiConverterULong.write(value.`clientId`, buf)
+                FfiConverterSequenceFloat.write(value.`samples`, buf)
+                Unit
+            }
+            is ConnEvent.Error -> {
+                buf.putInt(7)
+                FfiConverterString.write(value.v1, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+
+/**
+ * Error type surfaced through UniFFI.
+ */
+sealed class PlntException(message: String): Exception(message) {
+        
+        class NotConnected(message: String) : PlntException(message)
+        
+        class Identity(message: String) : PlntException(message)
+        
+        class Connection(message: String) : PlntException(message)
+        
+        class Audio(message: String) : PlntException(message)
+        
+        class Invalid(message: String) : PlntException(message)
+        
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<PlntException> {
+        override fun lift(error_buf: RustBuffer.ByValue): PlntException = FfiConverterTypePlntError.lift(error_buf)
+    }
+}
+
+public object FfiConverterTypePlntError : FfiConverterRustBuffer<PlntException> {
+    override fun read(buf: ByteBuffer): PlntException {
+        
+            return when(buf.getInt()) {
+            1 -> PlntException.NotConnected(FfiConverterString.read(buf))
+            2 -> PlntException.Identity(FfiConverterString.read(buf))
+            3 -> PlntException.Connection(FfiConverterString.read(buf))
+            4 -> PlntException.Audio(FfiConverterString.read(buf))
+            5 -> PlntException.Invalid(FfiConverterString.read(buf))
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+        
+    }
+
+    override fun allocationSize(value: PlntException): ULong {
+        return 4UL
+    }
+
+    override fun write(value: PlntException, buf: ByteBuffer) {
+        when(value) {
+            is PlntException.NotConnected -> {
+                buf.putInt(1)
+                Unit
+            }
+            is PlntException.Identity -> {
+                buf.putInt(2)
+                Unit
+            }
+            is PlntException.Connection -> {
+                buf.putInt(3)
+                Unit
+            }
+            is PlntException.Audio -> {
+                buf.putInt(4)
+                Unit
+            }
+            is PlntException.Invalid -> {
+                buf.putInt(5)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+
+
+/**
+ * Sink that the core calls back into. Kotlin implements this and the native side
+ * funnels `ConnEvent` values through it.
+ */
+public interface EventSink {
+    
+    fun `onEvent`(`ev`: ConnEvent)
+    
+    companion object
+}
+
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceEventSink {
+    internal object `onEvent`: UniffiCallbackInterfaceEventSinkMethod0 {
+        override fun callback(`uniffiHandle`: Long,`ev`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeEventSink.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onEvent`(
+                    FfiConverterTypeConnEvent.lift(`ev`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeEventSink.handleMap.remove(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceEventSink.UniffiByValue(
+        `onEvent`,
+        uniffiFree,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_plnt_core_fn_init_callback_vtable_eventsink(vtable)
+    }
+}
+
+// The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+public object FfiConverterTypeEventSink: FfiConverterCallbackInterface<EventSink>()
+
+
+
+
+public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
+    override fun read(buf: ByteBuffer): kotlin.UInt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUInt.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UInt?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UInt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
+    override fun read(buf: ByteBuffer): kotlin.ULong? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterULong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ULong?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterULong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ULong?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterULong.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
+    override fun read(buf: ByteBuffer): kotlin.String? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterString.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.String?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.String?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterSequenceFloat: FfiConverterRustBuffer<List<kotlin.Float>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Float> {
+        val len = buf.getInt()
+        return List<kotlin.Float>(len) {
+            FfiConverterFloat.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Float>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterFloat.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Float>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterFloat.write(it, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterSequenceTypeChannel: FfiConverterRustBuffer<List<Channel>> {
+    override fun read(buf: ByteBuffer): List<Channel> {
+        val len = buf.getInt()
+        return List<Channel>(len) {
+            FfiConverterTypeChannel.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<Channel>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeChannel.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<Channel>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeChannel.write(it, buf)
+        }
+    }
+}
+        /**
+         * Build version string, surfaced to the Kotlin side for the settings screen
+         * and bug reports.
+         */ fun `coreVersion`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_core_version(
