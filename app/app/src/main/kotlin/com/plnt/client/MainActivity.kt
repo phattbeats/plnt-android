@@ -1,7 +1,10 @@
 package com.plnt.client
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -11,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +41,16 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
+
+            // The ViewModel decides *when* to ask (first connect without an
+            // exemption, once); only an Activity can actually launch the
+            // dialog. PHA-3290 item 6.
+            LaunchedEffect(state.batteryPromptRequest) {
+                if (state.batteryPromptRequest != null) {
+                    requestBatteryExemption()
+                    viewModel.batteryPromptHandled()
+                }
+            }
 
             PlntTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -79,6 +93,8 @@ class MainActivity : ComponentActivity() {
                             identityExport = state.identityExport,
                             availableInputDevices = state.availableInputDevices,
                             availableOutputDevices = state.availableOutputDevices,
+                            batteryOptimizationExempt = state.batteryOptimizationExempt,
+                            onRequestBatteryExemption = viewModel::requestBatteryExemption,
                             onPttModeChange = viewModel::setPttMode,
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
@@ -98,6 +114,35 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * The service can only re-request the `microphone` foreground-service type
+     * from the foreground (PHA-3290 item 7), and the exemption state may have
+     * changed while the user was away in system Settings — so this fires on
+     * every return to the app, not just on create.
+     */
+    override fun onStart() {
+        super.onStart()
+        viewModel.onAppForegrounded()
+    }
+
+    /**
+     * Opens the system's battery-optimisation exemption dialog. Not every OEM
+     * build ships it, so a missing activity falls back to the settings list
+     * rather than crashing.
+     */
+    @SuppressLint("BatteryLife") // A voice call that must survive the background is the documented use.
+    private fun requestBatteryExemption() {
+        val direct = Intent(
+            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:$packageName"),
+        )
+        runCatching { startActivity(direct) }.onFailure {
+            runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
         }
     }

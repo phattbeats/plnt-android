@@ -22,8 +22,8 @@ of the connection and rewires `PlntViewModel` to bind to it instead.
     connected on) or a network loss (`onLost`), it tears the `CoreClient` down and reconnects with
     the same identity + bookmark, then rejoins the last channel the client's own `ClientMoved` event
     reported (tracked in `lastChannelId`). Retries back off exponentially from 1 s, doubling, capped
-    at 30 s, and give up after 10 attempts (surfaces a real `Disconnected` instead of retrying
-    forever against, e.g., a server that's actively rejecting the identity).
+    at 30 s. (The original version gave up after 10 attempts; PHA-3290 removed that ceiling — see
+    "Background voice must survive or self-heal" below.)
   - Emits a synthetic `CoreEvent.Reconnecting` (added to `CoreBridge`'s sealed `CoreEvent`, not a
     real uniffi event) while an automatic reconnect is in flight, so the UI shows "reconnecting"
     instead of bouncing back to the bookmarks screen the way a real `Disconnected` would.
@@ -71,7 +71,9 @@ of the connection and rewires `PlntViewModel` to bind to it instead.
 - A first-connect failure (bad address/port/credentials, before ever reaching `Connected`) does not
   auto-retry — it surfaces immediately as `Disconnected` so the user sees the real error instead of
   watching the app retry a config problem for 30+ seconds. Auto-reconnect only kicks in after the
-  client has connected successfully at least once.
+  client has connected successfully at least once. This carve-out survived PHA-3290's removal of the
+  retry ceiling, and a *restored* session counts as having connected before (it had, or there would
+  be nothing to restore), so a restart-reconnect retries rather than failing loudly.
 
 ## Verification status
 
@@ -123,6 +125,111 @@ worth knowing:
 - `onTrimMemory ... COMPLETE` followed by `onDestroy` (and an `ActivityManager: Killing` line in the
   system buffer) is a memory reclaim.
 - `onStartCommand ... null intent — START_STICKY restart after a kill` is Android restarting the
-  service after it died. Nothing reconnects there: `connectionParams` lived only in the dead
-  instance, so the restarted service comes up idle. Persisting it is deliberately left to the
-  follow-up that decides between hardening for survival and auto-reconnecting.
+  service after it died. As of PHA-3290 this is where the session comes back: see below.
+
+Since PHA-3290 the lifecycle log also carries `restore`, `startForeground`, `micUpgrade` and
+`audioFailure` lines, on the same tag and the same `t+<n>s` stamp.
+
+## Background voice must survive or self-heal (PHA-3290)
+
+Standing requirement from Brandon on PHA-3286: **background voice must work 100% of the time, input
+and output.** "Reconnect when the user next opens the app" is a no-audio window that only a user
+action ends, so it does not satisfy that — everything here is about the session coming back with
+nobody touching the phone.
+
+### The kill no longer destroys the session
+
+`onDestroy()` used to run the same `shutdown()` a user disconnect does. PHA-3283 relabelled that
+teardown `SYSTEM_KILL` but it still nulled `connectionParams`, so the `START_STICKY` restart that
+follows came up with nothing to reconnect to. There are now two teardowns:
+
+| Path | Trigger | Persisted session |
+|---|---|---|
+| `shutdown(cause, reason)` | Disconnect action / in-app button; an unrecoverable first connect | **cleared** — a session that ended on purpose must not be redialled |
+| `teardownForProcessDeath()` | `onDestroy()` — the OS reclaiming the service | **kept** — this is what the restart reconnects from |
+
+Both release the client, the `AudioEngine`, the wake lock and the media session. A kill still
+reports `SYSTEM_KILL` to any UI that outlives the service instance; what changed is that the report
+is now "this dropped and is coming back", not "this call is over".
+
+### What is persisted, and where
+
+`SessionStore` (`data/SessionStore.kt`, `EncryptedSharedPreferences`, same scheme as `IdentityStore`
+— a `Bookmark` can carry a server password) holds the bookmark and `lastChannelId`, rewritten on
+connect, on `joinChannel`, and on every own-client `ClientMoved`. Writes use `commit()`, not
+`apply()`: the file has to be readable after an abrupt kill, and `apply()`'s disk write is
+asynchronous — exactly the window an LMK `SIGKILL` lands in.
+
+The identity PEM is **not** copied in. It already lives in `IdentityStore`, and the restore path
+reads it with the new `peek()` rather than `loadOrCreate()` — an install whose identity has gone
+must not silently reconnect as a brand-new stranger with different server groups.
+
+### Headless restart-reconnect
+
+A null-Intent `onStartCommand` calls `restorePersistedSession()`: bookmark + channel off disk,
+identity out of `IdentityStore`, then the same `doConnect()` a foreground connect uses. No Activity,
+no ViewModel binding, no user action. The restored session is marked as having connected before, so
+the first-connect carve-out does not apply to it and a failure retries. With no persisted session
+the restarted service calls `stopForeground(STOP_FOREGROUND_REMOVE)` + `stopSelf()` instead of
+sitting in the foreground holding a notification for a call that is not happening.
+
+### No give-up ceiling; retries follow the radio
+
+`MAX_RECONNECT_ATTEMPTS = 10` is gone. With the capped 1→2→4→8→16→30 s backoff it ended a live
+session after roughly three minutes offline — a subway ride — and recovery then required the user to
+notice and reconnect by hand. The loop now backs off and keeps trying indefinitely; only a Disconnect
+ends a session. `DisconnectCause.RECONNECT_FAILED` was removed with it, since nothing can reach that
+state any more.
+
+`onLost` no longer schedules a retry. Attempts made with the radio down cannot succeed, and under
+the old finite budget those doomed attempts were what actually spent it. The service enters
+`awaitingNetwork` — notification reads "Waiting for network…", wake lock and `AudioEngine` released,
+since this wait has no bound and holding a partial wake lock plus an open mic through an overnight
+dead zone would flatten the battery — and `onAvailable` is what resumes it, with the backoff reset.
+
+### API 34+ background foreground-service starts
+
+`targetSdk = 35`, and `microphone` is a *while-in-use* foreground-service type. From Android 14 an
+app that is in the background when it creates one does not hold the while-in-use grant and
+`startForeground()` throws `SecurityException` — which is precisely the position a `START_STICKY`
+restart is in. The call was unguarded, so a refusal took the restarted process with it before it
+could even log, and any headless reconnect was impossible.
+
+The service now declares `microphone|mediaPlayback` and asks for both; on refusal it falls back to
+`mediaPlayback` alone, which has no runtime prerequisite. That is the documented pattern (declare
+both, call `startForeground()` with a subset, call it again later with more). The result is a call
+that is **connected and audible but not transmitting**, upgraded to full duplex the next time a start
+command arrives from the foreground (`MainActivity.onStart` → `VoiceService.onAppForegrounded()`) or
+from the notification's own actions — notification-originated starts are themselves on the
+while-in-use exemption list. `VoiceState.microphoneActive` carries the degraded state to the UI: the
+notification reads "… — no microphone" and your own roster row renders muted, because from every
+listener's side it is.
+
+One correction to the assumption on the ticket: the battery-optimisation exemption does **not** cover
+this. It is on the exemption list for the Android 12 background-*start* restriction; the while-in-use
+restriction has a separate, narrower list that does not include it. The `mediaPlayback` fallback, not
+the exemption, is what makes a mic refusal survivable.
+
+Still unverified against a device: whether a `START_STICKY` restart is treated as a background start
+at all. Google's docs do not say either way, which is why this handles the refusal rather than
+predicting it. `adb logcat -b system | grep 'Background started FGS'` gives the
+ActivityManager verdict independently of what the app logs (PHA-3291).
+
+### Battery-optimisation exemption
+
+Requested once, at the first connect made without it (`PlntViewModel.connect()` raises a one-shot
+`batteryPromptRequest`, `MainActivity` launches
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`), and available thereafter under Settings →
+Background. Two independent reasons, neither conditional on the PHA-3286 device capture: OEM battery
+managers are the likeliest cause of the kill, and the exemption is on Android's documented list of
+ways to be allowed to start a foreground service from the background at all — which is also what
+keeps a doze-restricted process able to reach the network when `onAvailable` fires.
+
+### One AudioEngine per session, not per connect
+
+Every reconnect used to build a fresh `AudioEngine`, so each cycle paid a new
+`AudioRecord`/`AudioTrack` acquisition (and on Bluetooth a fresh SCO handshake) on top of the network
+reconnect — and that acquisition's failure was unchecked, leaving the call connected and silent with
+nothing logged. The engine now survives a reconnect; it is released on a real teardown and when the
+session parks on `awaitingNetwork`. `AudioEngine` reports acquisition failures through `onAudioError`
+instead of throwing, and the service turns those into a visible `CoreEvent.Error` rather than silence.

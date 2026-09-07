@@ -36,21 +36,42 @@ const val CORE_FRAME_SAMPLES = 960 // 48_000 * 0.020
  * resampling glue between "whatever the device's current route natively
  * runs at" and the fixed 48 kHz mono 20 ms frame plnt-core expects.
  *
- * Lifecycle: constructed once per call by [com.plnt.client.service.VoiceService]
- * (`start()` on call connect, `shutdown()` on disconnect). Push-to-talk does
- * NOT stop/start capture — see [setSending] — because tearing down the
- * capture stream drops the Bluetooth SCO link and reconnecting it audibly
- * clips the first syllable after every PTT press.
+ * Lifecycle: constructed once per *call* by
+ * [com.plnt.client.service.VoiceService] — not once per connect attempt.
+ * PHA-3290 item 8: it used to be rebuilt on every automatic reconnect, so each
+ * cycle paid a fresh `AudioRecord`/`AudioTrack` acquisition on top of the
+ * network reconnect, and that acquisition's failure was unchecked — an
+ * `AudioRecord` that came back unusable left the call connected and silent
+ * with nothing said about it. Streams now outlive a reconnect, and every
+ * acquisition failure is reported through [onAudioError].
+ *
+ * Push-to-talk does NOT stop/start capture — see [setSending] — because
+ * tearing down the capture stream drops the Bluetooth SCO link and
+ * reconnecting it audibly clips the first syllable after every PTT press.
  */
 class AudioEngine(
     private val context: Context,
     private val onCaptureFrame: (FloatArray) -> Unit,
     /** Fires with (inputs, outputs) whenever the physically-present device set changes (plug/unplug, BT connect). */
     private val onAudioDevicesChanged: (List<AudioDeviceOption>, List<AudioDeviceOption>) -> Unit = { _, _ -> },
+    /**
+     * A stream could not be acquired: `stage` is "capture" or "playback". Half
+     * a call still works when one of the two fails, so this reports rather than
+     * throws — but it has to reach the user, because the symptom otherwise is a
+     * call that looks connected and carries no audio.
+     */
+    private val onAudioError: (stage: String, error: Throwable) -> Unit = { _, _ -> },
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val running = AtomicBoolean(false)
+    /**
+     * Whether the capture stream is open at all. Distinct from [sending]: a
+     * call started while the OS refused this app the microphone (an API 34+
+     * background start of a `microphone` foreground service) runs output-only
+     * until [enableCapture] can get it back.
+     */
+    private val capturing = AtomicBoolean(false)
     /** Gates whether captured frames are forwarded to [onCaptureFrame]. Capture itself never stops. */
     private val sending = AtomicBoolean(false)
 
@@ -80,9 +101,17 @@ class AudioEngine(
 
     private val scoRouter = BluetoothScoRouter(context, audioManager)
 
-    /** Starts capture + playback on whatever route Android currently has active. */
+    /**
+     * Starts playback and, when [withCapture] is true, capture — on whatever
+     * route Android currently has active.
+     *
+     * [withCapture] is false when the service holds a foreground-service type
+     * that does not include `microphone`; opening an `AudioRecord` there would
+     * hand back silence (or a `SecurityException`) rather than audio. Call
+     * [enableCapture] once the mic is actually allowed.
+     */
     @SuppressLint("MissingPermission") // caller (VoiceService) checks RECORD_AUDIO before calling start()
-    fun start() {
+    fun start(withCapture: Boolean = true) {
         if (!running.compareAndSet(false, true)) return
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -94,12 +123,35 @@ class AudioEngine(
         scoRouter.routeToPreferredDeviceAndWait(preferredInputKey, preferredOutputKey)
 
         openPlaybackTrack()
-        openCaptureAndStartThread()
-        Log.i(TAG, "AudioEngine started (mode=MODE_IN_COMMUNICATION, in=${preferredInputKey ?: "auto"}, out=${preferredOutputKey ?: "auto"})")
+        if (withCapture) openCaptureAndStartThread()
+        Log.i(
+            TAG,
+            "AudioEngine started (mode=MODE_IN_COMMUNICATION, in=${preferredInputKey ?: "auto"}, " +
+                "out=${preferredOutputKey ?: "auto"}, capture=${capturing.get()})",
+        )
+    }
+
+    /** Whether [start] has run and [shutdown] has not — i.e. this engine is reusable as-is. */
+    fun isRunning(): Boolean = running.get()
+
+    /** Whether the mic stream is actually open (false in the output-only degraded mode). */
+    fun isCaptureActive(): Boolean = capturing.get()
+
+    /**
+     * Open the capture stream on an engine that is running without one — the
+     * upgrade out of output-only mode, once the OS will grant this app the
+     * microphone again. Returns whether capture is now live.
+     */
+    fun enableCapture(): Boolean {
+        if (!running.get()) return false
+        if (capturing.get()) return true
+        scoRouter.routeToPreferredDeviceAndWait(preferredInputKey, preferredOutputKey)
+        return openCaptureAndStartThread()
     }
 
     fun shutdown() {
         if (!running.compareAndSet(true, false)) return
+        capturing.set(false)
 
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
         scoRouter.release()
@@ -173,7 +225,9 @@ class AudioEngine(
         // and native sample rate automatically.
         scoRouter.routeToPreferredDeviceAndWait(preferredInputKey, preferredOutputKey)
         openPlaybackTrack(reopen = true)
-        reopenCapture()
+        // Nothing to rehome if this call is running output-only — and reopening
+        // here would quietly acquire a mic the OS has not granted us.
+        if (capturing.get()) reopenCapture()
     }
 
     private fun AudioDeviceInfo.isRelevant(): Boolean = type in relevantDeviceTypes
@@ -182,9 +236,21 @@ class AudioEngine(
 
     // ---- capture ------------------------------------------------------------
 
-    private fun openCaptureAndStartThread() {
-        val rec = buildAudioRecord()
+    /** Returns whether capture came up. A failure is reported, never thrown — see [onAudioError]. */
+    private fun openCaptureAndStartThread(): Boolean {
+        val rec = try {
+            buildAudioRecord()
+        } catch (t: Throwable) {
+            // Before PHA-3290 item 8 this threw straight out of start(), which
+            // a reconnect ran on every attempt and nothing caught: the call
+            // carried on looking connected with a dead mic.
+            capturing.set(false)
+            Log.e(TAG, "capture unavailable", t)
+            onAudioError("capture", t)
+            return false
+        }
         record = rec
+        capturing.set(true)
         rec.startRecording()
 
         val nativeRate = rec.sampleRate
@@ -197,7 +263,7 @@ class AudioEngine(
         val frameAccumulator = FloatFrameAccumulator(CORE_FRAME_SAMPLES)
 
         captureThread = thread(name = "plnt-audio-capture", isDaemon = true) {
-            while (running.get()) {
+            while (running.get() && capturing.get()) {
                 val currentRecord = record ?: break
                 val n = currentRecord.read(nativeBuf, 0, nativeBuf.size, AudioRecord.READ_BLOCKING)
                 if (n <= 0) continue
@@ -208,16 +274,18 @@ class AudioEngine(
                 }
             }
         }
+        return true
     }
 
-    private fun reopenCapture() {
+    private fun reopenCapture(): Boolean {
         val old = record
         record = null
+        capturing.set(false)
         echoCanceler?.release(); echoCanceler = null
         noiseSuppressor?.release(); noiseSuppressor = null
         old?.let { runCatching { it.stop() }; it.release() }
         captureThread?.join(500)
-        openCaptureAndStartThread()
+        return openCaptureAndStartThread()
     }
 
     @SuppressLint("MissingPermission")
@@ -287,16 +355,29 @@ class AudioEngine(
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
             .build()
         val minBuf = AudioTrack.getMinBufferSize(CORE_SAMPLE_RATE_HZ, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-        val track = AudioTrack(
-            attrs,
-            format,
-            (minBuf.coerceAtLeast(CORE_FRAME_SAMPLES * 4)) * 4,
-            AudioTrack.MODE_STREAM,
-            AudioManager.AUDIO_SESSION_ID_GENERATE,
-        )
-        // Same reasoning as buildAudioRecord(): Automatic leaves this untouched.
-        preferredOutputKey?.let { key -> findDevice(AudioManager.GET_DEVICES_OUTPUTS, key)?.let(track::setPreferredDevice) }
-        track.play()
+        // Same unchecked-acquisition problem as capture (PHA-3290 item 8), and
+        // the worse half of it: a failure here means the call is connected and
+        // the user hears nothing at all.
+        val track = try {
+            AudioTrack(
+                attrs,
+                format,
+                (minBuf.coerceAtLeast(CORE_FRAME_SAMPLES * 4)) * 4,
+                AudioTrack.MODE_STREAM,
+                AudioManager.AUDIO_SESSION_ID_GENERATE,
+            ).also {
+                // Same reasoning as buildAudioRecord(): Automatic leaves this untouched.
+                preferredOutputKey?.let { key ->
+                    findDevice(AudioManager.GET_DEVICES_OUTPUTS, key)?.let(it::setPreferredDevice)
+                }
+                it.play()
+            }
+        } catch (t: Throwable) {
+            playbackTrack.set(null)
+            Log.e(TAG, "playback unavailable", t)
+            onAudioError("playback", t)
+            return
+        }
         playbackTrack.set(track)
     }
 

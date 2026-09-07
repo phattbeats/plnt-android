@@ -116,6 +116,63 @@ Watch `adb logcat -s plnt.voice`.
       later. Confirm the own row keeps its "(you)" label the whole time,
       including after the banner clears.
 
+## 6b. Background survival / self-heal (PHA-3290)
+
+The standing bar for this section is **background voice works 100% of the
+time, input and output** — every row below has to pass with the user never
+touching the phone. Physical device only (PHA-3072/PHA-3080 round): an
+emulator will not reproduce OEM battery-manager kills, and this is the
+section that needs them.
+
+Capture both buffers for the whole window:
+
+```bash
+adb logcat -b system -b main | grep -E \
+  'plnt\.lifecycle|plnt\.voice|plnt\.audio|ActivityManager: Killing|Background started FGS|lowmemorykiller'
+```
+
+- [ ] **Kill → headless reconnect.** Connect, join a non-default channel,
+      background the app. Kill the service (`adb shell am kill com.plnt.client`,
+      or let an OEM battery manager do it over a longer idle). Expect, with
+      **no user action at all**: `onDestroy`, then
+      `onStartCommand ... null intent`, then
+      `restore ... headless reconnect to <addr>:<port> channel=<id>`, then
+      audio back both ways in the *same* channel. Note the wall-clock gap.
+- [ ] **Same, screen off and locked**, phone untouched. This is the case the
+      whole ticket exists for — it must not need the app opened.
+- [ ] **Mic refusal degrade (API 34/35).** On the kill above, check the
+      system buffer for `Background started FGS: Denied` and the app buffer
+      for `startForeground ... microphone type refused`. If it fires, confirm
+      the call still comes back **audible** (output-only): notification reads
+      "… — no microphone", own row renders muted. Then open the app and
+      confirm `micUpgrade ... capture reopened` and that the other client can
+      hear you again. If no refusal is seen, record that — it is the open
+      question in `FOREGROUND_SERVICE.md`, and "did not reproduce" is a real
+      result.
+- [ ] **No give-up ceiling.** Airplane mode on and *leave it on for 10+
+      minutes* (well past the ~3 min the old 10-attempt budget lasted).
+      Expect the notification to read "Waiting for network…", **no**
+      `Disconnected` and no return to the bookmarks screen. Turn airplane
+      mode back off: expect `network available again` and a reconnect within
+      seconds, again with no user action.
+- [ ] **Retries follow the radio, not a timer.** During that airplane-mode
+      window, confirm logcat shows *no* `reconnect attempt N` lines while the
+      radio is down — attempts should resume only after `onAvailable`.
+- [ ] **Battery-optimisation prompt.** Fresh install, first connect: the
+      system exemption dialog appears once. Decline it, connect again — it
+      must not reappear. Settings → Background then offers it, and once
+      granted that section reads as exempt instead.
+- [ ] **A user disconnect stays disconnected.** Tap Disconnect, then kill the
+      service. Expect `restore ... no persisted session` and **no** reconnect
+      — the restart must not redial a call that was hung up on purpose.
+- [ ] **Reconnect audio gap.** Force a short drop (blackhole/airplane for
+      ~5 s) and time the silence. The `AudioEngine` is no longer rebuilt per
+      attempt, so `plnt.audio` should show no new `AudioEngine started` line
+      for a reconnect that reuses it — only for one that went through
+      "Waiting for network…".
+- [ ] **Crash restart.** `adb shell am crash com.plnt.client` mid-call. The
+      persisted session should bring the call back the same way a kill does.
+
 ## 7. UI screenshot matrix (PHA-3079, emulator)
 
 This section is the acceptance evidence for PHA-3079: one screenshot per

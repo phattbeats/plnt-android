@@ -65,6 +65,8 @@ fun SettingsScreen(
     identityExport: String?,
     availableInputDevices: List<AudioDeviceOption>,
     availableOutputDevices: List<AudioDeviceOption>,
+    batteryOptimizationExempt: Boolean,
+    onRequestBatteryExemption: () -> Unit,
     onPttModeChange: (PttMode) -> Unit,
     onPttOnVolumeButtonChange: (Boolean) -> Unit,
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
@@ -141,6 +143,29 @@ fun SettingsScreen(
 
             SectionHeader("Audio output")
             DevicePicker(availableOutputDevices, settings.preferredOutputDeviceKey, onOutputDeviceChange)
+
+            SectionGap()
+
+            SectionHeader("Background")
+            if (batteryOptimizationExempt) {
+                Text(
+                    "PLNT is exempt from battery optimisation. Calls keep running with the " +
+                        "screen off and the app in the background.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = BoneMuted,
+                )
+            } else {
+                ChevronRow("Allow PLNT to run in the background", onClick = onRequestBatteryExemption)
+                Text(
+                    "Android's battery optimisation can stop the voice service while you are " +
+                        "on a call. PLNT reconnects itself when that happens, but the exemption " +
+                        "avoids the interruption — and it is what lets a reconnect start while " +
+                        "the app is in the background.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = BoneFaint,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
 
             SectionGap()
 

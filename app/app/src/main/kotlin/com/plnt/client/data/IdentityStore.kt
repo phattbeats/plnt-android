@@ -29,11 +29,20 @@ class IdentityStore(context: Context) {
     }
 
     fun loadOrCreate(): String {
-        prefs.getString(KEY_IDENTITY_PEM, null)?.let { return it }
+        peek()?.let { return it }
         val created = CoreBridge.createIdentity()
         prefs.edit().putString(KEY_IDENTITY_PEM, created).apply()
         return created
     }
+
+    /**
+     * The stored PEM, or null if this install has never had one. Unlike
+     * [loadOrCreate] this never generates one, which is what a headless
+     * restart-reconnect needs (PHA-3290): silently minting a fresh identity
+     * there would put the client back on the server as a stranger — new server
+     * groups, new permissions — with nobody watching to notice.
+     */
+    fun peek(): String? = prefs.getString(KEY_IDENTITY_PEM, null)
 
     fun import(pem: String): Boolean {
         if (!CoreBridge.importIdentity(pem)) return false
