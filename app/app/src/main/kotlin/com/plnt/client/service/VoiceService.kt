@@ -29,8 +29,8 @@ import com.plnt.client.core.CoreBridge
 import com.plnt.client.core.CoreClient
 import com.plnt.client.core.CoreEvent
 import com.plnt.client.core.DisconnectCause
+import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.Bookmark
-import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,8 +66,10 @@ data class VoiceState(
     val outputMuted: Boolean,
     val transmitting: Boolean,
     val pttMode: PttMode,
-    val preferredInputRoute: InputRoute,
-    val availableInputRoutes: Set<InputRoute>,
+    val preferredInputDeviceKey: String?,
+    val preferredOutputDeviceKey: String?,
+    val availableInputDevices: List<AudioDeviceOption>,
+    val availableOutputDevices: List<AudioDeviceOption>,
 )
 
 /**
@@ -129,8 +131,13 @@ class VoiceService : Service() {
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
-    private var preferredInputRoute: InputRoute = InputRoute.AUTO
-    private var availableInputRoutes: Set<InputRoute> = setOf(InputRoute.AUTO, InputRoute.BUILTIN_MIC)
+    // PHA-3282. Held here rather than only on the AudioEngine because the engine is
+    // rebuilt on every doConnect() — the pin has to survive a reconnect without the
+    // ViewModel having to re-push it.
+    private var preferredInputDeviceKey: String? = null
+    private var preferredOutputDeviceKey: String? = null
+    private var availableInputDevices: List<AudioDeviceOption> = emptyList()
+    private var availableOutputDevices: List<AudioDeviceOption> = emptyList()
 
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var mediaSession: MediaSessionCompat
@@ -233,13 +240,28 @@ class VoiceService : Service() {
         listener?.invoke(currentState())
     }
 
-    fun currentState(): VoiceState =
-        VoiceState(inputMuted, outputMuted, transmitting, pttMode, preferredInputRoute, availableInputRoutes)
+    fun currentState(): VoiceState = VoiceState(
+        inputMuted,
+        outputMuted,
+        transmitting,
+        pttMode,
+        preferredInputDeviceKey,
+        preferredOutputDeviceKey,
+        availableInputDevices,
+        availableOutputDevices,
+    )
 
-    /** PHA-3132 follow-up: user-facing mic route override, independent of PTT mode. */
-    fun setPreferredInputRoute(route: InputRoute) {
-        preferredInputRoute = route
-        audioEngine?.setPreferredInputRoute(route)
+    /** PHA-3282: user-facing mic device override, independent of PTT mode. Null = Automatic. */
+    fun setPreferredInputDevice(key: String?) {
+        preferredInputDeviceKey = key
+        audioEngine?.setPreferredInputDevice(key)
+        emitState()
+    }
+
+    /** Output half of [setPreferredInputDevice]. */
+    fun setPreferredOutputDevice(key: String?) {
+        preferredOutputDeviceKey = key
+        audioEngine?.setPreferredOutputDevice(key)
         emitState()
     }
 
@@ -429,9 +451,16 @@ class VoiceService : Service() {
                     Log.w(TAG, "sendPcmFrame failed", t)
                 }
             },
-            onInputRoutesChanged = { routes -> mainHandler.post { availableInputRoutes = routes; emitState() } },
+            onAudioDevicesChanged = { inputs, outputs ->
+                mainHandler.post {
+                    availableInputDevices = inputs
+                    availableOutputDevices = outputs
+                    emitState()
+                }
+            },
         )
-        engine.setPreferredInputRoute(preferredInputRoute)
+        engine.setPreferredInputDevice(preferredInputDeviceKey)
+        engine.setPreferredOutputDevice(preferredOutputDeviceKey)
         audioEngine = engine
 
         val c = CoreBridge.newClient(

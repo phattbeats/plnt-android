@@ -46,7 +46,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.plnt.client.core.CoreBridge
-import com.plnt.client.model.InputRoute
+import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
 import com.plnt.client.ui.theme.Bg
@@ -63,11 +63,13 @@ import com.plnt.client.ui.theme.SurfaceRaised
 fun SettingsScreen(
     settings: Settings,
     identityExport: String?,
-    availableInputRoutes: Set<InputRoute>,
+    availableInputDevices: List<AudioDeviceOption>,
+    availableOutputDevices: List<AudioDeviceOption>,
     onPttModeChange: (PttMode) -> Unit,
     onPttOnVolumeButtonChange: (Boolean) -> Unit,
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
-    onInputRouteChange: (InputRoute) -> Unit,
+    onInputDeviceChange: (String?) -> Unit,
+    onOutputDeviceChange: (String?) -> Unit,
     onImportIdentity: (String) -> Boolean,
     onCreateIdentity: () -> Unit,
     onBack: () -> Unit,
@@ -120,20 +122,25 @@ fun SettingsScreen(
 
             SectionGap()
 
+            // PHA-3282. Only devices the hardware actually reports right now are
+            // listed (PHA-3076-style rule: never show a picker option that would
+            // silently no-op) — the lists refresh on entering this screen and, during
+            // a call, on plug/unplug.
             SectionHeader("Audio input")
-            // Only offer routes the hardware actually has right now (PHA-3076-style
-            // rule: don't show a picker option that would silently no-op).
-            InputRoute.entries.filter { it in availableInputRoutes }.forEach { route ->
-                RadioRow(route.label(), settings.preferredInputRoute == route) { onInputRouteChange(route) }
-            }
+            DevicePicker(availableInputDevices, settings.preferredInputDeviceKey, onInputDeviceChange)
             Text(
-                "Auto follows whatever route Android considers current (Bluetooth, then " +
-                    "wired, then the phone's own mic). Pick a specific one to keep using it " +
-                    "even while another device is connected.",
+                "Automatic follows whatever route Android considers current (Bluetooth, then " +
+                    "wired, then the phone's own mic). Pick a specific device to keep using it " +
+                    "even while another one is connected.",
                 style = MaterialTheme.typography.labelSmall,
                 color = BoneFaint,
                 modifier = Modifier.padding(top = 8.dp),
             )
+
+            SectionGap()
+
+            SectionHeader("Audio output")
+            DevicePicker(availableOutputDevices, settings.preferredOutputDeviceKey, onOutputDeviceChange)
 
             SectionGap()
 
@@ -248,12 +255,29 @@ fun SettingsScreen(
     }
 }
 
-private fun InputRoute.label(): String = when (this) {
-    InputRoute.AUTO -> "Auto"
-    InputRoute.BUILTIN_MIC -> "Phone mic"
-    InputRoute.WIRED_HEADSET -> "Wired headset"
-    InputRoute.BLUETOOTH -> "Bluetooth"
-    InputRoute.USB_HEADSET -> "USB headset"
+/**
+ * Radio list of "Automatic" plus one row per present device, styled as the Talk
+ * mode rows above. "Automatic" is a UI-only row backed by a null key, and stays
+ * selected by default so the existing Bluetooth SCO routing (PHA-3077/PHA-3080)
+ * is what an untouched install still gets.
+ *
+ * A device pinned earlier that is no longer connected still renders a row, so
+ * the selection is visible (and clearable) rather than silently showing as
+ * Automatic while a stale key is persisted.
+ */
+@Composable
+private fun DevicePicker(
+    devices: List<AudioDeviceOption>,
+    selectedKey: String?,
+    onSelect: (String?) -> Unit,
+) {
+    RadioRow("Automatic", selectedKey == null) { onSelect(null) }
+    devices.forEach { device ->
+        RadioRow(device.label, selectedKey == device.key) { onSelect(device.key) }
+    }
+    if (selectedKey != null && devices.none { it.key == selectedKey }) {
+        RadioRow("Selected device (not connected)", selected = true) { onSelect(null) }
+    }
 }
 
 @Composable

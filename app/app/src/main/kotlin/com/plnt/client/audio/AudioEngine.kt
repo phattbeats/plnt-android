@@ -17,7 +17,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.util.Log
-import com.plnt.client.model.InputRoute
+import com.plnt.client.model.AudioDeviceOption
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -45,8 +45,8 @@ const val CORE_FRAME_SAMPLES = 960 // 48_000 * 0.020
 class AudioEngine(
     private val context: Context,
     private val onCaptureFrame: (FloatArray) -> Unit,
-    /** Fires whenever the set of physically-present input routes changes (plug/unplug, BT connect). */
-    private val onInputRoutesChanged: (Set<InputRoute>) -> Unit = {},
+    /** Fires with (inputs, outputs) whenever the physically-present device set changes (plug/unplug, BT connect). */
+    private val onAudioDevicesChanged: (List<AudioDeviceOption>, List<AudioDeviceOption>) -> Unit = { _, _ -> },
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -54,7 +54,10 @@ class AudioEngine(
     /** Gates whether captured frames are forwarded to [onCaptureFrame]. Capture itself never stops. */
     private val sending = AtomicBoolean(false)
 
-    @Volatile private var preferredRoute: InputRoute = InputRoute.AUTO
+    // PHA-3282 device overrides, both null (= Automatic) by default. See
+    // [setPreferredInputDevice] for what "Automatic" costs: nothing at all.
+    @Volatile private var preferredInputKey: String? = null
+    @Volatile private var preferredOutputKey: String? = null
 
     private var captureThread: Thread? = null
     private var record: AudioRecord? = null
@@ -65,12 +68,12 @@ class AudioEngine(
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-            onInputRoutesChanged(computeAvailableInputRoutes())
+            emitDeviceLists()
             if (addedDevices.any { it.isRelevant() }) rehome("device added: ${addedDevices.joinToString { it.describe() }}")
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-            onInputRoutesChanged(computeAvailableInputRoutes())
+            emitDeviceLists()
             if (removedDevices.any { it.isRelevant() }) rehome("device removed: ${removedDevices.joinToString { it.describe() }}")
         }
     }
@@ -84,15 +87,15 @@ class AudioEngine(
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
-        onInputRoutesChanged(computeAvailableInputRoutes())
+        emitDeviceLists()
         // Route to the preferred device *before* opening the streams —
         // AudioRecord/AudioTrack pick up whatever route is active at open
         // time, they don't hot-follow it.
-        scoRouter.routeToPreferredDeviceAndWait(preferredRoute)
+        scoRouter.routeToPreferredDeviceAndWait(preferredInputKey, preferredOutputKey)
 
         openPlaybackTrack()
         openCaptureAndStartThread()
-        Log.i(TAG, "AudioEngine started (mode=MODE_IN_COMMUNICATION, preferredRoute=$preferredRoute)")
+        Log.i(TAG, "AudioEngine started (mode=MODE_IN_COMMUNICATION, in=${preferredInputKey ?: "auto"}, out=${preferredOutputKey ?: "auto"})")
     }
 
     fun shutdown() {
@@ -124,29 +127,30 @@ class AudioEngine(
     }
 
     /**
-     * Which [InputRoute]s the hardware currently offers. AUTO and BUILTIN_MIC are always
-     * present; the rest reflect whatever [AudioManager] currently reports connected.
+     * User-initiated override of the auto-priority chain (PHA-3282: pick a specific
+     * mic; supersedes PHA-3132's coarser route-category override). `null` restores
+     * Automatic. Re-routes immediately if a call is live — unlike [setSending] this
+     * is a deliberate route change, not a PTT toggle, so re-opening the streams here
+     * is correct (see the class doc for why PTT itself must not do this).
      */
-    fun availableInputRoutes(): Set<InputRoute> = computeAvailableInputRoutes()
-
-    /**
-     * User-initiated override of the auto-priority chain (PHA-3132 follow-up: "switch
-     * inputs"). Re-routes immediately if a call is live — unlike [setSending] this is a
-     * deliberate route change, not a PTT toggle, so re-opening the streams here is correct
-     * (see the class doc for why PTT itself must not do this).
-     */
-    fun setPreferredInputRoute(route: InputRoute) {
-        preferredRoute = route
-        if (running.get()) rehome("input route changed to $route")
+    fun setPreferredInputDevice(key: String?) {
+        if (preferredInputKey == key) return
+        preferredInputKey = key
+        if (running.get()) rehome("input device changed to ${key ?: "automatic"}")
     }
 
-    private fun computeAvailableInputRoutes(): Set<InputRoute> {
-        val present = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).map { it.type }.toSet()
-        val routes = mutableSetOf(InputRoute.AUTO, InputRoute.BUILTIN_MIC)
-        if (AudioDeviceInfo.TYPE_BLUETOOTH_SCO in present) routes += InputRoute.BLUETOOTH
-        if (AudioDeviceInfo.TYPE_WIRED_HEADSET in present) routes += InputRoute.WIRED_HEADSET
-        if (AudioDeviceInfo.TYPE_USB_HEADSET in present) routes += InputRoute.USB_HEADSET
-        return routes
+    /** Output half of [setPreferredInputDevice]; `null` restores Automatic. */
+    fun setPreferredOutputDevice(key: String?) {
+        if (preferredOutputKey == key) return
+        preferredOutputKey = key
+        if (running.get()) rehome("output device changed to ${key ?: "automatic"}")
+    }
+
+    private fun emitDeviceLists() {
+        onAudioDevicesChanged(
+            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toOptions(),
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toOptions(),
+        )
     }
 
     /** Feed one decoded 20 ms / 960-sample / 48 kHz mono frame from plnt-core to the speaker/headset. */
@@ -167,7 +171,7 @@ class AudioEngine(
         // AudioTrack don't hot-swap devices; MODE_IN_COMMUNICATION + the new
         // active AudioDeviceInfo means a fresh instance picks up the new route
         // and native sample rate automatically.
-        scoRouter.routeToPreferredDeviceAndWait(preferredRoute)
+        scoRouter.routeToPreferredDeviceAndWait(preferredInputKey, preferredOutputKey)
         openPlaybackTrack(reopen = true)
         reopenCapture()
     }
@@ -238,6 +242,12 @@ class AudioEngine(
                     rec.release()
                     continue
                 }
+                // Automatic (null) never calls setPreferredDevice, so the route is
+                // decided solely by scoRouter's chain — byte-for-byte the pre-PHA-3282
+                // behaviour. A pinned device that is no longer present resolves to null
+                // and is likewise skipped, falling back to Automatic rather than failing
+                // to open the stream.
+                preferredInputKey?.let { key -> findDevice(AudioManager.GET_DEVICES_INPUTS, key)?.let(rec::setPreferredDevice) }
                 attachEffects(rec.audioSessionId)
                 return rec
             } catch (t: Throwable) {
@@ -284,9 +294,14 @@ class AudioEngine(
             AudioTrack.MODE_STREAM,
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         )
+        // Same reasoning as buildAudioRecord(): Automatic leaves this untouched.
+        preferredOutputKey?.let { key -> findDevice(AudioManager.GET_DEVICES_OUTPUTS, key)?.let(track::setPreferredDevice) }
         track.play()
         playbackTrack.set(track)
     }
+
+    private fun findDevice(flags: Int, key: String): AudioDeviceInfo? =
+        audioManager.getDevices(flags).firstOrNull { it.routeKey() == key }
 
     companion object {
         private val relevantDeviceTypes = setOf(
@@ -298,6 +313,89 @@ class AudioEngine(
             AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
             AudioDeviceInfo.TYPE_BUILTIN_MIC,
         )
+    }
+}
+
+/**
+ * Identifier for one [AudioDeviceInfo] as persisted in Settings — see
+ * [AudioDeviceOption] for why this is type+address and not the platform id.
+ */
+internal fun AudioDeviceInfo.routeKey(): String = "$type:$address"
+
+/** The `AudioDeviceInfo.type` a [routeKey] names, or null if the key is malformed. */
+internal fun keyDeviceType(key: String): Int? = key.substringBefore(':').toIntOrNull()
+
+private fun deviceTypeLabel(type: Int): String = when (type) {
+    AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Phone mic"
+    AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Earpiece"
+    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Speaker"
+    AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
+    AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "Wired headphones"
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth"
+    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth (media)"
+    AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
+    AudioDeviceInfo.TYPE_USB_DEVICE -> "USB audio"
+    AudioDeviceInfo.TYPE_DOCK -> "Dock"
+    AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+    AudioDeviceInfo.TYPE_TELEPHONY -> "Telephony"
+    else -> "Audio device"
+}
+
+/**
+ * "<product name> (<type>)", or just the type when the platform reports no
+ * useful product name — which it routinely doesn't for built-in devices, where
+ * `productName` is the phone's model name and would read as the same string on
+ * every single row.
+ */
+internal fun AudioDeviceInfo.routeLabel(): String {
+    val typeLabel = deviceTypeLabel(type)
+    val name = productName?.toString()?.trim()
+        ?.takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) && !it.equals(typeLabel, ignoreCase = true) }
+    // Built-ins all carry the handset's model name; showing it would produce
+    // "Pixel 8 (Phone mic)" / "Pixel 8 (Speaker)" and add nothing.
+    return if (name == null || type in builtInDeviceTypes) typeLabel else "$name ($typeLabel)"
+}
+
+internal fun AudioDeviceInfo.toOption(): AudioDeviceOption = AudioDeviceOption(routeKey(), routeLabel())
+
+/**
+ * A `getDevices()` result as picker rows, collapsing entries that share a
+ * [routeKey]. Handsets routinely report several `TYPE_BUILTIN_MIC` elements —
+ * bottom, top, back — all with an empty address, which would otherwise render as
+ * two or three identical "Phone mic" rows that highlight as one. They really are
+ * a single choice here: [AudioEngine.findDevice] takes the first key match
+ * either way, and the platform picks among the physical capsules itself.
+ */
+internal fun Array<AudioDeviceInfo>.toOptions(): List<AudioDeviceOption> =
+    map { it.toOption() }.distinctBy { it.key }
+
+private val bluetoothDeviceTypes = setOf(
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+)
+
+private val builtInDeviceTypes = setOf(
+    AudioDeviceInfo.TYPE_BUILTIN_MIC,
+    AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+    AudioDeviceInfo.TYPE_TELEPHONY,
+)
+
+/**
+ * Device enumeration that needs only a [Context], not a live [AudioEngine]
+ * (PHA-3282). Settings has to list devices before the user has ever connected,
+ * and there is no engine until [com.plnt.client.service.VoiceService] starts a
+ * call — while a call *is* live the engine pushes fresher lists through its own
+ * device callback instead.
+ */
+object AudioDevices {
+    fun listInputs(context: Context): List<AudioDeviceOption> = list(context, AudioManager.GET_DEVICES_INPUTS)
+
+    fun listOutputs(context: Context): List<AudioDeviceOption> = list(context, AudioManager.GET_DEVICES_OUTPUTS)
+
+    private fun list(context: Context, flags: Int): List<AudioDeviceOption> {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return audioManager.getDevices(flags).toOptions()
     }
 }
 
@@ -367,17 +465,29 @@ internal class BluetoothScoRouter(
     }
     private var latch: CountDownLatch? = null
 
+    /**
+     * [inputKey] / [outputKey] are [AudioDeviceOption] keys, or null for Automatic.
+     * Both null is the pre-PHA-3282 path exactly: the priority chain below picks the
+     * route on its own, which is what PHA-3077/PHA-3080 verified on real hardware.
+     *
+     * `setCommunicationDevice()` is a single device for both directions, so when the
+     * user has pinned each end to a different device the *input* pin wins here — the
+     * mic side is what SCO actually gates, and the playback stream still carries its
+     * own `AudioTrack.setPreferredDevice()`.
+     */
     @SuppressLint("MissingPermission") // BLUETOOTH_CONNECT is required + declared in the manifest
-    fun routeToPreferredDeviceAndWait(preference: InputRoute = InputRoute.AUTO) {
+    fun routeToPreferredDeviceAndWait(inputKey: String? = null, outputKey: String? = null) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            routeViaCommunicationDevice(preference)
+            routeViaCommunicationDevice(inputKey, outputKey)
             return
         }
 
-        // Pre-API 31 there is no per-device selection API beyond SCO on/off;
-        // an explicit non-Bluetooth preference just means "don't force SCO"
-        // and let Android's own wired > built-in fallback apply.
-        if (preference != InputRoute.AUTO && preference != InputRoute.BLUETOOTH) {
+        // Pre-API 31 there is no per-device selection API beyond SCO on/off, so a pin
+        // collapses to the one bit that API exposes: does the user want the Bluetooth
+        // link or not. A non-Bluetooth pin means "don't force SCO" and lets Android's
+        // own wired > built-in fallback apply.
+        val pinnedType = keyDeviceType(inputKey ?: outputKey ?: "")
+        if (pinnedType != null && pinnedType !in bluetoothDeviceTypes) {
             stopSco()
             return
         }
@@ -408,26 +518,40 @@ internal class BluetoothScoRouter(
     }
 
     @SuppressLint("MissingPermission")
-    private fun routeViaCommunicationDevice(preference: InputRoute) {
+    private fun routeViaCommunicationDevice(inputKey: String?, outputKey: String?) {
         val devices = audioManager.availableCommunicationDevices
-        val byPreference: List<AudioDeviceInfo> = when (preference) {
-            InputRoute.BLUETOOTH -> devices.filter { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
-            InputRoute.WIRED_HEADSET -> devices.filter { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
-            InputRoute.USB_HEADSET -> devices.filter { it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
-            InputRoute.BUILTIN_MIC -> devices.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
-            InputRoute.AUTO -> emptyList()
+        // `availableCommunicationDevices` are output devices, so an output pin can
+        // match one outright; an input pin has to be mapped to the output that shares
+        // its route (a pinned built-in mic means the earpiece, etc.) — the same
+        // mapping PHA-3132's InputRoute.BUILTIN_MIC -> TYPE_BUILTIN_EARPIECE used.
+        val pinned = inputKey?.let { key ->
+            communicationTypeForInput(keyDeviceType(key))?.let { t -> devices.firstOrNull { it.type == t } }
+        } ?: outputKey?.let { key ->
+            devices.firstOrNull { it.routeKey() == key }
+                ?: keyDeviceType(key)?.let { t -> devices.firstOrNull { it.type == t } }
         }
-        // A specific preference falls back to the auto chain if the requested
-        // device has since disappeared (e.g. the headset was unplugged mid-call).
-        val preferred = byPreference.firstOrNull()
+        // A pin falls back to the auto chain if the requested device has since
+        // disappeared (e.g. the headset was unplugged mid-call). With no pin at all
+        // this is the only branch that runs, unchanged from before PHA-3282.
+        val preferred = pinned
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
         if (preferred != null) {
             val ok = audioManager.setCommunicationDevice(preferred)
-            Log.i(TAG, "setCommunicationDevice(${preferred.type}, preference=$preference) -> $ok")
+            Log.i(TAG, "setCommunicationDevice(${preferred.type}, in=${inputKey ?: "auto"}, out=${outputKey ?: "auto"}) -> $ok")
         }
+    }
+
+    /** The communication (output) device type that shares a route with a pinned input type. */
+    private fun communicationTypeForInput(inputType: Int?): Int? = when (inputType) {
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> AudioDeviceInfo.TYPE_WIRED_HEADSET
+        AudioDeviceInfo.TYPE_USB_HEADSET -> AudioDeviceInfo.TYPE_USB_HEADSET
+        AudioDeviceInfo.TYPE_USB_DEVICE -> AudioDeviceInfo.TYPE_USB_DEVICE
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+        else -> null
     }
 
     fun release() {

@@ -77,11 +77,13 @@ class MainActivity : ComponentActivity() {
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
-                            availableInputRoutes = state.availableInputRoutes,
+                            availableInputDevices = state.availableInputDevices,
+                            availableOutputDevices = state.availableOutputDevices,
                             onPttModeChange = viewModel::setPttMode,
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
-                            onInputRouteChange = viewModel::setPreferredInputRoute,
+                            onInputDeviceChange = viewModel::setPreferredInputDevice,
+                            onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onImportIdentity = viewModel::importIdentity,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onBack = {
