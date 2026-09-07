@@ -241,8 +241,9 @@ class AudioEngine(
         val rec = try {
             buildAudioRecord()
         } catch (t: Throwable) {
-            // Reached on every reconnect before PHA-3290 item 8, and never
-            // handled: the call carried on looking connected with a dead mic.
+            // Before PHA-3290 item 8 this threw straight out of start(), which
+            // a reconnect ran on every attempt and nothing caught: the call
+            // carried on looking connected with a dead mic.
             capturing.set(false)
             Log.e(TAG, "capture unavailable", t)
             onAudioError("capture", t)
@@ -273,6 +274,7 @@ class AudioEngine(
                 }
             }
         }
+        return true
     }
 
     private fun reopenCapture(): Boolean {

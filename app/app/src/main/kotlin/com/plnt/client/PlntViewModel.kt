@@ -457,8 +457,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             // talking. For our own row the local toggles win — they apply the
             // instant they are tapped, before the server echoes them back.
             val presence = ClientPresence(
-                talking = if (isSelf) self.transmitting && !self.inputMuted && self.microphoneActive
-                else talking[clientId] == true,
+                talking = if (isSelf) {
+                    self.transmitting && !self.inputMuted && self.microphoneActive
+                } else {
+                    talking[clientId] == true
+                },
                 // A call the OS refused a microphone reads as muted on your own
                 // row, because from every listener's side it is (PHA-3290).
                 micMuted = if (isSelf) self.inputMuted || !self.microphoneActive else info?.inputMuted == true,
