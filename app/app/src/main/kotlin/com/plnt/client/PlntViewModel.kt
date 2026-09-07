@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -52,12 +53,16 @@ import java.util.UUID
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val identityStore = IdentityStore(app)
     private val dataStore = PlntDataStore(app)
+    private val powerManager = app.getSystemService(PowerManager::class.java)
 
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state
 
     private var voiceService: VoiceService? = null
     private val pendingActions = mutableListOf<(VoiceService) -> Unit>()
+
+    /** Whether the one-time battery-optimisation prompt has already been shown. */
+    private var batteryPromptShown = false
 
     // channelId -> talk-power-flat list of client ids we've observed there.
     private val roster = HashMap<Long, MutableSet<Long>>()
@@ -89,11 +94,13 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         app.bindService(Intent(app, VoiceService::class.java), connection, Context.BIND_AUTO_CREATE)
         viewModelScope.launch {
             val settings = dataStore.loadSettings()
+            batteryPromptShown = dataStore.batteryPromptShown()
             _state.update {
                 it.copy(
                     bookmarks = dataStore.loadBookmarks(),
                     settings = settings,
                     identityExport = identityStore.loadOrCreate(),
+                    batteryOptimizationExempt = isIgnoringBatteryOptimizations(),
                 )
             }
             // The service starts on its own default (push-to-talk); hand it the
@@ -153,6 +160,44 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
         runOnService { it.connect(bookmark, identity) }
+        // Asked at the first connect rather than at first launch: this is the
+        // moment the exemption starts to matter, and the moment the user has
+        // context for why an app is asking for it (PHA-3290 item 6). Once only
+        // — after that it lives in Settings.
+        if (!batteryPromptShown && !isIgnoringBatteryOptimizations()) requestBatteryExemption()
+    }
+
+    /**
+     * Whether Android will leave PLNT alone in the background. Two separate
+     * things ride on this (PHA-3290 item 6): OEM battery managers are the
+     * likeliest cause of the service kill this whole line of tickets is
+     * chasing, and the exemption is on Android's documented list of ways to be
+     * allowed to start a foreground service from the background at all.
+     */
+    private fun isIgnoringBatteryOptimizations(): Boolean =
+        powerManager?.isIgnoringBatteryOptimizations(getApplication<Application>().packageName) == true
+
+    /** Raises the one-shot request the Activity turns into the system dialog. */
+    fun requestBatteryExemption() {
+        _state.update { it.copy(batteryPromptRequest = UUID.randomUUID().toString()) }
+    }
+
+    /** The Activity has launched (or failed to launch) the dialog; don't ask again unprompted. */
+    fun batteryPromptHandled() {
+        batteryPromptShown = true
+        _state.update { it.copy(batteryPromptRequest = null) }
+        viewModelScope.launch { dataStore.setBatteryPromptShown() }
+    }
+
+    /**
+     * The app is on screen again. Refreshes the exemption state (the user may
+     * have just granted it in Settings) and lets the service re-request the
+     * microphone foreground-service type if a background restart was refused
+     * one — that upgrade is only possible from the foreground.
+     */
+    fun onAppForegrounded() {
+        _state.update { it.copy(batteryOptimizationExempt = isIgnoringBatteryOptimizations()) }
+        runOnService { it.onAppForegrounded() }
     }
 
     fun disconnect() {
@@ -284,11 +329,14 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private fun disconnectMessage(ev: CoreEvent.Disconnected): String? = when (ev.cause) {
         // The user knows; saying so would render as an error banner.
         DisconnectCause.USER -> null
+        // PHA-3290: no longer the end of the call. The service keeps its
+        // session snapshot across the kill and the START_STICKY restart
+        // redials on its own, so this says what is actually happening rather
+        // than announcing a death.
         DisconnectCause.SYSTEM_KILL ->
-            "Android stopped PLNT in the background, ending the call. " +
-                "Exempting PLNT from battery optimisation usually prevents this."
+            "Android stopped PLNT in the background. It will reconnect on its own — " +
+                "exempting PLNT from battery optimisation prevents the interruption."
         DisconnectCause.CONNECTION_LOST -> "Connection lost: ${ev.reason}"
-        DisconnectCause.RECONNECT_FAILED -> "Could not reconnect: ${ev.reason}"
         DisconnectCause.ERROR -> ev.reason
         // VoiceService replaces this with the real cause before it gets here.
         DisconnectCause.APP_REQUESTED -> null
@@ -310,6 +358,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 // reports empty, which must not wipe what refreshAudioDevices() found.
                 availableInputDevices = st.availableInputDevices.ifEmpty { it.availableInputDevices },
                 availableOutputDevices = st.availableOutputDevices.ifEmpty { it.availableOutputDevices },
+                microphoneActive = st.microphoneActive,
             )
         }
         // Own row's MIC/SND tags and talk ring come out of the same state.
@@ -408,8 +457,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             // talking. For our own row the local toggles win — they apply the
             // instant they are tapped, before the server echoes them back.
             val presence = ClientPresence(
-                talking = if (isSelf) self.transmitting && !self.inputMuted else talking[clientId] == true,
-                micMuted = if (isSelf) self.inputMuted else info?.inputMuted == true,
+                talking = if (isSelf) self.transmitting && !self.inputMuted && self.microphoneActive
+                else talking[clientId] == true,
+                // A call the OS refused a microphone reads as muted on your own
+                // row, because from every listener's side it is (PHA-3290).
+                micMuted = if (isSelf) self.inputMuted || !self.microphoneActive else info?.inputMuted == true,
                 outputMuted = if (isSelf) self.outputDeafened else info?.outputMuted == true,
                 away = info?.away == true,
             )

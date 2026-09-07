@@ -127,4 +127,18 @@ data class AppState(
     /** Output devices the hardware offers right now. Same refresh rules as [availableInputDevices]. */
     val availableOutputDevices: List<AudioDeviceOption> = emptyList(),
     val chatMessages: List<ChatMessage> = emptyList(),
+    /**
+     * False while the call is connected but the OS has not granted the
+     * microphone — see `VoiceState.microphoneActive` (PHA-3290). Renders as a
+     * muted own row, because that is what everyone else hears.
+     */
+    val microphoneActive: Boolean = true,
+    /** Whether PLNT is exempt from battery optimisation — drives the Settings row (PHA-3290 item 6). */
+    val batteryOptimizationExempt: Boolean = false,
+    /**
+     * Non-null when the Activity should launch the battery-optimisation
+     * dialog. A nonce rather than a Boolean so a second request after the user
+     * dismissed the first still re-fires the `LaunchedEffect` that consumes it.
+     */
+    val batteryPromptRequest: String? = null,
 )

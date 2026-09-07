@@ -14,6 +14,18 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- PHA-3290 item 7: `microphone` is a while-in-use service type, so an
+         API 34+ background start of one (which is exactly what a START_STICKY
+         restart is) can be refused with a SecurityException. `mediaPlayback`
+         has no runtime prerequisite, so the service can fall back to it and
+         come up connected-and-audible instead of dying — then upgrade to the
+         microphone type from the foreground. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- PHA-3290 item 6. Two reasons, both about surviving the background: OEM
+         battery managers are the likeliest killer of the voice service, and
+         the exemption is on Android's documented list of ways an app is
+         allowed to start a foreground service from the background at all. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- For the persistent connection notification's talk-state/mute/disconnect
          actions (PHA-3078); requested from MainActivity so the toggle is granted
@@ -45,11 +57,17 @@
             lifetime of a call. foregroundServiceType=microphone matches the
             FOREGROUND_SERVICE_MICROPHONE permission above (required on
             API 29+ to keep RECORD_AUDIO alive while backgrounded).
+
+            PHA-3290: mediaPlayback is declared alongside it so a refused
+            background microphone start degrades instead of crashing. Declaring
+            both types here and calling startForeground() with a subset (then
+            again later with more) is the documented pattern; see
+            VoiceService.startForeground().
         -->
         <service
             android:name=".service.VoiceService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaPlayback" />
 
     </application>
 

@@ -32,6 +32,13 @@ class PlntDataStore(private val context: Context) {
         val PREFERRED_OUTPUT_DEVICE = stringPreferencesKey("preferred_output_device")
 
         /**
+         * The battery-optimisation exemption is asked for once, at the first
+         * connect (PHA-3290 item 6); after that it lives in Settings. Without
+         * this flag a user who said no would be re-prompted on every connect.
+         */
+        val BATTERY_PROMPT_SHOWN = booleanPreferencesKey("battery_prompt_shown")
+
+        /**
          * Superseded: PTT trigger used to be one mutually-exclusive enum
          * (TOUCH_ONLY / VOLUME_BUTTON / HEADSET_BUTTON), which the design never
          * called for — volume and headset are independent switches. Still read
@@ -99,6 +106,13 @@ class PlntDataStore(private val context: Context) {
             preferredInputDeviceKey = prefs[Keys.PREFERRED_INPUT_DEVICE],
             preferredOutputDeviceKey = prefs[Keys.PREFERRED_OUTPUT_DEVICE],
         )
+    }
+
+    suspend fun batteryPromptShown(): Boolean =
+        context.plntDataStore.data.first()[Keys.BATTERY_PROMPT_SHOWN] ?: false
+
+    suspend fun setBatteryPromptShown() {
+        context.plntDataStore.edit { it[Keys.BATTERY_PROMPT_SHOWN] = true }
     }
 
     suspend fun saveSettings(settings: Settings) {

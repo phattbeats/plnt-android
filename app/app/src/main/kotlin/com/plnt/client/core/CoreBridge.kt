@@ -34,8 +34,10 @@ enum class DisconnectCause {
     /** The server or the transport dropped us and reconnect was not applicable. */
     CONNECTION_LOST,
 
-    /** Automatic reconnect ran out of attempts. */
-    RECONNECT_FAILED,
+    // RECONNECT_FAILED used to live here, for "automatic reconnect ran out of
+    // attempts". PHA-3290 removed the attempt ceiling — the retry loop backs
+    // off and keeps trying until the user disconnects — so nothing can reach
+    // that state any more and a cause nothing emits is worse than no cause.
 
     /** The connect attempt itself failed (bad address, rejected identity, …). */
     ERROR,
