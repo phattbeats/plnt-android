@@ -162,8 +162,8 @@ class VoiceService : Service() {
     private var outputMuted = false
     private var transmitting = false
     // PHA-3282. Held here rather than only on the AudioEngine because the engine is
-    // rebuilt on every doConnect() — the pin has to survive a reconnect without the
-    // ViewModel having to re-push it.
+    // released on a real teardown and while parked waiting for a network — the pin
+    // has to survive that without the ViewModel having to re-push it.
     private var preferredInputDeviceKey: String? = null
     private var preferredOutputDeviceKey: String? = null
     private var availableInputDevices: List<AudioDeviceOption> = emptyList()
