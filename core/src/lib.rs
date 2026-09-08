@@ -37,10 +37,12 @@ mod udl_types;
 pub use udl_types::{Channel, ChatTarget, ClientInfo, ConnEvent, ConnectionState, DisconnectCause};
 
 /// Build version string, surfaced to the Kotlin side for the settings screen
-/// and bug reports.
+/// and bug reports. Self-describing (`"plnt-core 0.1.0"`, not bare `"0.1.0"`)
+/// because Settings -> About renders it unlabeled, directly under the app
+/// description (PHA-3132).
 #[uniffi::export]
 pub fn core_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    format!("plnt-core {}", env!("CARGO_PKG_VERSION"))
 }
 
 // ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 
-use plnt_core::{Channel, ConnEvent, ConnectionState, EventSink};
+use plnt_core::{ConnEvent, EventSink};
 
 /// Test sink that captures every event the core fires.
 #[derive(Default)]
@@ -29,15 +29,16 @@ struct CapturingSink {
     events: Mutex<Vec<ConnEvent>>,
 }
 
-impl CapturingSink {
-    fn into_inner(self) -> Vec<ConnEvent> {
-        self.events.into_inner().unwrap()
-    }
-}
+/// Local wrapper handed to `Client::new` as the `Box<dyn EventSink>`. A bare
+/// `impl EventSink for Arc<CapturingSink>` hits the orphan rule (neither
+/// `EventSink` nor `Arc` is local to this crate); this newtype gives the impl
+/// a local type to hang off while still sharing the sink with the test via
+/// the wrapped `Arc`.
+struct SinkHandle(Arc<CapturingSink>);
 
-impl EventSink for CapturingSink {
+impl EventSink for SinkHandle {
     fn on_event(&self, ev: ConnEvent) {
-        self.events.lock().unwrap().push(ev);
+        self.0.events.lock().unwrap().push(ev);
     }
 }
 
@@ -77,9 +78,9 @@ fn sink_collects_connected_event() {
     // event-sink wiring works in isolation by constructing two clients
     // back-to-back and inspecting the sink state.
     let sink: Arc<CapturingSink> = Arc::new(CapturingSink::default());
-    let _client = plnt_core::Client::new(sink.clone());
+    let _client = plnt_core::Client::new(Box::new(SinkHandle(sink.clone())));
     // No connection attempted, so events should be empty.
-    assert!(sink.into_inner().is_empty());
+    assert!(sink.events.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -100,8 +101,8 @@ fn two_client_440hz_relays_within_5pct_rms() {
 
     let talker_sink: Arc<CapturingSink> = Arc::new(CapturingSink::default());
     let listener_sink: Arc<CapturingSink> = Arc::new(CapturingSink::default());
-    let _talker = plnt_core::Client::new(talker_sink.clone());
-    let _listener = plnt_core::Client::new(listener_sink.clone());
+    let _talker = plnt_core::Client::new(Box::new(SinkHandle(talker_sink.clone())));
+    let _listener = plnt_core::Client::new(Box::new(SinkHandle(listener_sink.clone())));
 
     let (tx, rx) = channel::<()>();
     let _ = tx; // silence unused warning while the test scaffold is partial.
@@ -131,8 +132,4 @@ fn two_client_440hz_relays_within_5pct_rms() {
         "listener dominant frequency {:.0} Hz differs from 440 Hz by more than 5 Hz",
         hz,
     );
-
-    // Silence unused-import warnings while the test scaffold is partial.
-    let _ = Channel::default();
-    let _ = ConnectionState::default();
 }
