@@ -23,17 +23,22 @@ use std::sync::{Arc, Mutex};
 
 use plnt_core::{ConnEvent, EventSink};
 
-/// Test sink that captures every event the core fires. Wrapped in `Arc` so
-/// the test can keep a handle to read captured events after handing a
-/// `Box<dyn EventSink>` to `Client::new` (which takes ownership).
+/// Test sink that captures every event the core fires.
 #[derive(Default)]
 struct CapturingSink {
     events: Mutex<Vec<ConnEvent>>,
 }
 
-impl EventSink for Arc<CapturingSink> {
+/// Local wrapper handed to `Client::new` as the `Box<dyn EventSink>`. A bare
+/// `impl EventSink for Arc<CapturingSink>` hits the orphan rule (neither
+/// `EventSink` nor `Arc` is local to this crate); this newtype gives the impl
+/// a local type to hang off while still sharing the sink with the test via
+/// the wrapped `Arc`.
+struct SinkHandle(Arc<CapturingSink>);
+
+impl EventSink for SinkHandle {
     fn on_event(&self, ev: ConnEvent) {
-        self.events.lock().unwrap().push(ev);
+        self.0.events.lock().unwrap().push(ev);
     }
 }
 
@@ -73,7 +78,7 @@ fn sink_collects_connected_event() {
     // event-sink wiring works in isolation by constructing two clients
     // back-to-back and inspecting the sink state.
     let sink: Arc<CapturingSink> = Arc::new(CapturingSink::default());
-    let _client = plnt_core::Client::new(Box::new(sink.clone()));
+    let _client = plnt_core::Client::new(Box::new(SinkHandle(sink.clone())));
     // No connection attempted, so events should be empty.
     assert!(sink.events.lock().unwrap().is_empty());
 }
@@ -96,8 +101,8 @@ fn two_client_440hz_relays_within_5pct_rms() {
 
     let talker_sink: Arc<CapturingSink> = Arc::new(CapturingSink::default());
     let listener_sink: Arc<CapturingSink> = Arc::new(CapturingSink::default());
-    let _talker = plnt_core::Client::new(Box::new(talker_sink.clone()));
-    let _listener = plnt_core::Client::new(Box::new(listener_sink.clone()));
+    let _talker = plnt_core::Client::new(Box::new(SinkHandle(talker_sink.clone())));
+    let _listener = plnt_core::Client::new(Box::new(SinkHandle(listener_sink.clone())));
 
     let (tx, rx) = channel::<()>();
     let _ = tx; // silence unused warning while the test scaffold is partial.
