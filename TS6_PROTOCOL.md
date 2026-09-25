@@ -62,16 +62,31 @@ Because signalling is plain SDP/ICE relayed as strings, the viewer and streamer 
 ordinary WebRTC peers. On Android both directions are well-trodden: `MediaProjection` →
 H.264 encoder → WebRTC for sending, and a `SurfaceViewRenderer` for receiving.
 
+## Framing — answered, and it invalidates a premise above
+
+Headline finding 2 says TS6 "adds a protobuf command layer on top of that same transport".
+That is wrong. `TS6_FRAMING.md` (PHA-3287) works the framing out of the same binary:
+
+- TS6 commands ride a **WebRTC data channel** (DTLS → SCTP), not tsproto. The format is picked
+  by the SCTP **PPID**: 51 (WebRTC String) = legacy text command, 53 (WebRTC Binary) = a
+  serialized `ClientCommandRequest` — the whole message, no length prefix and no command-id
+  header.
+- `client_protocol_format=proto` is a real property on the legacy text `clientinit` and it does
+  latch the session to protobuf — but only for a session that has a WebRTC transport.
+  `webrtc::Full_Session` is the only class in the binary that implements the switch, so sending
+  it over tsproto on `9987/udp` is parsed and then ignored.
+- `ClientInitRequest` has no `client_version_sign` field and the server does not synthesize
+  one, so a TS6-format client is not asked for a version signature at init.
+
+The practical consequence for PLNT: tsclientlib is not a stepping stone to the TS6 command
+layer. Reaching it means an ICE/DTLS/SCTP data-channel client. See `TS6_FRAMING.md`.
+
 ## Still unknown
 
-The one gap between "we can read the schema" and "we can speak the protocol" is **framing**:
-exactly how a `ClientCommandRequest` is carried inside the tsproto `Command` packet type, and
-how a client declares `client_protocol_format` during the handshake. tsclientlib already
-implements every hard part of the transport (crypto, resend, fragmentation), so this is a
-matter of observing one real TS6 client session, not of reimplementing a stack.
-
-Also unverified: whether the server enforces a client version/signature that would reject a
-third-party TS6-format client.
+None of the framing work has been observed on the wire — it is all read out of the server
+binary. The WebRTC server is itself an opt-in server option (`--enable-webrtc-server`) that our
+test server does not currently enable, so the TS6-native path is untested against a real
+client.
 
 ## Caveats
 
