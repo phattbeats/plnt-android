@@ -37,3 +37,22 @@ messages, enums, `oneof`s, repeated/optional labels and field numbers.
 Expect ~49 files, including `client_commands.proto` (the `ClientCommandRequest` /
 `ClientCommandResponse` envelope), `client/streaming.proto`, `client/chat.proto`,
 `events/stream_events.proto` and the `shared/*.proto` type definitions.
+
+## binutils/ — reading the code, not just the schema
+
+The schema says what the messages are; it says nothing about how they are framed. `binutils/`
+holds the three scripts used for that (see `../../TS6_FRAMING.md` for the findings):
+
+```sh
+python3 binutils/elf.py   ./tsserver                            # section map
+python3 binutils/find.py  ./tsserver client_protocol_format     # string + xrefs
+python3 binutils/disas.py ./tsserver 0xbd8720                   # disassemble a function
+```
+
+The server binary is stripped and the container it ships in has no binutils, so `elf.py` is a
+self-contained ELF64 reader (sections, address↔offset, relocations) and `disas.py` recovers
+function boundaries from `.eh_frame` FDEs rather than a symbol table. `disas.py` needs
+`pip install capstone`; the other two are pure stdlib.
+
+Addresses in `TS6_FRAMING.md` are for one specific build and will move. Re-find them by string:
+`find.py` gives the xref, `disas.py` gives the function around it.

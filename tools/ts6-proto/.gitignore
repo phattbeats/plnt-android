@@ -1,3 +1,4 @@
 proto_out/
 *.descriptorset.pb
 tsserver
+__pycache__/
