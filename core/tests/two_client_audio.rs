@@ -7,7 +7,7 @@
 //!
 //! The server binary must be available before the test runs. See the helper
 //! script `tools/start-test-server.sh` (not committed yet — planned for
-//! PHA-3076) which downloads `files.teamspeak-services.com/.../ts3server` and
+//! #3076) which downloads `files.teamspeak-services.com/.../ts3server` and
 //! drops it at `./target/ts3server`. When the binary is missing this test
 //! is `#[ignore]`'d so CI doesn't fail; run it locally with:
 //!
@@ -15,7 +15,7 @@
 //!
 //! Implementation mirrors the spike `voicespike.rs` (one talker, one
 //! listener). The framework will be filled in once the server binary is
-//! wired into CI in PHA-3076; this file documents the contract so future
+//! wired into CI in #3076; this file documents the contract so future
 //! work has a target.
 
 use std::sync::mpsc::{channel, Receiver};
@@ -84,7 +84,7 @@ fn sink_collects_connected_event() {
 }
 
 #[test]
-#[ignore = "requires local TeamSpeak 3.13.8 server binary (see PHA-3076)"]
+#[ignore = "requires local TeamSpeak 3.13.8 server binary (see #3076)"]
 fn two_client_440hz_relays_within_5pct_rms() {
     if let Err(msg) = ensure_test_server_available() {
         eprintln!("skipping: {msg}");

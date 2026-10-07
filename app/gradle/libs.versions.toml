@@ -7,7 +7,7 @@ lifecycle-runtime-ktx = "2.8.7"
 lifecycle-viewmodel-compose = "2.8.7"
 core-ktx = "1.13.1"
 compose-material-icons = "1.7.5"
-# PHA-3078: identity (EncryptedSharedPreferences), bookmarks/settings (DataStore),
+# #3078: identity (EncryptedSharedPreferences), bookmarks/settings (DataStore),
 # media-button PTT (MediaSessionCompat).
 security-crypto = "1.1.0-alpha06"
 datastore-preferences = "1.1.1"

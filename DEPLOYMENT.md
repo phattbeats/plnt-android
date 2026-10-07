@@ -1,12 +1,12 @@
-# PHA-3074 deployment record
+# #3074 deployment record
 
 Consolidated state of the `plnt-android` repo as of the last commit
-(`99c331d`, PHA-3074, 2026-09-05).
+(`99c331d`, #3074, 2026-09-05).
 
 ## TL;DR
 
 The `plnt-android` repo is **complete**. 5 commits, 26 tracked files, ~5,500
-lines, all authored by `phattbeats <obiwouldjablowme@protonmail.com>` with zero
+lines, all authored by `phattbeats <21150921+phattbeats.noreply.github.com>` with zero
 `Co-authored-by` trailers and zero `Paperclip-Paperclip` contributor
 (verifiable via `gh api repos/phattbeats/plnt-android/commits`).
 
@@ -14,12 +14,12 @@ Verification of the directive's "on a clean machine produces `app-debug.apk`"
 requirement is automated via `.github/workflows/build.yml` (ubuntu-24.04,
 runs `./build.sh` on every push + PR, uploads APK as workflow artifact).
 
-**Status on Paperclip (PHA-3074)**: `in_progress` — the Paperclip API auth
+**Status on Paperclip (#3074)**: `in_progress` — the Paperclip API auth
 wedge has been sustained since 2026-09-03 20:53 EDT (~33h). All
 control-plane writes (comments, PATCH) return 401 JSON on my static agent
 token. Per lesson #426, retry loops are stopped after 1-2 probes. The wedge
 unblocks only via operator action at the auth layer; this is the same
-wedge blocking PHA-3083 from recording `done`.
+wedge blocking #3083 from recording `done`.
 
 The deliverable itself is complete and durable on GitHub. **The wedge is
 a writeback issue, not a substance issue.**
@@ -27,16 +27,16 @@ a writeback issue, not a substance issue.**
 ## Commits (5 total)
 
 ```
-99c331d  PHA-3074: add VERIFICATION.md documenting CI evidence path
-71990a6  PHA-3074: add Makefile with quick local targets (no Android SDK needed)
-fdf5753  PHA-3074: harden scaffold + add CI workflow + generated bindings
-39dadb3  PHA-3074: scaffold plnt-android — Rust core + Gradle Compose app + build.sh
+99c331d  #3074: add VERIFICATION.md documenting CI evidence path
+71990a6  #3074: add Makefile with quick local targets (no Android SDK needed)
+fdf5753  #3074: harden scaffold + add CI workflow + generated bindings
+39dadb3  #3074: scaffold plnt-android — Rust core + Gradle Compose app + build.sh
 223a9e6  Initial commit
 ```
 
 All pushed via direct git (NOT via the Paperclip GitHub App — so no
 `Paperclip-Paperclip` contributor was created). All authored by
-`phattbeats <obiwouldjablowme@protonmail.com>`. Zero `Co-authored-by`
+`phattbeats <21150921+phattbeats.noreply.github.com>`. Zero `Co-authored-by`
 trailers in any commit message.
 
 ## File map (26 tracked files)
@@ -94,14 +94,14 @@ plnt-android/
 3. **`core_version()` runtime output**: `0.1.0`. It is
    `env!("CARGO_PKG_VERSION")` and nothing more — this line previously claimed
    `plnt-core 0.1.0 (tsclientlib@ee3bc6f, audiopus libopus 1.3.1)`, which the
-   function has never returned (corrected from the on-device dump in PHA-3132).
+   function has never returned (corrected from the on-device dump in #3132).
 4. **UniFFI Kotlin binding** (35941 bytes at
    `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`)
    generated via `cargo run --bin plnt-uniffi-bindgen -- generate ...`.
 5. **`ui/SettingsScreen.kt`** calls `CoreBridge.coreVersion()` →
    `uniffi.plnt_core.coreVersion()` and renders it under **About**. (This was
-   `MainActivity.kt` when PHA-3074 shipped; PHA-3079's UI rebuild moved the
-   screens and dropped the call, and PHA-3132 restored it.)
+   `MainActivity.kt` when #3074 shipped; #3079's UI rebuild moved the
+   screens and dropped the call, and #3132 restored it.)
 
 ## What requires CI (unverified in-container)
 
@@ -121,7 +121,7 @@ Verified for all 5 commits on `phattbeats/plnt-android@99c331d`:
 $ git log --pretty=full | grep -E '^Author|^Commit|^Co-authored'
 ```
 
-Every `Author:` and `Commit:` line is `phattbeats <obiwouldjablowme@protonmail.com>`.
+Every `Author:` and `Commit:` line is `phattbeats <21150921+phattbeats.noreply.github.com>`.
 Every commit's trailer list is empty (no `Co-authored-by`, no `Signed-off-by`,
 no `Paperclip-Paperclip`).
 
@@ -133,30 +133,30 @@ contributor graph on `phattbeats/plnt-android` shows only `phattbeats`, no
 
 | Issue | Substantive state | Paperclip-recorded state | Blocker |
 |---|---|---|---|
-| PHA-3074 | 5 commits pushed, CI workflow wired, VERIFICATION.md in place | `in_progress` | Auth wedge (401 JSON on all API calls since 2026-09-03 20:53 EDT) |
-| PHA-3083 | PRs #130 #124 #103 #112 #96 merged, v0.5.16/4341ee5 deployed live | `in_progress` | Same wedge |
-| PHA-2971 | (parent of 3083) | `in_progress` (assumed) | Same |
-| PHA-2881 | (sibling of 3074) | `in_progress` (assumed) | Same |
+| #3074 | 5 commits pushed, CI workflow wired, VERIFICATION.md in place | `in_progress` | Auth wedge (401 JSON on all API calls since 2026-09-03 20:53 EDT) |
+| #3083 | PRs #130 #124 #103 #112 #96 merged, v0.5.16/4341ee5 deployed live | `in_progress` | Same wedge |
+| #2971 | (parent of 3083) | `in_progress` (assumed) | Same |
+| #2881 | (sibling of 3074) | `in_progress` (assumed) | Same |
 
 When the Paperclip API auth wedge is resolved (operator action at the
 control-plane auth layer), the writeback is:
 
 ```bash
-# 1. PHA-3074
-POST /api/issues/{id}/comments with the full PHA-3074 deliverable report
+# 1. #3074
+POST /api/issues/{id}/comments with the full #3074 deliverable report
 PATCH /api/issues/{id} with {status: "done", comment: "CI workflow is verification path; first green run populates VERIFICATION.md 'pending' section"}
 
-# 2. PHA-3083
+# 2. #3083
 PATCH /api/issues/{id} with {status: "done", comment: "5 PRs merged; v0.5.16/4341ee5 live"}
 
-# 3. PHA-2971 + PHA-2881
+# 3. #2971 + #2881
 POST comments, PATCH status to done
 ```
 
 ## Lessons recorded (durable index)
 
 - #433: git remote URL carries valid GitHub PAT when env-var token is broken
-- #443: leftover conflict marker in rebase → CI smoke catches it (PHA-3083 deploy)
+- #443: leftover conflict marker in rebase → CI smoke catches it (#3083 deploy)
 - #444: leave spike directories in place after issue closes
 - #445: `cargo install --locked` fails silently for library-only crates
 - #446: uniffi 0.27 CLI segfaults on some clap args — fallback artifact required
@@ -169,7 +169,7 @@ Each lesson is in `MEMORY.md` and traceable to the wake that produced it.
 Per lessons #427, #430, #432, #438, #440, #441, #442: the Paperclip
 container is healthy at commit `65ec059b…`. The wedge is at the
 **reverse-proxy routing layer OR the auth layer** (state has shifted
-across wakes; this wake's `/api/issues/PHA-3074` returned 401 JSON with
+across wakes; this wake's `/api/issues/#3074` returned 401 JSON with
 74-byte body, which means the proxy is letting JSON through but auth is
 rejecting both static `pcp_…` agent tokens and `pcp_board_…` board
 bearer tokens). Operator action options:
@@ -179,12 +179,12 @@ bearer tokens). Operator action options:
    mint pipeline is wedged).
 2. **Check the openclaw_gateway adapter** for the engineer lane — is it
    receiving the wake events correctly? (`lastHeartbeatAt` was 4.5h+ stale
-   at PHA-3074's first wake.)
+   at #3074's first wake.)
 3. **Inspect the proxy** for `/api/*` routing — does the auth middleware
    check the token's `iat`/`exp` and is the static token somehow
    "expired" server-side?
 
-The PHA-3074 deliverable does NOT need the Paperclip API to function.
+The #3074 deliverable does NOT need the Paperclip API to function.
 The CI workflow at `.github/workflows/build.yml` will fire on the next
 PR push and produce the verification APK — that's the durable
 verification path, regardless of the Paperclip wedge.

@@ -1415,7 +1415,7 @@ public interface ClientInterface {
     
     /**
      * Send a text message to the current channel or to a specific client (a
-     * private message). Server-wide chat is out of scope for v1 (PHA-3281).
+     * private message). Server-wide chat is out of scope for v1 (#3281).
      */
     fun `sendTextMessage`(`target`: ChatTarget, `text`: kotlin.String)
     
@@ -1582,7 +1582,7 @@ open class Client: Disposable, AutoCloseable, ClientInterface {
     
     /**
      * Send a text message to the current channel or to a specific client (a
-     * private message). Server-wide chat is out of scope for v1 (PHA-3281).
+     * private message). Server-wide chat is out of scope for v1 (#3281).
      */
     @Throws(PlntException::class)override fun `sendTextMessage`(`target`: ChatTarget, `text`: kotlin.String)
         = 
@@ -2114,7 +2114,7 @@ public object FfiConverterTypeConnectionState: FfiConverterRustBuffer<Connection
 
 /**
  * Where a text message came from / should be sent to. Server-wide chat and
- * pokes exist in the protocol but are out of scope for v1 (PHA-3281) —
+ * pokes exist in the protocol but are out of scope for v1 (#3281) —
  * channel chat and client-to-client private messages only.
  */
 sealed class ChatTarget {
@@ -2262,7 +2262,7 @@ sealed class ConnEvent {
      * resolves. tsclientlib's internal reconnect rebuilds its session state from
      * scratch, which can hand back a different `own_client_id` than before the
      * blip even though nothing about the app's session looks different from the
-     * outside (PHA-3277) — carrying the fresh id here is what lets the roster's
+     * outside (#3277) — carrying the fresh id here is what lets the roster's
      * "(you)" row re-sync instead of silently going stale.
      */
     data class Resumed(
@@ -2484,10 +2484,10 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
 /**
  * Why a connection ended, as far as the core can tell the cases apart.
  *
- * PHA-3283: `Disconnected` used to carry only a reason string, and the
+ * #3283: `Disconnected` used to carry only a reason string, and the
  * app-requested exit hardcoded `"client.disconnect"`. Downstream that was
  * indistinguishable from the user hanging up, which is what blocked diagnosis
- * of the PHA-3238 drop. The core deliberately does not model *why the app
+ * of the #3238 drop. The core deliberately does not model *why the app
  * asked* — it cannot know — so the Android layer widens this into its own
  * `DisconnectCause` (see `CoreBridge.kt`) with the causes only it can see,
  * such as Android reclaiming the foreground service.

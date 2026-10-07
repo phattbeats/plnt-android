@@ -9,8 +9,8 @@ import com.plnt.client.core.CoreBridge
 /**
  * The identity PEM is the client's persistent keypair — losing it means
  * showing up on the server as a stranger on every connect, and leaking it
- * lets someone else impersonate this client. PHA-3079's ViewModel kept it in
- * plain SharedPreferences as a stopgap; this is PHA-3078's real store —
+ * lets someone else impersonate this client. #3079's ViewModel kept it in
+ * plain SharedPreferences as a stopgap; this is #3078's real store —
  * Jetpack Security's EncryptedSharedPreferences (AES256-GCM values,
  * AES256-SIV keys, master key held in the Android Keystore).
  */
@@ -38,7 +38,7 @@ class IdentityStore(context: Context) {
     /**
      * The stored PEM, or null if this install has never had one. Unlike
      * [loadOrCreate] this never generates one, which is what a headless
-     * restart-reconnect needs (PHA-3290): silently minting a fresh identity
+     * restart-reconnect needs (#3290): silently minting a fresh identity
      * there would put the client back on the server as a stranger — new server
      * groups, new permissions — with nobody watching to notice.
      */

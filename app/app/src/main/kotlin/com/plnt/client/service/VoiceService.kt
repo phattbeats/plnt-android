@@ -44,7 +44,7 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "plnt.voice"
 // Separate tag so a repro capture can be filtered down to just the service's
-// lifecycle callbacks (PHA-3283) without the rest of the voice-path chatter.
+// lifecycle callbacks (#3283) without the rest of the voice-path chatter.
 private const val LIFECYCLE_TAG = "plnt.lifecycle"
 // Bumped from "plnt-voice": that channel was created IMPORTANCE_LOW, which
 // makes the notification "Silent", and Android keeps silent notifications off
@@ -59,12 +59,12 @@ private const val MAX_BACKOFF_MS = 30_000L
 // the 1→2→4→8→16→30s backoff ended a live session after roughly three minutes
 // offline — a ceiling the user never asked for and could only recover from by
 // noticing and reconnecting by hand. Only a Disconnect action ends a session
-// now (PHA-3290 item 4); see scheduleReconnect.
+// now (#3290 item 4); see scheduleReconnect.
 
 /**
  * Mic/output/transmit state as the service holds it. The notification actions
  * and the media-button PTT change these behind the UI's back, so the UI has to
- * be told rather than assume its own optimistic value still holds (PHA-3079:
+ * be told rather than assume its own optimistic value still holds (#3079:
  * talk state renders from events, never from polling).
  */
 data class VoiceState(
@@ -81,14 +81,14 @@ data class VoiceState(
      * app the microphone — a background `microphone` foreground-service start
      * on API 34+, or an `AudioRecord` that would not open. The user can hear
      * everyone and nobody can hear them, so this has to be visible rather than
-     * inferred from silence (PHA-3290 items 7 and 8).
+     * inferred from silence (#3290 items 7 and 8).
      */
     val microphoneActive: Boolean,
 )
 
 /**
  * Foreground service that owns the single [AudioEngine] + [CoreClient] for
- * the lifetime of a call (PHA-3077/PHA-3078). This is the piece PHA-3079's
+ * the lifetime of a call (#3077/#3078). This is the piece #3079's
  * `PlntViewModel` originally bypassed — that ViewModel talked to a
  * `CoreClient` it created itself and never touched this service or its
  * `AudioEngine`, so no captured audio ever actually reached plnt-core. This
@@ -124,7 +124,7 @@ class VoiceService : Service() {
      * reconnecting. Replaces the old `userInitiatedDisconnect` boolean, which
      * [onDestroy] also set — so an OS-initiated service kill reached the UI
      * labelled as a user disconnect and diagnosis had nothing to go on
-     * (PHA-3283). Set in exactly one place, [shutdown], by the caller that
+     * (#3283). Set in exactly one place, [shutdown], by the caller that
      * actually knows the cause.
      */
     private var disconnectCause: DisconnectCause? = null
@@ -136,7 +136,7 @@ class VoiceService : Service() {
 
     /**
      * The retry loop is parked until a network shows up, rather than burning
-     * attempts against a radio that is down (PHA-3290 item 5). Left by
+     * attempts against a radio that is down (#3290 item 5). Left by
      * [ConnectivityManager.NetworkCallback.onAvailable], not by a timer.
      */
     private var awaitingNetwork = false
@@ -161,7 +161,7 @@ class VoiceService : Service() {
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
-    // PHA-3282. Held here rather than only on the AudioEngine because the engine is
+    // #3282. Held here rather than only on the AudioEngine because the engine is
     // released on a real teardown and while parked waiting for a network — the pin
     // has to survive that without the ViewModel having to re-push it.
     private var preferredInputDeviceKey: String? = null
@@ -181,7 +181,7 @@ class VoiceService : Service() {
             if (connectionParams == null || !hasConnectedOnce) return
             if (awaitingNetwork) {
                 // This — not a timer — is what drives a reconnect after a loss
-                // (PHA-3290 item 5). The backoff resets because the thing that
+                // (#3290 item 5). The backoff resets because the thing that
                 // was failing has just changed.
                 Log.i(TAG, "network available again ($network) — reconnecting")
                 awaitingNetwork = false
@@ -241,7 +241,7 @@ class VoiceService : Service() {
         // start on API 34+ takes the process with it, so the old ordering lost
         // this line entirely — and a capture with no `onStartCommand` in it
         // reads exactly like "the service was never restarted", which is the
-        // wrong conclusion to hand PHA-3286.
+        // wrong conclusion to hand #3286.
         if (intent == null) {
             logLifecycle("onStartCommand", "null intent — START_STICKY restart after a kill, flags=$flags")
         } else {
@@ -324,7 +324,7 @@ class VoiceService : Service() {
         microphoneActive = audioEngine?.isCaptureActive() ?: true,
     )
 
-    /** PHA-3282: user-facing mic device override, independent of PTT mode. Null = Automatic. */
+    /** #3282: user-facing mic device override, independent of PTT mode. Null = Automatic. */
     fun setPreferredInputDevice(key: String?) {
         preferredInputDeviceKey = key
         audioEngine?.setPreferredInputDevice(key)
@@ -407,7 +407,7 @@ class VoiceService : Service() {
     /**
      * Teardown that ends the *session*: the user hung up, or a first connect
      * failed in a way retrying cannot fix. Every caller supplies the cause it
-     * actually knows, which is the point of PHA-3283 — before that, [onDestroy]
+     * actually knows, which is the point of #3283 — before that, [onDestroy]
      * and a Disconnect tap both went through one `disconnect()` that stamped
      * `userInitiatedDisconnect = true`, so an OS kill and a user hang-up were
      * indistinguishable by the time they reached the UI.
@@ -450,8 +450,8 @@ class VoiceService : Service() {
      * Android is destroying this service instance. Releases everything the
      * process holds — and nothing else.
      *
-     * The distinction from [shutdown] is the whole of PHA-3290 item 1.
-     * PHA-3283 already established that this is not a user disconnect and
+     * The distinction from [shutdown] is the whole of #3290 item 1.
+     * #3283 already established that this is not a user disconnect and
      * labelled it [DisconnectCause.SYSTEM_KILL], but it still ran the user
      * teardown, which nulls `connectionParams` and (now) would wipe the
      * persisted session — erasing precisely the state the `START_STICKY`
@@ -474,7 +474,7 @@ class VoiceService : Service() {
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         teardownForProcessDeath()
         if (wasConnected) {
-            // Still reported, and still as SYSTEM_KILL (PHA-3283) — a UI that
+            // Still reported, and still as SYSTEM_KILL (#3283) — a UI that
             // outlives this service instance needs to know the call dropped.
             // What changed is what happens next: the snapshot survives, so the
             // sticky restart redials without the user touching anything.
@@ -486,7 +486,7 @@ class VoiceService : Service() {
         super.onDestroy()
     }
 
-    // ---- session persistence (PHA-3290 item 2) ----------------------------
+    // ---- session persistence (#3290 item 2) ----------------------------
 
     /**
      * Snapshot the live session so a restart can find it. Called on connect and
@@ -509,7 +509,7 @@ class VoiceService : Service() {
     }
 
     /**
-     * The headless half of PHA-3290: a `START_STICKY` restart arrives with a
+     * The headless half of #3290: a `START_STICKY` restart arrives with a
      * null Intent, no Activity, no bound ViewModel and no user in front of the
      * phone. Everything needed to redial comes off disk — the bookmark and
      * channel from [SessionStore], the identity from [IdentityStore] — and the
@@ -562,7 +562,7 @@ class VoiceService : Service() {
         }
     }
 
-    // ---- lifecycle instrumentation (PHA-3283 item 1) ----------------------
+    // ---- lifecycle instrumentation (#3283 item 1) ----------------------
 
     /**
      * The service was killed because its task was swiped out of Recents. A
@@ -586,7 +586,7 @@ class VoiceService : Service() {
 
     /**
      * One greppable line per service lifecycle callback, stamped with
-     * time-since-connect. PHA-3283 item 1 asks for the service kill to be
+     * time-since-connect. #3283 item 1 asks for the service kill to be
      * *confirmed* rather than inferred; this is that evidence:
      *
      * ```
@@ -667,7 +667,7 @@ class VoiceService : Service() {
     }
 
     /**
-     * One [AudioEngine] per session, not one per connect attempt (PHA-3290
+     * One [AudioEngine] per session, not one per connect attempt (#3290
      * item 8). Rebuilding it on every reconnect meant a fresh
      * `AudioRecord`/`AudioTrack` acquisition — and on Bluetooth a fresh SCO
      * handshake — stacked on top of the network reconnect, every cycle.
@@ -780,7 +780,7 @@ class VoiceService : Service() {
             }
             is CoreEvent.Resumed -> {
                 // tsclientlib's internal reconnect can hand back a different
-                // own_client_id than before the blip (PHA-3277) — re-sync the
+                // own_client_id than before the blip (#3277) — re-sync the
                 // copy `ClientMoved` above compares against, same as Connected.
                 ownClientId = ev.ownClientId
                 eventListener?.invoke(ev)
@@ -811,7 +811,7 @@ class VoiceService : Service() {
 
     /**
      * Back off and try again — indefinitely. There is no attempt ceiling: a
-     * session ends when the user ends it, and nothing else (PHA-3290 item 4).
+     * session ends when the user ends it, and nothing else (#3290 item 4).
      * The old 10-attempt budget, spent through a capped 1→30 s backoff, ended a
      * live call after roughly three minutes offline; a subway ride or a dead
      * router was enough, and recovery needed the user to notice and reconnect

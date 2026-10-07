@@ -21,7 +21,7 @@ data class PersistedSession(val bookmark: Bookmark, val lastChannelId: Long?)
  * [com.plnt.client.service.VoiceService] takes its in-memory
  * `ConnectionParams` with it, so the `START_STICKY` restart that follows used
  * to come up with nothing to reconnect to and simply left the user
- * disconnected until they opened the app (PHA-3283's note, PHA-3290 item 2).
+ * disconnected until they opened the app (#3283's note, #3290 item 2).
  * This is the state that makes that restart able to redial on its own — and a
  * plain crash-restart recoverable for free.
  *

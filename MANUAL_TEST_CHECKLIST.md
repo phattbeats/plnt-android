@@ -1,4 +1,4 @@
-# PHA-3077 — manual device test checklist
+# #3077 — manual device test checklist
 
 Run on a real Android device (minSdk 26+) against a real TeamSpeak server,
 with a second client (desktop TS client, or another PLNT device) in the same
@@ -47,7 +47,7 @@ plnt.voice` while testing.
       out of the phone's main speaker (not earpiece) — `MODE_IN_COMMUNICATION`
       + no external device should default here; if it's coming out the
       earpiece instead, note it (may need an explicit speakerphone-on
-      toggle in a follow-up ticket — out of PHA-3077's scope, which is
+      toggle in a follow-up ticket — out of #3077's scope, which is
       routing to *whatever Android currently has active*).
 - [ ] AEC/NS effective: with the other client playing continuous audio (e.g.
       music) in the same room, confirm they don't hear their own audio
@@ -76,7 +76,7 @@ plnt.voice` while testing.
       the notification stays posted (`VoiceService` foreground) and audio
       keeps flowing both ways.
 
-## 6. Network handoff / reconnect (PHA-3078)
+## 6. Network handoff / reconnect (#3078)
 
 Run against a local TeamSpeak 3.13.8 test server so a drop is easy to force.
 Watch `adb logcat -s plnt.voice`.
@@ -106,7 +106,7 @@ Watch `adb logcat -s plnt.voice`.
       backgrounded/screen off, hold the headset button. Confirm the other
       client hears you only while held. (Volume-key PTT with the screen off
       is a known gap, not expected to work — see `FOREGROUND_SERVICE.md`.)
-- [ ] Transient disconnect (PHA-3277): blackhole the server's voice UDP port
+- [ ] Transient disconnect (#3277): blackhole the server's voice UDP port
       (not airplane mode — this must stay short enough that tsclientlib
       resumes the session itself rather than the app's own reconnect loop
       taking over) for ~30–40 s, past the ~26 s resend-timeout but well
@@ -116,11 +116,11 @@ Watch `adb logcat -s plnt.voice`.
       later. Confirm the own row keeps its "(you)" label the whole time,
       including after the banner clears.
 
-## 6b. Background survival / self-heal (PHA-3290)
+## 6b. Background survival / self-heal (#3290)
 
 The standing bar for this section is **background voice works 100% of the
 time, input and output** — every row below has to pass with the user never
-touching the phone. Physical device only (PHA-3072/PHA-3080 round): an
+touching the phone. Physical device only (#3072/#3080 round): an
 emulator will not reproduce OEM battery-manager kills, and this is the
 section that needs them.
 
@@ -173,9 +173,9 @@ adb logcat -b system -b main | grep -E \
 - [ ] **Crash restart.** `adb shell am crash com.plnt.client` mid-call. The
       persisted session should bring the call back the same way a kill does.
 
-## 7. UI screenshot matrix (PHA-3079, emulator)
+## 7. UI screenshot matrix (#3079, emulator)
 
-This section is the acceptance evidence for PHA-3079: one screenshot per
+This section is the acceptance evidence for #3079: one screenshot per
 screen/state, taken on the emulator against a local TeamSpeak 3.13.8 server
 with two bot clients (the `voicespike` example from the spike is the "other
 person"). Unlike sections 1–5, none of this needs real audio hardware.
@@ -183,7 +183,7 @@ person"). Unlike sections 1–5, none of this needs real audio hardware.
 Setup:
 
 ```bash
-# 1. local test server + two bots (from the spike write-up in PHA-3072)
+# 1. local test server + two bots (from the spike write-up in #3072)
 cargo run --release -p tsclientlib --example voicespike -- --server 127.0.0.1 --nick jess
 # 2. emulator + APK (build.sh output, or the CI artifact)
 emulator -avd <avd> -no-snapshot -netdelay none -netspeed full &
@@ -192,7 +192,7 @@ adb install -r app/app/build/outputs/apk/debug/app-debug.apk
 adb exec-out screencap -p > shots/<name>.png
 ```
 
-Capture each of these; the name in brackets maps to the mockup in PHA-3076's
+Capture each of these; the name in brackets maps to the mockup in #3076's
 **PLNT UI Design** document:
 
 - [ ] `bookmarks-empty` [§1] — no servers, ghost icon + hint, `+` in the app bar.
@@ -223,7 +223,7 @@ Capture each of these; the name in brackets maps to the mockup in PHA-3076's
 Two states in the design's table **cannot** be produced from live data yet and
 should be reported as not-captured rather than faked: a peer showing MIC/SND
 (plnt-core reports no peer mute state) and the away treatment (no idle time in
-the event stream). Both are implemented in Compose and flagged on PHA-3076.
+the event stream). Both are implemented in Compose and flagged on #3076.
 
 Also confirm while capturing:
 

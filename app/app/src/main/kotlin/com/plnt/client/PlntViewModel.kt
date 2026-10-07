@@ -37,10 +37,10 @@ import java.util.UUID
  * Owns UI state as a single [StateFlow] so Compose renders every core event on
  * the next frame (collectAsStateWithLifecycle), no polling.
  *
- * PHA-3078: the [com.plnt.client.core.CoreClient] this app talks to lives in
+ * #3078: the [com.plnt.client.core.CoreClient] this app talks to lives in
  * [VoiceService], not here — this ViewModel binds to it and forwards UI
  * intents (connect/disconnect/joinChannel/ptt*) rather than owning a client
- * of its own. PHA-3079's version of this file created its own `CoreClient`
+ * of its own. #3079's version of this file created its own `CoreClient`
  * directly, which meant `VoiceService`'s `AudioEngine` was never in the loop
  * and no captured audio ever reached plnt-core; routing everything through
  * the bound service both fixes that and is what lets the connection survive
@@ -123,7 +123,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun navigate(screen: Screen) {
         // Settings lists audio devices, and a headset may have been plugged in since
         // the last enumeration. With no call running there is no AudioEngine device
-        // callback to push an update, so re-read on the way in (PHA-3282).
+        // callback to push an update, so re-read on the way in (#3282).
         if (screen == Screen.Settings) refreshAudioDevices()
         _state.update { it.copy(screen = screen) }
     }
@@ -162,14 +162,14 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.connect(bookmark, identity) }
         // Asked at the first connect rather than at first launch: this is the
         // moment the exemption starts to matter, and the moment the user has
-        // context for why an app is asking for it (PHA-3290 item 6). Once only
+        // context for why an app is asking for it (#3290 item 6). Once only
         // — after that it lives in Settings.
         if (!batteryPromptShown && !isIgnoringBatteryOptimizations()) requestBatteryExemption()
     }
 
     /**
      * Whether Android will leave PLNT alone in the background. Two separate
-     * things ride on this (PHA-3290 item 6): OEM battery managers are the
+     * things ride on this (#3290 item 6): OEM battery managers are the
      * likeliest cause of the service kill this whole line of tickets is
      * chasing, and the exemption is on Android's documented list of ways to be
      * allowed to start a foreground service from the background at all.
@@ -251,7 +251,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         if (deafened) runOnService { it.setInputMuted(true) }
     }
 
-    /** Press-and-hold PTT. Gates *sending*, not capture — mirrors PHA-3077's AudioEngine contract. */
+    /** Press-and-hold PTT. Gates *sending*, not capture — mirrors #3077's AudioEngine contract. */
     fun pttPress() {
         if (_state.value.settings.pttMode != PttMode.PUSH_TO_TALK) return
         _state.update { it.copy(transmitting = true) }
@@ -282,7 +282,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.setHeadsetTriggerArmed(enabled) }
     }
 
-    /** PHA-3282: pin the mic to one device, or `null` for Automatic. */
+    /** #3282: pin the mic to one device, or `null` for Automatic. */
     fun setPreferredInputDevice(key: String?) {
         _state.update { it.copy(settings = it.settings.copy(preferredInputDeviceKey = key)) }
         viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
@@ -321,7 +321,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * What to show after a disconnect, or null when there is nothing to
-     * explain. PHA-3283: every disconnect used to render the core's raw reason
+     * explain. #3283: every disconnect used to render the core's raw reason
      * string, so a user who hung up saw "client.disconnect" as an error and —
      * worse — so did a user whose service Android had just killed, with no way
      * to tell the two apart. The cause carries that now.
@@ -329,7 +329,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private fun disconnectMessage(ev: CoreEvent.Disconnected): String? = when (ev.cause) {
         // The user knows; saying so would render as an error banner.
         DisconnectCause.USER -> null
-        // PHA-3290: no longer the end of the call. The service keeps its
+        // #3290: no longer the end of the call. The service keeps its
         // session snapshot across the kill and the START_STICKY restart
         // redials on its own, so this says what is actually happening rather
         // than announcing a death.
@@ -452,7 +452,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         fun rowFor(clientId: Long): ClientRow {
             val isSelf = clientId == ownId
             val info = clientsById[clientId]
-            // Independent axes, per PHA-3076's state table: mic-muted and
+            // Independent axes, per #3076's state table: mic-muted and
             // output-muted can both be true, and either can coexist with
             // talking. For our own row the local toggles win — they apply the
             // instant they are tapped, before the server echoes them back.
@@ -463,7 +463,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     talking[clientId] == true
                 },
                 // A call the OS refused a microphone reads as muted on your own
-                // row, because from every listener's side it is (PHA-3290).
+                // row, because from every listener's side it is (#3290).
                 micMuted = if (isSelf) self.inputMuted || !self.microphoneActive else info?.inputMuted == true,
                 outputMuted = if (isSelf) self.outputDeafened else info?.outputMuted == true,
                 away = info?.away == true,
@@ -495,7 +495,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        // Deliberately does NOT disconnect — the whole point of PHA-3078 is
+        // Deliberately does NOT disconnect — the whole point of #3078 is
         // that the call outlives this ViewModel. Only drop the binding.
         runCatching { getApplication<Application>().unbindService(connection) }
         super.onCleared()

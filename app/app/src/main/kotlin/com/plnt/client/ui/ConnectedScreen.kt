@@ -71,7 +71,7 @@ import com.plnt.client.ui.theme.Sage
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceRaised
 
-/** PHA-3076 screen 4: channel tree + per-client rows + the 160dp bottom control bar. */
+/** #3076 screen 4: channel tree + per-client rows + the 160dp bottom control bar. */
 @Composable
 fun ConnectedScreen(
     phase: ConnectionPhase,
@@ -119,7 +119,7 @@ fun ConnectedScreen(
                 actions = {
                     // Not in the mockup, but disconnect moved to the control bar
                     // pill and settings would otherwise be unreachable while
-                    // connected. Implementer's call; flagged on PHA-3076.
+                    // connected. Implementer's call; flagged on #3076.
                     IconButton(onClick = onOpenChat) {
                         Icon(Icons.Filled.Chat, contentDescription = "Chat", tint = Mauve)
                     }

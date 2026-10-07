@@ -68,7 +68,7 @@ import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceRaised
 
 /**
- * PHA-3076 screens 1–3: bookmarks (empty + populated) and the add/edit bottom
+ * #3076 screens 1–3: bookmarks (empty + populated) and the add/edit bottom
  * sheet. Rows are swipe-to-reveal Edit/Delete and a plain tap connects — no
  * per-row buttons. Delete confirms; edit and connect do not.
  */

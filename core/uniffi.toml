@@ -12,10 +12,10 @@
 #   * library mode (`--library .../libplnt_core.so`, what build.sh does today)
 #     derives it from the file stem            -> "plnt_core"   (correct)
 #   * UDL mode (`generate src/plnt_core.udl`, what the Makefile target and
-#     build.sh before PHA-3079 do) falls back to `uniffi_{namespace}`
+#     build.sh before #3079 do) falls back to `uniffi_{namespace}`
 #                                              -> "uniffi_plnt_core" (wrong)
 #
-# That second path is PHA-3235: CI regenerated the bindings in UDL mode, the
+# That second path is #3235: CI regenerated the bindings in UDL mode, the
 # APK shipped `libplnt_core.so`, and the app died at launch with
 # `UnsatisfiedLinkError: dlopen failed: library "libuniffi_plnt_core.so" not
 # found`. An explicit value wins over both inferences (`update_from_cdylib_name`

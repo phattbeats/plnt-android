@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        Voice client: PHA-3074 architecture decisions locked the project scope
+        Voice client: #3074 architecture decisions locked the project scope
         to "VOICE ONLY — connect, channel tree, who-is-talking, join channel,
         push-to-talk / open mic, mute/deafen, Bluetooth headsets." These
         permissions cover that surface; chat / streams / file transfer are
@@ -14,24 +14,24 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <!-- PHA-3290 item 7: `microphone` is a while-in-use service type, so an
+    <!-- #3290 item 7: `microphone` is a while-in-use service type, so an
          API 34+ background start of one (which is exactly what a START_STICKY
          restart is) can be refused with a SecurityException. `mediaPlayback`
          has no runtime prerequisite, so the service can fall back to it and
          come up connected-and-audible instead of dying — then upgrade to the
          microphone type from the foreground. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- PHA-3290 item 6. Two reasons, both about surviving the background: OEM
+    <!-- #3290 item 6. Two reasons, both about surviving the background: OEM
          battery managers are the likeliest killer of the voice service, and
          the exemption is on Android's documented list of ways an app is
          allowed to start a foreground service from the background at all. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- For the persistent connection notification's talk-state/mute/disconnect
-         actions (PHA-3078); requested from MainActivity so the toggle is granted
+         actions (#3078); requested from MainActivity so the toggle is granted
          before that notification ever needs to post. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- PHA-3078: VoiceService's ConnectivityManager.NetworkCallback (wifi<->LTE
+    <!-- #3078: VoiceService's ConnectivityManager.NetworkCallback (wifi<->LTE
          handoff detection) and the partial wake lock held while connected. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -53,12 +53,12 @@
         </activity>
 
         <!--
-            PHA-3077: owns the AudioEngine + plnt-core Client for the
+            #3077: owns the AudioEngine + plnt-core Client for the
             lifetime of a call. foregroundServiceType=microphone matches the
             FOREGROUND_SERVICE_MICROPHONE permission above (required on
             API 29+ to keep RECORD_AUDIO alive while backgrounded).
 
-            PHA-3290: mediaPlayback is declared alongside it so a refused
+            #3290: mediaPlayback is declared alongside it so a refused
             background microphone start degrades instead of crashing. Declaring
             both types here and calling startForeground() with a subset (then
             again later with more) is the documented pattern; see

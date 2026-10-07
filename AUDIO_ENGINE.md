@@ -1,15 +1,15 @@
-# PHA-3077 — Android audio engine
+# #3077 — Android audio engine
 
 `AudioEngine` (`app/app/src/main/kotlin/com/plnt/client/audio/AudioEngine.kt`)
 owns the two device audio streams for one call: mic capture and call
 playback, both hitting `plnt-core`'s fixed 20 ms / 960-sample / 48 kHz mono
 frame shape (`core/src/lib.rs`'s `PCM_FRAME_SAMPLES`, `Client.sendPcmFrame`,
-`ConnEvent.PcmFrame` — landed in PHA-3075). `VoiceService`
+`ConnEvent.PcmFrame` — landed in #3075). `VoiceService`
 (`app/app/src/main/kotlin/com/plnt/client/service/VoiceService.kt`) is the
 foreground service that owns one `AudioEngine` + one `CoreClient` for the
-life of a call, per the PHA-3077 "expose a simple `AudioEngine` class the
+life of a call, per the #3077 "expose a simple `AudioEngine` class the
 service owns" requirement. It goes through `CoreBridge`/`CoreClient`
-(`app/app/src/main/kotlin/com/plnt/client/core/CoreBridge.kt` — PHA-3079's
+(`app/app/src/main/kotlin/com/plnt/client/core/CoreBridge.kt` — #3079's
 seam over the generated `uniffi.plnt_core.*` symbols) rather than touching
 `Client`/`EventSink` directly, per that file's own documented convention.
 `CoreBridge.newClient()` gained a second `onPcmFrame` callback for this
@@ -48,9 +48,9 @@ to `AudioEngine.onPlaybackFrame`.
   toggles whether captured frames are forwarded; the capture thread and
   `AudioRecord` never stop, so there's no SCO reconnect between PTT presses.
 
-## What's NOT implemented here (explicitly out of scope for PHA-3077)
+## What's NOT implemented here (explicitly out of scope for #3077)
 
-- UI wiring for PTT/open-mic/mute/deafen (PHA-3078/3079's screens call
+- UI wiring for PTT/open-mic/mute/deafen (#3078/3079's screens call
   `VoiceService.setPushToTalk`/`setOpenMic`).
 - Mixing more than one simultaneous remote talker's `PcmFrame` stream in
   software — each `PcmFrame` is written straight to `AudioTrack` as it
@@ -64,16 +64,16 @@ to `AudioEngine.onPlaybackFrame`.
 
 This ticket was executed in a sandbox with **no Android SDK, no NDK, no
 Rust/cargo toolchain, and no emulator** (same constraint noted in
-`VERIFICATION.md` for PHA-3074/3075 — CI is this repo's verification path,
+`VERIFICATION.md` for #3074/3075 — CI is this repo's verification path,
 not the agent sandbox). Concretely:
 
 | Check | Status |
 |---|---|
 | Kotlin compiles | **Not verified here** — no `gradlew`/Android SDK in this environment. Needs a CI run or a local `./build.sh`. |
-| UniFFI bindings regenerated for `Client`/`EventSink`/`ConnEvent` | **Not verified here** — the committed bindings at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt` still only cover PHA-3074's `core_version()` smoke function; PHA-3075 added `Client`/`EventSink`/`ConnEvent`/`IdentityObj` via `#[uniffi::export]` proc macros but (per that ticket's own notes) never got a toolchain to regenerate the Kotlin side either. **This blocks `VoiceService.kt` from compiling until `build.sh`/CI regenerates bindings.** Flagging this as a build blocker, not a PHA-3077-specific gap. |
+| UniFFI bindings regenerated for `Client`/`EventSink`/`ConnEvent` | **Not verified here** — the committed bindings at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt` still only cover #3074's `core_version()` smoke function; #3075 added `Client`/`EventSink`/`ConnEvent`/`IdentityObj` via `#[uniffi::export]` proc macros but (per that ticket's own notes) never got a toolchain to regenerate the Kotlin side either. **This blocks `VoiceService.kt` from compiling until `build.sh`/CI regenerates bindings.** Flagging this as a build blocker, not a #3077-specific gap. |
 | Emulator loopback (frames flow both ways through plnt-core to a local test server) | **Not run.** See "Emulator loopback test" below for the procedure to run once a toolchain is available — it was written but not executed in this sandbox. |
 | Device round (wired headset / BT earbuds / phone speaker / mid-call switching) | **Not run** — needs physical hardware. See `MANUAL_TEST_CHECKLIST.md`. |
-| Rust-side frame contract (960 samples / 48 kHz mono, `PcmFrame` shape) | Verified by reading `core/src/lib.rs` (PHA-3075) — no Rust changes were needed for this ticket, `Client.sendPcmFrame`/`ConnEvent.PcmFrame` already match the 20 ms frame shape this ticket asked `AudioEngine` to plumb into. |
+| Rust-side frame contract (960 samples / 48 kHz mono, `PcmFrame` shape) | Verified by reading `core/src/lib.rs` (#3075) — no Rust changes were needed for this ticket, `Client.sendPcmFrame`/`ConnEvent.PcmFrame` already match the 20 ms frame shape this ticket asked `AudioEngine` to plumb into. |
 
 ## Emulator loopback test (procedure — not executed in this sandbox)
 
@@ -103,7 +103,7 @@ decode/playback chain, not BT routing).
    - The second client (or a packet capture on the test server) showing
      inbound Opus packets from the emulator's client and receiving frames
      back — mirrors the "4 s of Opus voice between two clients with zero
-     loss" evidence bar the PHA-3073 spike already established.
+     loss" evidence bar the #3073 spike already established.
 6. Report the logcat excerpt + second-client evidence in the issue exactly
    like `VERIFICATION.md`'s CI evidence section, once a toolchain/CI run is
    available to actually build and install the APK.

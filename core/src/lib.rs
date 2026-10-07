@@ -39,7 +39,7 @@ pub use udl_types::{Channel, ChatTarget, ClientInfo, ConnEvent, ConnectionState,
 /// Build version string, surfaced to the Kotlin side for the settings screen
 /// and bug reports. Self-describing (`"plnt-core 0.1.0"`, not bare `"0.1.0"`)
 /// because Settings -> About renders it unlabeled, directly under the app
-/// description (PHA-3132).
+/// description (#3132).
 #[uniffi::export]
 pub fn core_version() -> String {
     format!("plnt-core {}", env!("CARGO_PKG_VERSION"))
@@ -291,7 +291,7 @@ impl Client {
     }
 
     /// Send a text message to the current channel or to a specific client (a
-    /// private message). Server-wide chat is out of scope for v1 (PHA-3281).
+    /// private message). Server-wide chat is out of scope for v1 (#3281).
     pub fn send_text_message(&self, target: ChatTarget, text: String) -> Result<(), PlntError> {
         if text.trim().is_empty() {
             return Err(PlntError::Invalid("message text is empty".into()));
@@ -391,7 +391,7 @@ impl IdentityObj {
 
 /// Parse an identity string. The one parser behind both
 /// [`IdentityObj::import`] and [`Client::connect`] — they used to differ, and a
-/// value [`IdentityObj::export`] produced was not accepted by either (PHA-3238).
+/// value [`IdentityObj::export`] produced was not accepted by either (#3238).
 ///
 /// Accepts, in order:
 /// - the TS3 identity string `"<counter>V<base64-key>"` that `export()` writes,
@@ -696,7 +696,7 @@ async fn run_connection_loop(
                             }
                         }
                         // Server-wide chat and pokes are out of scope for v1
-                        // (PHA-3281) — only surface channel and private (client
+                        // (#3281) — only surface channel and private (client
                         // -to-client) messages.
                         if let tsclientlib::events::Event::Message { target, invoker, message } = &ev {
                             let chat_target = match target {
@@ -735,7 +735,7 @@ async fn run_connection_loop(
     // The cause is the load-bearing half here; the reason string is only for
     // logs and bug reports. `Requested` says the loop exited because the app
     // called `Client::disconnect()` — it does NOT say the *user* did, which is
-    // the conflation PHA-3283 is about. Only the Android service layer knows
+    // the conflation #3283 is about. Only the Android service layer knows
     // whether that request came from a Disconnect tap or from `onDestroy()`
     // after Android reclaimed the service.
     let (cause, reason) = if stream_ended {

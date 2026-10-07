@@ -1,4 +1,4 @@
-# PHA-3074 verification log
+# #3074 verification log
 
 The directive's verification step: *"`./build.sh` on a clean checkout produces
 `app-debug.apk`; installed on an x86_64 emulator, the app launches and shows
@@ -32,7 +32,7 @@ push and PR against `ubuntu-24.04`. Successful completion satisfies:
    `Smoke: APK ships the library the bindings load` reads the name back out of
    the generated `findLibraryName()` and asserts `lib/<abi>/lib<name>.so` is
    present inside the APK. Steps 1–3 all pass on an APK that cannot start
-   (PHA-3235): they check the `.so` against a hardcoded name rather than
+   (#3235): they check the `.so` against a hardcoded name rather than
    against the name the Kotlin actually dlopen()s. The step
    `Smoke: regenerated bindings are a no-op diff` covers the other half — that
    what CI generates is what the repo has committed.
@@ -67,12 +67,12 @@ Text widget renders exactly:
 
 Earlier revisions of this file and of `DEPLOYMENT.md` claimed
 `plnt-core 0.1.0 (tsclientlib@ee3bc6f, audiopus libopus 1.3.1)`. The function
-has never returned that — corrected against the on-device dump in PHA-3132.
+has never returned that — corrected against the on-device dump in #3132.
 
 What you are checking is **not** the version number, it is that the string is a
 version at all. On a broken native link `CoreBridge.coreVersion()` catches the
 throwable and renders `unavailable: UnsatisfiedLinkError: dlopen failed: …`
-instead. That is the PHA-3235 failure mode, visible without a logcat dive.
+instead. That is the #3235 failure mode, visible without a logcat dive.
 
 ## First successful CI run
 

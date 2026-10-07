@@ -7,7 +7,7 @@ core as Android loadable libraries (`.so` files) via
 [`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) and exposes it to
 Kotlin through [UniFFI](https://github.com/mozilla/uniffi-rs).
 
-Goal of PHA-3074: `./build.sh` produces an installable `app-debug.apk`
+Goal of #3074: `./build.sh` produces an installable `app-debug.apk`
 on a clean machine. Voice scope only — connect, channel tree,
 who-is-talking, join channel, push-to-talk / open mic, mute/deafen,
 Bluetooth headsets. No chat, no streams, no file transfer, no
@@ -17,11 +17,11 @@ TS6-only features.
 
 | Phase | Status |
 |---|---|
-| PHA-3073 voice spike (Rust core → TS6 server, 4 s of 440 Hz) | **PASS** — spike write-up + voicespike harness: <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download> |
-| PHA-3074 toolchain (this repo) | **SCAFFOLD COMPLETE + CI WIRED** — Cargo workspace + `plnt-core` (verified `cargo build`/`cargo test` clean host-side) + UniFFI bindings (generated, committed at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`) + Gradle/Compose app + `build.sh` + `.github/workflows/build.yml` (CI runs on Ubuntu 24.04). Live APK build needs a CI runner with Rust + JDK 17 + Android SDK 34 + NDK 27 — wired in the workflow. |
-| PHA-3075 voice client core | `Client`/`EventSink`/`ConnEvent`/`IdentityObj` over tsclientlib, 20 ms PCM frame API (`sendPcmFrame`/`PcmFrame`) — see `core/src/lib.rs`. |
-| PHA-3077 Android audio engine | **CODE WRITTEN, UNVERIFIED** — `AudioEngine` (VOICE_COMMUNICATION capture/playback, AEC/NS, Bluetooth SCO routing, `AudioDeviceCallback` rehoming, PTT gates send not capture) + `VoiceService` (foreground service owning it). See `AUDIO_ENGINE.md` for exactly what's verified vs. blocked on a real toolchain, and `MANUAL_TEST_CHECKLIST.md` for the device round. |
-| PHA-3078 foreground service wiring, reconnect, identity/bookmark storage | **CODE WRITTEN, UNVERIFIED** — `VoiceService` is now actually wired to `PlntViewModel` (previously dead code; the ViewModel bypassed it entirely, so no captured audio ever reached plnt-core). Adds `ConnectivityManager`-driven reconnect with exponential backoff (capped 30 s) that rejoins the last channel, notification mute/talk/disconnect actions, a partial wake lock while connected, `MediaSessionCompat` headset-button PTT, `EncryptedSharedPreferences` identity, and DataStore bookmarks/settings. See `FOREGROUND_SERVICE.md` for exactly what's verified vs. blocked, and the new "Network handoff / reconnect" section of `MANUAL_TEST_CHECKLIST.md`. |
+| #3073 voice spike (Rust core → TS6 server, 4 s of 440 Hz) | **PASS** — spike write-up + voicespike harness: <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download> |
+| #3074 toolchain (this repo) | **SCAFFOLD COMPLETE + CI WIRED** — Cargo workspace + `plnt-core` (verified `cargo build`/`cargo test` clean host-side) + UniFFI bindings (generated, committed at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`) + Gradle/Compose app + `build.sh` + `.github/workflows/build.yml` (CI runs on Ubuntu 24.04). Live APK build needs a CI runner with Rust + JDK 17 + Android SDK 34 + NDK 27 — wired in the workflow. |
+| #3075 voice client core | `Client`/`EventSink`/`ConnEvent`/`IdentityObj` over tsclientlib, 20 ms PCM frame API (`sendPcmFrame`/`PcmFrame`) — see `core/src/lib.rs`. |
+| #3077 Android audio engine | **CODE WRITTEN, UNVERIFIED** — `AudioEngine` (VOICE_COMMUNICATION capture/playback, AEC/NS, Bluetooth SCO routing, `AudioDeviceCallback` rehoming, PTT gates send not capture) + `VoiceService` (foreground service owning it). See `AUDIO_ENGINE.md` for exactly what's verified vs. blocked on a real toolchain, and `MANUAL_TEST_CHECKLIST.md` for the device round. |
+| #3078 foreground service wiring, reconnect, identity/bookmark storage | **CODE WRITTEN, UNVERIFIED** — `VoiceService` is now actually wired to `PlntViewModel` (previously dead code; the ViewModel bypassed it entirely, so no captured audio ever reached plnt-core). Adds `ConnectivityManager`-driven reconnect with exponential backoff (capped 30 s) that rejoins the last channel, notification mute/talk/disconnect actions, a partial wake lock while connected, `MediaSessionCompat` headset-button PTT, `EncryptedSharedPreferences` identity, and DataStore bookmarks/settings. See `FOREGROUND_SERVICE.md` for exactly what's verified vs. blocked, and the new "Network handoff / reconnect" section of `MANUAL_TEST_CHECKLIST.md`. |
 
 ## Layout
 
@@ -76,7 +76,7 @@ plnt-android/
 | Rust targets | aarch64-linux-android, x86_64-linux-android | arm64-v8a devices + x86_64 emulator |
 | cargo-ndk | 4.1.0 | Pinned for reproducibility |
 | uniffi | 0.27 | UniFFI binding generator + scaffolding |
-| tsclientlib | `ee3bc6f` (commit pin) | The version proven by the spike (PHA-3073) |
+| tsclientlib | `ee3bc6f` (commit pin) | The version proven by the spike (#3073) |
 | audiopus | 0.3.0-rc.0 | Matches tsclientlib's optional `audio` feature |
 
 ## Reproducible build on a clean machine
@@ -159,17 +159,17 @@ beyond what `build.sh` produces.
 Every commit in this repo must satisfy the PHATT-TECH commit-identity
 rule:
 
-- Author and committer must be `phattbeats <obiwouldjablowme@protonmail.com>`.
+- Author and committer must be `phattbeats <21150921+phattbeats.noreply.github.com>`.
 - Zero `Co-authored-by` trailers (no Paperclip-Paperclip contributor).
 - Push via direct `git push` (not via the Paperclip GitHub App).
 - Always override identity before committing:
   ```bash
   git config user.name  "phattbeats"
-  git config user.email "obiwouldjablowme@protonmail.com"
+  git config user.email "21150921+phattbeats.noreply.github.com"
   ```
 
 ## Where this came from
 
-- **Spike write-up** (PHA-3073 plan + voice proof): <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download>
+- **Spike write-up** (#3073 plan + voice proof): <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download>
 - **Two-client voice test harness** (`tsclientlib/examples/voicespike.rs`): <https://nextcloud.phatt.vip/s/2CstCCfpZgHyGws/download>
 - **Spike build notes**: `/root/work/pha3073/BUILD_NOTES.md`

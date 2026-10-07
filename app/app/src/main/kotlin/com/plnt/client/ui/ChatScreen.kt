@@ -53,8 +53,8 @@ import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceRaised
 
 /**
- * Channel + private text chat (PHA-3281). No design spec covers chat yet —
- * parent PHA-3076 predates it — so this stays close to [ConnectedScreen]'s
+ * Channel + private text chat (#3281). No design spec covers chat yet —
+ * parent #3076 predates it — so this stays close to [ConnectedScreen]'s
  * visual language (same palette, same top-bar shape) rather than inventing a
  * new one. [peers] drives the "To:" picker for private messages; pass the
  * roster with the local client already filtered out.

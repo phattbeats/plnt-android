@@ -1,6 +1,6 @@
 name: build
 
-# PHA-3074 verification pipeline. Runs `./build.sh` on every push and PR
+# #3074 verification pipeline. Runs `./build.sh` on every push and PR
 # against a clean Ubuntu runner that has the Android toolchain available
 # natively (no rustup-on-the-fly, no sdkmanager-on-the-fly).
 #
@@ -17,7 +17,7 @@ on:
 
 jobs:
   build:
-    # Run on the Ubuntu 24.04 hosted runner; PHA-3074 README pins this.
+    # Run on the Ubuntu 24.04 hosted runner; #3074 README pins this.
     runs-on: ubuntu-24.04
 
     # Bound the workflow runtime — `build.sh` downloads Android SDK ~1GB
@@ -141,7 +141,7 @@ jobs:
       # runner cannot execute. The whole plnt-core suite is host-only (pure
       # Rust: identity round trip, core_version smoke — no device or server
       # needed), so running it here catches regressions `--test
-      # identity_roundtrip` alone missed (PHA-3249).
+      # identity_roundtrip` alone missed (#3249).
       - name: "Test: plnt-core host suite"
         run: |
           sudo apt-get update && sudo apt-get install -y libopus-dev

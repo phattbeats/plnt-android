@@ -1,4 +1,4 @@
-# PHA-3078 — Foreground service, notification actions, reconnect, identity + bookmark storage
+# #3078 — Foreground service, notification actions, reconnect, identity + bookmark storage
 
 Goal: the connection survives screen-off, app switching, and a wifi↔LTE handoff, and the user can
 mute/talk/disconnect from the persistent notification.
@@ -6,14 +6,14 @@ mute/talk/disconnect from the persistent notification.
 ## What changed
 
 Before this ticket, `VoiceService` (`app/app/src/main/kotlin/com/plnt/client/service/VoiceService.kt`,
-landed in PHA-3077) already existed but was never actually wired into the app: `PlntViewModel`
-(PHA-3079) created its own `CoreClient` directly via `CoreBridge.newClient()` and never touched the
+landed in #3077) already existed but was never actually wired into the app: `PlntViewModel`
+(#3079) created its own `CoreClient` directly via `CoreBridge.newClient()` and never touched the
 service or its `AudioEngine`. Concretely, that meant no captured microphone audio ever reached
 plnt-core — the "voice" app didn't transmit voice. This ticket makes `VoiceService` the single owner
 of the connection and rewires `PlntViewModel` to bind to it instead.
 
 - **`VoiceService`** now:
-  - Owns `CoreClient` + `AudioEngine` for the life of a call (same as PHA-3077, now actually used).
+  - Owns `CoreClient` + `AudioEngine` for the life of a call (same as #3077, now actually used).
   - Exposes a `Binder` API (`connect`/`disconnect`/`joinChannel`/`setInputMuted`/`setOutputMuted`/
     `setPushToTalk`/`setPttMode`/`setEventListener`) that `PlntViewModel` calls instead of touching
     `CoreClient` itself.
@@ -22,7 +22,7 @@ of the connection and rewires `PlntViewModel` to bind to it instead.
     connected on) or a network loss (`onLost`), it tears the `CoreClient` down and reconnects with
     the same identity + bookmark, then rejoins the last channel the client's own `ClientMoved` event
     reported (tracked in `lastChannelId`). Retries back off exponentially from 1 s, doubling, capped
-    at 30 s. (The original version gave up after 10 attempts; PHA-3290 removed that ceiling — see
+    at 30 s. (The original version gave up after 10 attempts; #3290 removed that ceiling — see
     "Background voice must survive or self-heal" below.)
   - Emits a synthetic `CoreEvent.Reconnecting` (added to `CoreBridge`'s sealed `CoreEvent`, not a
     real uniffi event) while an automatic reconnect is in flight, so the UI shows "reconnecting"
@@ -36,10 +36,10 @@ of the connection and rewires `PlntViewModel` to bind to it instead.
   - Runs a `MediaSessionCompat` and reacts to `KEYCODE_HEADSETHOOK` / `KEYCODE_MEDIA_PLAY_PAUSE` as a
     press-and-hold PTT source, active for the life of the call — this is the piece that works with
     the screen off / app backgrounded, unlike `MainActivity.onKeyDown`'s volume/headset PTT handling
-    (PHA-3079), which only fires while that Activity has input focus.
+    (#3079), which only fires while that Activity has input focus.
 
 - **`IdentityStore`** (`app/app/src/main/kotlin/com/plnt/client/data/IdentityStore.kt`, new): the
-  identity PEM moved from PHA-3079's plain `SharedPreferences` into Jetpack Security's
+  identity PEM moved from #3079's plain `SharedPreferences` into Jetpack Security's
   `EncryptedSharedPreferences` (AES256-GCM values, AES256-SIV keys, master key in the Android
   Keystore).
 
@@ -50,7 +50,7 @@ of the connection and rewires `PlntViewModel` to bind to it instead.
 - **`PlntViewModel`** (rewritten): binds to `VoiceService` (`bindService` + `ContextCompat.
   startForegroundService` on `connect()`) instead of owning a `CoreClient`. Every public method kept
   its exact signature (`connect(Bookmark)`, `disconnect()`, `joinChannel(Long)`, `setMuted(Boolean)`,
-  etc.) so none of the PHA-3076 Compose screens needed to change. `onCleared()` now deliberately does
+  etc.) so none of the #3076 Compose screens needed to change. `onCleared()` now deliberately does
   **not** disconnect — that's the entire point of this ticket, the call has to outlive the ViewModel.
 
 - **Manifest**: added `ACCESS_NETWORK_STATE` (network callback) and `WAKE_LOCK` permissions.
@@ -71,20 +71,20 @@ of the connection and rewires `PlntViewModel` to bind to it instead.
 - A first-connect failure (bad address/port/credentials, before ever reaching `Connected`) does not
   auto-retry — it surfaces immediately as `Disconnected` so the user sees the real error instead of
   watching the app retry a config problem for 30+ seconds. Auto-reconnect only kicks in after the
-  client has connected successfully at least once. This carve-out survived PHA-3290's removal of the
+  client has connected successfully at least once. This carve-out survived #3290's removal of the
   retry ceiling, and a *restored* session counts as having connected before (it had, or there would
   be nothing to restore), so a restart-reconnect retries rather than failing loudly.
 
 ## Verification status
 
-Same constraint as every prior PHA-307x ticket in this repo (see `AUDIO_ENGINE.md`,
+Same constraint as every prior #307x ticket in this repo (see `AUDIO_ENGINE.md`,
 `VERIFICATION.md`): this was written in a sandbox with **no Android SDK, no NDK, no Rust/cargo
 toolchain, and no emulator**. Concretely:
 
 | Check | Status |
 |---|---|
 | Kotlin compiles | **Not verified here** — no `gradlew`/Android SDK in this sandbox. CI (`.github/workflows/build.yml`) runs `./build.sh` (which includes `assembleDebug`) on every push to `main`; that is this repo's actual compile gate, per README. |
-| Emulator round-trip: connect → toggle airplane mode → reconnect to same channel within 10 s, with a logcat excerpt | **Not run** — requires an Android emulator/device, which this sandbox and the CI runner (`ubuntu-24.04`, build-only, no `android-emulator` step) both lack. Added as `## 6. Network handoff / reconnect` in `MANUAL_TEST_CHECKLIST.md` for whoever runs the physical/emulator round — that file already tracks the PHA-3077 audio device round for the same reason. |
+| Emulator round-trip: connect → toggle airplane mode → reconnect to same channel within 10 s, with a logcat excerpt | **Not run** — requires an Android emulator/device, which this sandbox and the CI runner (`ubuntu-24.04`, build-only, no `android-emulator` step) both lack. Added as `## 6. Network handoff / reconnect` in `MANUAL_TEST_CHECKLIST.md` for whoever runs the physical/emulator round — that file already tracks the #3077 audio device round for the same reason. |
 | Notification actions (mute/talk/disconnect) post correctly and toggle the right service state | **Not run** — same blocker; procedure is in the checklist addition. |
 | EncryptedSharedPreferences / DataStore read back what they wrote | **Not run** — no JVM/Robolectric harness in this sandbox either; reviewed by reading the Jetpack Security / DataStore API contracts, not exercised. |
 
@@ -102,7 +102,7 @@ toolchain, and no emulator**. Concretely:
 6. Tap "Disconnect" from the notification mid-reconnect-backoff; expect the retry loop to stop
    immediately (no further `connect()` attempts in logcat) and the notification to clear.
 
-## Telling an OS service kill apart from a user disconnect (PHA-3283)
+## Telling an OS service kill apart from a user disconnect (#3283)
 
 `onDestroy()` used to call the same `disconnect()` a Disconnect tap does, so an Android-initiated
 service teardown — low memory, an OEM background/battery policy, doze/standby — reached the UI as a
@@ -125,21 +125,21 @@ worth knowing:
 - `onTrimMemory ... COMPLETE` followed by `onDestroy` (and an `ActivityManager: Killing` line in the
   system buffer) is a memory reclaim.
 - `onStartCommand ... null intent — START_STICKY restart after a kill` is Android restarting the
-  service after it died. As of PHA-3290 this is where the session comes back: see below.
+  service after it died. As of #3290 this is where the session comes back: see below.
 
-Since PHA-3290 the lifecycle log also carries `restore`, `startForeground`, `micUpgrade` and
+Since #3290 the lifecycle log also carries `restore`, `startForeground`, `micUpgrade` and
 `audioFailure` lines, on the same tag and the same `t+<n>s` stamp.
 
-## Background voice must survive or self-heal (PHA-3290)
+## Background voice must survive or self-heal (#3290)
 
-Standing requirement from Brandon on PHA-3286: **background voice must work 100% of the time, input
+Standing requirement from Brandon on #3286: **background voice must work 100% of the time, input
 and output.** "Reconnect when the user next opens the app" is a no-audio window that only a user
 action ends, so it does not satisfy that — everything here is about the session coming back with
 nobody touching the phone.
 
 ### The kill no longer destroys the session
 
-`onDestroy()` used to run the same `shutdown()` a user disconnect does. PHA-3283 relabelled that
+`onDestroy()` used to run the same `shutdown()` a user disconnect does. #3283 relabelled that
 teardown `SYSTEM_KILL` but it still nulled `connectionParams`, so the `START_STICKY` restart that
 follows came up with nothing to reconnect to. There are now two teardowns:
 
@@ -213,14 +213,14 @@ the exemption, is what makes a mic refusal survivable.
 Still unverified against a device: whether a `START_STICKY` restart is treated as a background start
 at all. Google's docs do not say either way, which is why this handles the refusal rather than
 predicting it. `adb logcat -b system | grep 'Background started FGS'` gives the
-ActivityManager verdict independently of what the app logs (PHA-3291).
+ActivityManager verdict independently of what the app logs (#3291).
 
 ### Battery-optimisation exemption
 
 Requested once, at the first connect made without it (`PlntViewModel.connect()` raises a one-shot
 `batteryPromptRequest`, `MainActivity` launches
 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`), and available thereafter under Settings →
-Background. Two independent reasons, neither conditional on the PHA-3286 device capture: OEM battery
+Background. Two independent reasons, neither conditional on the #3286 device capture: OEM battery
 managers are the likeliest cause of the kill, and the exemption is on Android's documented list of
 ways to be allowed to start a foreground service from the background at all — which is also what
 keeps a doze-restricted process able to reach the network when `onAvailable` fires.

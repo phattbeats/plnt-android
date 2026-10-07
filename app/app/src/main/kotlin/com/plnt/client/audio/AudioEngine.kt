@@ -38,7 +38,7 @@ const val CORE_FRAME_SAMPLES = 960 // 48_000 * 0.020
  *
  * Lifecycle: constructed once per *call* by
  * [com.plnt.client.service.VoiceService] — not once per connect attempt.
- * PHA-3290 item 8: it used to be rebuilt on every automatic reconnect, so each
+ * #3290 item 8: it used to be rebuilt on every automatic reconnect, so each
  * cycle paid a fresh `AudioRecord`/`AudioTrack` acquisition on top of the
  * network reconnect, and that acquisition's failure was unchecked — an
  * `AudioRecord` that came back unusable left the call connected and silent
@@ -75,7 +75,7 @@ class AudioEngine(
     /** Gates whether captured frames are forwarded to [onCaptureFrame]. Capture itself never stops. */
     private val sending = AtomicBoolean(false)
 
-    // PHA-3282 device overrides, both null (= Automatic) by default. See
+    // #3282 device overrides, both null (= Automatic) by default. See
     // [setPreferredInputDevice] for what "Automatic" costs: nothing at all.
     @Volatile private var preferredInputKey: String? = null
     @Volatile private var preferredOutputKey: String? = null
@@ -179,8 +179,8 @@ class AudioEngine(
     }
 
     /**
-     * User-initiated override of the auto-priority chain (PHA-3282: pick a specific
-     * mic; supersedes PHA-3132's coarser route-category override). `null` restores
+     * User-initiated override of the auto-priority chain (#3282: pick a specific
+     * mic; supersedes #3132's coarser route-category override). `null` restores
      * Automatic. Re-routes immediately if a call is live — unlike [setSending] this
      * is a deliberate route change, not a PTT toggle, so re-opening the streams here
      * is correct (see the class doc for why PTT itself must not do this).
@@ -241,7 +241,7 @@ class AudioEngine(
         val rec = try {
             buildAudioRecord()
         } catch (t: Throwable) {
-            // Before PHA-3290 item 8 this threw straight out of start(), which
+            // Before #3290 item 8 this threw straight out of start(), which
             // a reconnect ran on every attempt and nothing caught: the call
             // carried on looking connected with a dead mic.
             capturing.set(false)
@@ -311,7 +311,7 @@ class AudioEngine(
                     continue
                 }
                 // Automatic (null) never calls setPreferredDevice, so the route is
-                // decided solely by scoRouter's chain — byte-for-byte the pre-PHA-3282
+                // decided solely by scoRouter's chain — byte-for-byte the pre-#3282
                 // behaviour. A pinned device that is no longer present resolves to null
                 // and is likewise skipped, falling back to Automatic rather than failing
                 // to open the stream.
@@ -355,7 +355,7 @@ class AudioEngine(
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
             .build()
         val minBuf = AudioTrack.getMinBufferSize(CORE_SAMPLE_RATE_HZ, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-        // Same unchecked-acquisition problem as capture (PHA-3290 item 8), and
+        // Same unchecked-acquisition problem as capture (#3290 item 8), and
         // the worse half of it: a failure here means the call is connected and
         // the user hears nothing at all.
         val track = try {
@@ -464,7 +464,7 @@ private val builtInDeviceTypes = setOf(
 
 /**
  * Device enumeration that needs only a [Context], not a live [AudioEngine]
- * (PHA-3282). Settings has to list devices before the user has ever connected,
+ * (#3282). Settings has to list devices before the user has ever connected,
  * and there is no engine until [com.plnt.client.service.VoiceService] starts a
  * call — while a call *is* live the engine pushes fresher lists through its own
  * device callback instead.
@@ -548,8 +548,8 @@ internal class BluetoothScoRouter(
 
     /**
      * [inputKey] / [outputKey] are [AudioDeviceOption] keys, or null for Automatic.
-     * Both null is the pre-PHA-3282 path exactly: the priority chain below picks the
-     * route on its own, which is what PHA-3077/PHA-3080 verified on real hardware.
+     * Both null is the pre-#3282 path exactly: the priority chain below picks the
+     * route on its own, which is what #3077/#3080 verified on real hardware.
      *
      * `setCommunicationDevice()` is a single device for both directions, so when the
      * user has pinned each end to a different device the *input* pin wins here — the
@@ -604,7 +604,7 @@ internal class BluetoothScoRouter(
         // `availableCommunicationDevices` are output devices, so an output pin can
         // match one outright; an input pin has to be mapped to the output that shares
         // its route (a pinned built-in mic means the earpiece, etc.) — the same
-        // mapping PHA-3132's InputRoute.BUILTIN_MIC -> TYPE_BUILTIN_EARPIECE used.
+        // mapping #3132's InputRoute.BUILTIN_MIC -> TYPE_BUILTIN_EARPIECE used.
         val pinned = inputKey?.let { key ->
             communicationTypeForInput(keyDeviceType(key))?.let { t -> devices.firstOrNull { it.type == t } }
         } ?: outputKey?.let { key ->
@@ -613,7 +613,7 @@ internal class BluetoothScoRouter(
         }
         // A pin falls back to the auto chain if the requested device has since
         // disappeared (e.g. the headset was unplugged mid-call). With no pin at all
-        // this is the only branch that runs, unchanged from before PHA-3282.
+        // this is the only branch that runs, unchanged from before #3282.
         val preferred = pinned
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }

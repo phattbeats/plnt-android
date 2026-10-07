@@ -31,7 +31,7 @@ import com.plnt.client.ui.theme.Gold
 import com.plnt.client.ui.theme.Mauve
 import com.plnt.client.ui.theme.SurfaceRaised
 
-/** 11sp all-caps mauve section header (PHA-3076 §5). */
+/** 11sp all-caps mauve section header (#3076 §5). */
 @Composable
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(

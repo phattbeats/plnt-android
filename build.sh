@@ -6,7 +6,7 @@
 # x86_64-linux-android, the .so files placed in jniLibs, the UniFFI
 # Kotlin bindings generated, and a Gradle assembleDebug run.
 #
-# This script is the canonical entrypoint for the PHA-3074 deliverable.
+# This script is the canonical entrypoint for the #3074 deliverable.
 # It is also the thing CI runs in a clean Ubuntu 24.04 container.
 
 set -euo pipefail
@@ -196,7 +196,7 @@ fi
 # findLibraryName() returns `cdylib_name` (pinned in core/uniffi.toml) and JNA
 # expands that to lib<name>.so. If it ever drifts from the cdylib cargo actually
 # emits, every build stays green and the app dies on first FFI call with
-# `UnsatisfiedLinkError: dlopen failed: library "..." not found` — PHA-3235.
+# `UnsatisfiedLinkError: dlopen failed: library "..." not found` — #3235.
 # Catch the drift here, where the fix is one config line, not on a device.
 CDYLIB_NAME="plnt_core"
 generated_lib_name() {

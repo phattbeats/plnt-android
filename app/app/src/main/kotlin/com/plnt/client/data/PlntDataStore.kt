@@ -15,7 +15,7 @@ import org.json.JSONObject
 private val Context.plntDataStore by preferencesDataStore(name = "plnt_settings")
 
 /**
- * Bookmarks + PTT settings, replacing PHA-3079's raw-SharedPreferences
+ * Bookmarks + PTT settings, replacing #3079's raw-SharedPreferences
  * stopgap with Jetpack DataStore (identity stays out of here — that one's
  * sensitive enough to earn its own encrypted store, see [IdentityStore]).
  * Bookmarks are kept as one JSON blob (same on-disk shape as before, so an
@@ -33,7 +33,7 @@ class PlntDataStore(private val context: Context) {
 
         /**
          * The battery-optimisation exemption is asked for once, at the first
-         * connect (PHA-3290 item 6); after that it lives in Settings. Without
+         * connect (#3290 item 6); after that it lives in Settings. Without
          * this flag a user who said no would be re-prompted on every connect.
          */
         val BATTERY_PROMPT_SHOWN = booleanPreferencesKey("battery_prompt_shown")
@@ -47,11 +47,11 @@ class PlntDataStore(private val context: Context) {
         val LEGACY_PTT_SOURCE = stringPreferencesKey("ptt_source")
 
         /**
-         * Superseded by [PREFERRED_INPUT_DEVICE] (PHA-3282): the input preference
+         * Superseded by [PREFERRED_INPUT_DEVICE] (#3282): the input preference
          * used to be a device *category* (`InputRoute`), which can't name which of
          * two connected headsets you meant and had no output equivalent. Not
          * migrated — a category doesn't map onto a specific device key, and the
-         * category picker only ever existed between PHA-3132's follow-up and this
+         * category picker only ever existed between #3132's follow-up and this
          * change, so no released build ever wrote it. Dropped on next save; an
          * install carrying one falls back to Automatic.
          */

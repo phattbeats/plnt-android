@@ -58,7 +58,7 @@ import com.plnt.client.ui.theme.Gold
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceRaised
 
-/** PHA-3076 screen 5: PTT mode, PTT trigger sources, identity export/import, about. */
+/** #3076 screen 5: PTT mode, PTT trigger sources, identity export/import, about. */
 @Composable
 fun SettingsScreen(
     settings: Settings,
@@ -124,8 +124,8 @@ fun SettingsScreen(
 
             SectionGap()
 
-            // PHA-3282. Only devices the hardware actually reports right now are
-            // listed (PHA-3076-style rule: never show a picker option that would
+            // #3282. Only devices the hardware actually reports right now are
+            // listed (#3076-style rule: never show a picker option that would
             // silently no-op) — the lists refresh on entering this screen and, during
             // a call, on plug/unplug.
             SectionHeader("Audio input")
@@ -183,7 +183,7 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = BoneMuted,
             )
-            // PHA-3074's acceptance criterion is that core_version() renders on screen: it is
+            // #3074's acceptance criterion is that core_version() renders on screen: it is
             // the one place the UI shows a string that only the Rust core can produce, so a
             // broken JNI/UniFFI link is visible without a debugger. CoreBridge.coreVersion()
             // catches its own failures and returns "unavailable: ...", so this never crashes
@@ -283,7 +283,7 @@ fun SettingsScreen(
 /**
  * Radio list of "Automatic" plus one row per present device, styled as the Talk
  * mode rows above. "Automatic" is a UI-only row backed by a null key, and stays
- * selected by default so the existing Bluetooth SCO routing (PHA-3077/PHA-3080)
+ * selected by default so the existing Bluetooth SCO routing (#3077/#3080)
  * is what an untouched install still gets.
  *
  * A device pinned earlier that is no longer connected still renders a row, so

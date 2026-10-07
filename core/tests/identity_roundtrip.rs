@@ -1,6 +1,6 @@
 //! Host-side round trip for the identity surface. Run with `cargo test -p plnt-core`.
 //!
-//! PHA-3238: `export()` wrote serde JSON while `import()` and `Client::connect()`
+//! #3238: `export()` wrote serde JSON while `import()` and `Client::connect()`
 //! parsed with `Identity::new_from_str`, which only accepts the TS3
 //! `"<counter>V<base64>"` string or a bare base64 key — so a freshly created
 //! identity came back as `Identity(IdentityCrypto(KeyDecodeError))` on the first

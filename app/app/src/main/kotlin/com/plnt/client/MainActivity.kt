@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
 
             // The ViewModel decides *when* to ask (first connect without an
             // exemption, once); only an Activity can actually launch the
-            // dialog. PHA-3290 item 6.
+            // dialog. #3290 item 6.
             LaunchedEffect(state.batteryPromptRequest) {
                 if (state.batteryPromptRequest != null) {
                     requestBatteryExemption()
@@ -120,7 +120,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * The service can only re-request the `microphone` foreground-service type
-     * from the foreground (PHA-3290 item 7), and the exemption state may have
+     * from the foreground (#3290 item 7), and the exemption state may have
      * changed while the user was away in system Settings — so this fires on
      * every return to the app, not just on create.
      */

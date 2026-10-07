@@ -10,7 +10,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// PHA-3076 "Colors" table, verbatim. The background is #0e0e0d rather than pure
+// #3076 "Colors" table, verbatim. The background is #0e0e0d rather than pure
 // black on purpose — oxblood and sage stop reading as colour against #000.
 val Bg = Color(0xFF0E0E0D)
 val SurfaceDark = Color(0xFF161513)
@@ -52,7 +52,7 @@ private val PlntColorScheme = darkColorScheme(
 )
 
 /**
- * PHA-3076 typography: Georgia for headers only, Roboto for everything else.
+ * #3076 typography: Georgia for headers only, Roboto for everything else.
  * Georgia ships as Android's fallback serif, so this asks for [FontFamily.Serif]
  * rather than bundling a font file — and it is deliberately never used below
  * 16sp, where the design found it stops being legible in a car mount.
