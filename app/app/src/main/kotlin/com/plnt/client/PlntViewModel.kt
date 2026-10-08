@@ -71,6 +71,15 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     // clientId -> last roster snapshot entry, for nicknames and peer mute state.
     private val clientsById = HashMap<Long, com.plnt.client.core.CoreClientInfo>()
 
+    // PHA-3289: who in our channel is screen-sharing. Polled on every roster
+    // change and on a slow timer, because `notifystreamstarted` pushes can be
+    // missed across a reconnect or a channel move.
+    private val streams = com.plnt.client.stream.StreamDirectory { name, args ->
+        runOnService { it.sendRawCommand(name, args) }
+    }
+    private var ownChannelId: Long? = null
+    private var streamPollJob: kotlinx.coroutines.Job? = null
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = (binder as VoiceService.LocalBinder).service()
@@ -80,6 +89,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             // headset button while this UI isn't even on screen — take the
             // service's word for it rather than trusting our own last write.
             svc.setStateListener { st -> viewModelScope.launch { onVoiceState(st) } }
+            svc.setStreamStateListener { st -> viewModelScope.launch { onStreamViewState(st) } }
             val queued = pendingActions.toList()
             pendingActions.clear()
             queued.forEach { it(svc) }
@@ -221,6 +231,53 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      * immediately (own sent messages are never echoed back by the server) —
      * inbound messages arrive only via [CoreEvent.TextMessage].
      */
+    // ---- PHA-3289: screen-share viewing ---------------------------------
+
+    fun watchStream(stream: com.plnt.client.stream.StreamInfo) {
+        runOnService { it.watchStream(stream) }
+        _state.update { it.copy(screen = Screen.StreamViewer) }
+    }
+
+    fun stopWatching() {
+        runOnService { it.stopWatching() }
+        _state.update { it.copy(screen = Screen.Connected) }
+    }
+
+    fun attachStreamSink(sink: org.webrtc.VideoSink?) {
+        runOnService { it.attachStreamSink(sink) }
+    }
+
+    fun eglBaseContext(): org.webrtc.EglBase.Context? = voiceService?.eglBaseContext()
+
+    private fun onStreamViewState(st: com.plnt.client.stream.StreamViewState) {
+        _state.update { it.copy(streamView = st) }
+    }
+
+    /** Re-ask the server who in our channel is streaming. */
+    private fun refreshStreams() {
+        val own = _state.value.ownClientId ?: return
+        val chan = clientsById[own]?.channelId ?: return
+        if (chan != ownChannelId) {
+            ownChannelId = chan
+            if (streams.clear()) rebuildTree()
+        }
+        // Anyone no longer in our channel cannot be watched from here.
+        var changed = false
+        streams.streams.forEach { s ->
+            if (clientsById[s.streamerClientId]?.channelId != chan) changed = streams.clientGone(s.streamerClientId) || changed
+        }
+        if (changed) rebuildTree()
+        streams.poll(clientsById.values.filter { it.channelId == chan && it.id != own }.map { it.id })
+        if (streamPollJob == null) {
+            streamPollJob = viewModelScope.launch {
+                while (true) {
+                    kotlinx.coroutines.delay(30_000)
+                    if (_state.value.phase == ConnectionPhase.CONNECTED) refreshStreams()
+                }
+            }
+        }
+    }
+
     fun sendChatMessage(target: ChatMessageTarget, text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
@@ -372,6 +429,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 talking.clear()
                 channelsById.clear()
                 clientsById.clear()
+                streams.clear()
+                ownChannelId = null
                 _state.update {
                     it.copy(
                         phase = ConnectionPhase.CONNECTED,
@@ -384,12 +443,18 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             is CoreEvent.Reconnecting -> _state.update {
                 it.copy(phase = ConnectionPhase.RECONNECTING, lastError = null)
             }
-            is CoreEvent.Disconnected -> _state.update {
-                it.copy(
-                    phase = ConnectionPhase.DISCONNECTED,
-                    lastError = disconnectMessage(ev),
-                    screen = Screen.Bookmarks,
-                )
+            is CoreEvent.Disconnected -> {
+                streams.clear()
+                streamPollJob?.cancel()
+                streamPollJob = null
+                _state.update {
+                    it.copy(
+                        phase = ConnectionPhase.DISCONNECTED,
+                        lastError = disconnectMessage(ev),
+                        screen = Screen.Bookmarks,
+                        streamView = com.plnt.client.stream.StreamViewState(),
+                    )
+                }
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.TemporaryDisconnect -> _state.update {
@@ -421,11 +486,17 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     roster.getOrPut(c.channelId) { mutableSetOf() }.add(c.id)
                 }
                 rebuildTree()
+                refreshStreams()
             }
             is CoreEvent.ClientMoved -> {
                 roster.values.forEach { it.remove(ev.clientId) }
                 roster.getOrPut(ev.channelId) { mutableSetOf() }.add(ev.clientId)
+                clientsById[ev.clientId]?.let { clientsById[ev.clientId] = it.copy(channelId = ev.channelId) }
                 rebuildTree()
+                refreshStreams()
+            }
+            is CoreEvent.RawCommand -> {
+                if (streams.onRaw(ev)) rebuildTree()
             }
             is CoreEvent.TalkStatus -> {
                 talking[ev.clientId] = ev.talking
@@ -475,6 +546,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 name = info?.name ?: "Client $clientId",
                 isSelf = isSelf,
                 presence = presence,
+                streaming = if (isSelf) null else streams.byClient(clientId),
             )
         }
 

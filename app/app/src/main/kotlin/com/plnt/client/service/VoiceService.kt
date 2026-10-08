@@ -34,6 +34,11 @@ import com.plnt.client.data.SessionStore
 import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.PttMode
+import com.plnt.client.stream.StreamInfo
+import com.plnt.client.stream.StreamViewState
+import com.plnt.client.stream.StreamViewerSession
+import org.webrtc.EglBase
+import org.webrtc.VideoSink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,6 +120,13 @@ class VoiceService : Service() {
     private var audioEngine: AudioEngine? = null
     private var eventListener: ((CoreEvent) -> Unit)? = null
     private var stateListener: ((VoiceState) -> Unit)? = null
+
+    // PHA-3289: the one screen-share viewer. Lives here, not in the ViewModel,
+    // so a rotation or the Activity being recreated does not drop the stream.
+    private val eglBase: EglBase by lazy { EglBase.create() }
+    private var streamSession: StreamViewerSession? = null
+    private var streamSink: VideoSink? = null
+    private var streamStateListener: ((StreamViewState) -> Unit)? = null
 
     private data class ConnectionParams(val bookmark: Bookmark, val identityPem: String)
     private var connectionParams: ConnectionParams? = null
@@ -364,6 +376,50 @@ class VoiceService : Service() {
 
     fun sendTextMessage(target: ChatMessageTarget, text: String) {
         runCatching { client?.sendTextMessage(target, text) }
+    }
+
+    // ---- PHA-3289: screen-share viewing --------------------------------
+
+    /** Raw TS6 command passthrough — the stream directory's `requeststreaminfo` polls use this. */
+    fun sendRawCommand(name: String, args: Map<String, String>) {
+        runCatching { client?.sendRawCommand(name, args) }
+    }
+
+    fun setStreamStateListener(listener: ((StreamViewState) -> Unit)?) {
+        streamStateListener = listener
+        listener?.invoke(streamSession?.current ?: StreamViewState())
+    }
+
+    /** Shared GL context for the viewer's `SurfaceViewRenderer`. */
+    fun eglBaseContext(): EglBase.Context = eglBase.eglBaseContext
+
+    /** Start watching [stream]; any stream already being watched is left first. */
+    fun watchStream(stream: StreamInfo) {
+        stopWatching()
+        val nick = connectionParams?.bookmark?.nickname ?: "PLNT"
+        val session = StreamViewerSession(
+            context = applicationContext,
+            eglBase = eglBase,
+            ownNickname = nick,
+            sendRaw = { name, args -> sendRawCommand(name, args) },
+            onState = { st -> mainHandler.post { streamStateListener?.invoke(st) } },
+        )
+        streamSession = session
+        streamSink?.let(session::attach)
+        session.start(stream)
+    }
+
+    fun stopWatching() {
+        val s = streamSession ?: return
+        streamSession = null
+        runCatching { s.stop() }
+        streamStateListener?.invoke(StreamViewState())
+    }
+
+    /** The viewer screen's renderer; null when it goes away. Survives across sessions. */
+    fun attachStreamSink(sink: VideoSink?) {
+        streamSink = sink
+        streamSession?.attach(sink)
     }
 
     /** Press-and-hold PTT / media-button PTT gate. Capture keeps running, only forwarding toggles. */
@@ -785,6 +841,10 @@ class VoiceService : Service() {
                 ownClientId = ev.ownClientId
                 eventListener?.invoke(ev)
             }
+            is CoreEvent.RawCommand -> {
+                streamSession?.onRaw(ev)
+                eventListener?.invoke(ev)
+            }
             is CoreEvent.Disconnected -> {
                 // APP_REQUESTED means our own shutdown()/teardownClientOnly()
                 // asked the core to stop, so the service already knows the real
@@ -876,6 +936,8 @@ class VoiceService : Service() {
 
     /** Tears down the core client only — the [AudioEngine] deliberately outlives it, see [ensureAudioEngine]. */
     private fun teardownClientOnly() {
+        // A stream cannot outlive the connection its signalling rides on.
+        stopWatching()
         runCatching { client?.disconnect() }
         runCatching { client?.close() }
         client = null

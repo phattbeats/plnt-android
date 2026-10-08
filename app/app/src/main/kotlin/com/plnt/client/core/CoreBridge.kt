@@ -98,6 +98,16 @@ sealed class CoreEvent {
      * would.
      */
     data object Reconnecting : CoreEvent()
+
+    /**
+     * PHA-3289: a raw server notification the core has no typed event for —
+     * the TS6 screen-share family (`notifystream*`, `notifyjoinstreamrequest`,
+     * `notifyrespondjoinstreamrequest`) and `error` replies carrying a
+     * `return_code`. Values are already unescaped. Consumed by
+     * [com.plnt.client.stream.StreamDirectory] and
+     * [com.plnt.client.stream.StreamViewerSession]; nothing else should need it.
+     */
+    data class RawCommand(val name: String, val args: Map<String, String>) : CoreEvent()
 }
 
 data class CoreChannel(
@@ -135,6 +145,12 @@ interface CoreClient {
     /** Encode+send one 20 ms / 960-sample / 48 kHz mono frame. See #3077's AudioEngine — the only caller. */
     fun sendPcmFrame(samples: FloatArray)
     fun sendTextMessage(target: ChatMessageTarget, text: String)
+    /**
+     * PHA-3289: send a TS6 command tsclientlib has no message type for. The
+     * core escapes the values; pass them raw. Replies arrive as
+     * [CoreEvent.RawCommand] — include a `return_code` to correlate them.
+     */
+    fun sendRawCommand(name: String, args: Map<String, String>)
     fun close()
 }
 
@@ -178,6 +194,8 @@ object CoreBridge {
             override fun sendPcmFrame(samples: FloatArray) = native.sendPcmFrame(samples.toList())
             override fun sendTextMessage(target: ChatMessageTarget, text: String) =
                 native.sendTextMessage(target.toNative(), text)
+            override fun sendRawCommand(name: String, args: Map<String, String>) =
+                native.sendRawCommand(name, args)
             override fun close() = native.destroy()
         }
     }
@@ -242,6 +260,7 @@ object CoreBridge {
         is uniffi.plnt_core.ConnEvent.TemporaryDisconnect -> CoreEvent.TemporaryDisconnect(ev.reason)
         is uniffi.plnt_core.ConnEvent.Resumed ->
             CoreEvent.Resumed(ev.v1.ownClientId.toLong(), ev.v1.serverName)
+        is uniffi.plnt_core.ConnEvent.RawCommand -> CoreEvent.RawCommand(ev.name, ev.args)
     }
 
     private fun ChatMessageTarget.toNative(): uniffi.plnt_core.ChatTarget = when (this) {

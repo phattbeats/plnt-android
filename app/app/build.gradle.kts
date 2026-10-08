@@ -66,6 +66,9 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.media)
 
+    // PHA-3289: screen-share viewer (org.webrtc).
+    implementation(libs.webrtc)
+
     // plnt-core generated Kotlin bindings + JNA-compatible loader.
     // The generated file is written to src/main/kotlin/com/plnt/client/plnt by
     // `cargo run --bin uniffi-bindgen generate src/plnt_core.udl --language kotlin`
