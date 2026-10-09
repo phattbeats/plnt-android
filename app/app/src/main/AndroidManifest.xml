@@ -50,6 +50,24 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+                PHA-4108: one-tap invite. A standard TeamSpeak server link
+                (`ts3server://host?port=..&channel=..`) opens PLNT with the
+                server prefilled. No autoVerify: these are custom schemes, not
+                https App Links, so there is no domain to verify; the OS routes
+                the scheme straight here. Short aliases `tsserver`/`teamspeak`
+                are accepted for links from sites that emit them
+                (ServerLink.SCHEMES).
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ts3server" />
+                <data android:scheme="tsserver" />
+                <data android:scheme="teamspeak" />
+            </intent-filter>
         </activity>
 
         <!--

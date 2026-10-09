@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Dns
@@ -89,6 +90,7 @@ fun BookmarksScreen(
     var editing by remember { mutableStateOf<Bookmark?>(null) }
     var isNew by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Bookmark?>(null) }
+    var sharing by remember { mutableStateOf<Bookmark?>(null) }
 
     fun startAdd() {
         editing = Bookmark(
@@ -191,6 +193,19 @@ fun BookmarksScreen(
             isNew = isNew,
             onDismiss = { editing = null },
             onSave = { onSave(it); editing = null },
+            onShare = if (isNew) null else { { editing = null; sharing = current } },
+        )
+    }
+
+    sharing?.let { target ->
+        ShareInviteSheet(
+            link = com.plnt.client.model.ServerLink(
+                address = target.address,
+                port = target.port,
+                serverPassword = target.serverPassword,
+                label = target.label.ifBlank { null },
+            ),
+            onDismiss = { sharing = null },
         )
     }
 }
@@ -332,6 +347,7 @@ private fun BookmarkSheet(
     isNew: Boolean,
     onDismiss: () -> Unit,
     onSave: (Bookmark) -> Unit,
+    onShare: (() -> Unit)? = null,
 ) {
     var label by remember { mutableStateOf(initial.label) }
     var address by remember { mutableStateOf(initial.address) }
@@ -401,6 +417,17 @@ private fun BookmarkSheet(
                     }
                 },
             )
+
+            if (onShare != null) {
+                Spacer(modifier = Modifier.height(20.dp))
+                SecondaryButton(
+                    "Share invite link",
+                    icon = Icons.Filled.Share,
+                    color = Gold,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onShare,
+                )
+            }
 
             Spacer(modifier = Modifier.height(28.dp))
             val canSave = address.isNotBlank()

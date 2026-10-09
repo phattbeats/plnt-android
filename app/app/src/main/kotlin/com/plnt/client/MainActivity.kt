@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestRuntimePermissions()
+        // PHA-4108: a ts3server:// link that cold-started the app.
+        handleInviteIntent(intent)
 
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
@@ -121,9 +123,35 @@ class MainActivity : ComponentActivity() {
                             },
                         )
                     }
+
+                    // PHA-4108: the Join/Save sheet floats over whatever screen
+                    // is showing — a link can arrive while connected elsewhere.
+                    state.pendingInvite?.let { invite ->
+                        com.plnt.client.ui.InviteSheet(
+                            invite = invite,
+                            knownServer = state.bookmarks.any {
+                                it.address.equals(invite.address, ignoreCase = true) && it.port == invite.port
+                            },
+                            onJoin = viewModel::acceptInvite,
+                            onDismiss = viewModel::dismissInvite,
+                        )
+                    }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // The app was already open (singleTop-style reuse) when a link was tapped.
+        setIntent(intent)
+        handleInviteIntent(intent)
+    }
+
+    /** PHA-4108: hand a VIEW intent's ts3server:// data to the ViewModel. */
+    private fun handleInviteIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        viewModel.handleServerLink(intent.dataString)
     }
 
     /**

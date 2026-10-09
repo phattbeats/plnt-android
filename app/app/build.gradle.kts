@@ -69,6 +69,11 @@ dependencies {
     // PHA-3289: screen-share viewer (org.webrtc).
     implementation(libs.webrtc)
 
+    // PHA-4108: QR encoding for one-tap invite links.
+    implementation(libs.zxing.core)
+
+    testImplementation(libs.junit)
+
     // plnt-core generated Kotlin bindings + JNA-compatible loader.
     // The generated file is written to src/main/kotlin/com/plnt/client/plnt by
     // `cargo run --bin uniffi-bindgen generate src/plnt_core.udl --language kotlin`
