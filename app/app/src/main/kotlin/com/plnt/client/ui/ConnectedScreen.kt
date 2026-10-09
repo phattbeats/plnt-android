@@ -1,18 +1,24 @@
 package com.plnt.client.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,14 +27,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.HeadsetOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,22 +47,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
@@ -60,7 +68,6 @@ import com.plnt.client.ui.theme.Bg
 import com.plnt.client.ui.theme.Bone
 import com.plnt.client.ui.theme.BoneFaint
 import com.plnt.client.ui.theme.BoneMuted
-import com.plnt.client.ui.theme.DividerFaint
 import com.plnt.client.ui.theme.DividerLine
 import com.plnt.client.ui.theme.Gold
 import com.plnt.client.ui.theme.Mauve
@@ -69,9 +76,10 @@ import com.plnt.client.ui.theme.RowTalking
 import com.plnt.client.ui.theme.RowYouTalking
 import com.plnt.client.ui.theme.Sage
 import com.plnt.client.ui.theme.SurfaceDark
+import com.plnt.client.ui.theme.SurfaceHigh
 import com.plnt.client.ui.theme.SurfaceRaised
 
-/** #3076 screen 4: channel tree + per-client rows + the 160dp bottom control bar. */
+/** Channel tree with per-client rows and the bottom talk controls. */
 @Composable
 fun ConnectedScreen(
     phase: ConnectionPhase,
@@ -94,39 +102,51 @@ fun ConnectedScreen(
     onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit = {},
 ) {
     // Collapse state is per-channel and sticky; channels with nothing in them
-    // start collapsed (design §4), everything else starts open.
+    // start collapsed, everything else starts open.
     val expandOverrides = remember { mutableStateMapOf<Long, Boolean>() }
     fun isExpanded(node: ChannelNode): Boolean =
         expandOverrides[node.id] ?: (node.clients.isNotEmpty() || node.children.isNotEmpty())
+
+    val statusColor = when (phase) {
+        ConnectionPhase.CONNECTED -> Sage
+        ConnectionPhase.RECONNECTING, ConnectionPhase.CONNECTING -> Gold
+        ConnectionPhase.ERROR -> Oxblood
+        ConnectionPhase.DISCONNECTED -> BoneFaint
+    }
+    val statusText = when (phase) {
+        ConnectionPhase.CONNECTED -> "Connected"
+        ConnectionPhase.CONNECTING -> "Connecting…"
+        ConnectionPhase.RECONNECTING -> "Reconnecting…"
+        ConnectionPhase.ERROR -> "Error"
+        ConnectionPhase.DISCONNECTED -> "Disconnected"
+    }
 
     Scaffold(
         containerColor = Bg,
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceDark),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
                     Column {
                         Text(
                             serverName.ifBlank { "Connecting…" },
                             style = MaterialTheme.typography.titleLarge,
                             color = Bone,
+                            maxLines = 1,
                         )
-                        Text(
-                            phase.name.lowercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (phase == ConnectionPhase.RECONNECTING) Gold else BoneMuted,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            StatusDot(statusColor)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(statusText, style = MaterialTheme.typography.labelMedium, color = statusColor)
+                        }
                     }
                 },
                 actions = {
-                    // Not in the mockup, but disconnect moved to the control bar
-                    // pill and settings would otherwise be unreachable while
-                    // connected. Implementer's call; flagged on #3076.
                     IconButton(onClick = onOpenChat) {
-                        Icon(Icons.Filled.Chat, contentDescription = "Chat", tint = Mauve)
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Chat", tint = BoneMuted)
                     }
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Mauve)
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = BoneMuted)
                     }
                 },
             )
@@ -134,31 +154,33 @@ fun ConnectedScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             lastError?.let {
-                Text(
-                    it,
-                    color = Oxblood,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Oxblood.copy(alpha = 0.18f))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(it, color = Color(0xFFE8A3A3), style = MaterialTheme.typography.bodySmall)
+                }
             }
 
-            LazyColumn(modifier = Modifier.weight(1f)) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) {
                 items(visibleRows(channelTree, ::isExpanded)) { row ->
                     when (row) {
-                        is TreeRow.Channel -> {
-                            ChannelRowView(
-                                node = row.node,
-                                depth = row.depth,
-                                expanded = isExpanded(row.node),
-                                onToggle = { expandOverrides[row.node.id] = !isExpanded(row.node) },
-                                onJoin = { onJoinChannel(row.node.id) },
-                            )
-                            HorizontalDivider(thickness = 1.dp, color = if (row.isEmpty) DividerFaint else DividerLine)
-                        }
-                        is TreeRow.Client -> {
-                            ClientRowView(row.client, row.depth, onWatchStream)
-                            HorizontalDivider(thickness = 1.dp, color = DividerLine)
-                        }
+                        is TreeRow.Channel -> ChannelRowView(
+                            node = row.node,
+                            depth = row.depth,
+                            expanded = isExpanded(row.node),
+                            onToggle = { expandOverrides[row.node.id] = !isExpanded(row.node) },
+                            onJoin = { onJoinChannel(row.node.id) },
+                        )
+                        is TreeRow.Client -> ClientRowView(row.client, row.depth, onWatchStream)
                     }
                 }
             }
@@ -201,6 +223,8 @@ private fun visibleRows(
     }
 }
 
+private fun countClients(node: ChannelNode): Int = node.clients.size + node.children.sumOf(::countClients)
+
 @Composable
 private fun ChannelRowView(
     node: ChannelNode,
@@ -210,35 +234,59 @@ private fun ChannelRowView(
     onJoin: () -> Unit,
 ) {
     val isEmpty = node.clients.isEmpty() && node.children.isEmpty()
+    val rotation by animateFloatAsState(if (expanded) 0f else -90f, label = "chevron")
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .padding(top = if (depth == 0) 8.dp else 0.dp)
+            .height(46.dp)
+            .clip(RoundedCornerShape(10.dp))
             .clickable { onJoin() }
-            .padding(start = (16 + 16 * depth).dp, end = 16.dp),
+            .padding(start = (4 + 18 * depth).dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = if (expanded) "▾" else "▸",
-            color = BoneMuted,
-            style = MaterialTheme.typography.bodyMedium,
+        Box(
             modifier = Modifier
-                .clickable(enabled = !isEmpty) { onToggle() }
-                .padding(end = 8.dp),
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(enabled = !isEmpty) { onToggle() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = if (isEmpty) BoneFaint else BoneMuted,
+                modifier = Modifier.size(20.dp).rotate(rotation),
+            )
+        }
+        Icon(
+            Icons.Filled.Tag,
+            contentDescription = null,
+            tint = if (isEmpty) BoneFaint else Mauve,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            node.name,
+            style = MaterialTheme.typography.titleSmall,
+            color = if (isEmpty) BoneMuted else Bone,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
         )
         if (node.hasPassword) {
-            Icon(
-                Icons.Filled.Lock,
-                contentDescription = "Password protected",
-                tint = BoneMuted,
-                modifier = Modifier.size(14.dp),
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-        }
-        Text(node.name, style = MaterialTheme.typography.titleSmall, color = Bone)
-        if (isEmpty) {
+            Icon(Icons.Filled.Lock, contentDescription = "Password protected", tint = BoneFaint, modifier = Modifier.size(14.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("(empty)", style = MaterialTheme.typography.labelSmall, color = BoneMuted)
+        }
+        val count = countClients(node)
+        if (count > 0) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(SurfaceHigh)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            ) {
+                Text(count.toString(), color = BoneMuted, style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
@@ -251,127 +299,96 @@ private fun ClientRowView(
 ) {
     val presence = client.presence
     val stream = client.streaming
-    val talkColor = when {
-        presence.talking && client.isSelf -> Gold
-        presence.talking -> Sage
-        else -> null
+    val talking = presence.talking
+    val ringColor = when {
+        talking && client.isSelf -> Gold
+        talking -> Sage
+        else -> Color.Transparent
     }
-    val rowBackground = when {
-        presence.talking && client.isSelf -> RowYouTalking
-        presence.talking -> RowTalking
-        else -> Bg
-    }
+    val rowBackground by animateColorAsState(
+        when {
+            talking && client.isSelf -> RowYouTalking
+            talking -> RowTalking
+            else -> Color.Transparent
+        },
+        label = "rowBg",
+    )
+    // A soft pulse on the ring while someone speaks — the old flat 3dp bar
+    // read as a rendering glitch rather than a state.
+    val pulse = rememberInfiniteTransition(label = "pulse")
+    val ringAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.45f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "ringAlpha",
+    )
 
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .height(56.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(rowBackground)
-            .then(if (stream != null) Modifier.clickable { onWatchStream(stream) } else Modifier),
+            .then(if (stream != null) Modifier.clickable { onWatchStream(stream) } else Modifier)
+            .padding(start = (8 + 18 * depth).dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 3dp left-edge bar, talk state only.
-        talkColor?.let {
-            Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(it))
+        Box(contentAlignment = Alignment.Center) {
+            if (talking) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .border(2.dp, ringColor.copy(alpha = ringAlpha), CircleShape),
+                )
+            }
+            Avatar(client.name, size = 36.dp)
         }
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = (16 + 16 * depth).dp, end = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Avatar(
-                initial = client.name.firstOrNull()?.uppercase() ?: "?",
-                ringColor = talkColor ?: BoneFaint,
-                ringWidth = if (talkColor != null) 2.dp else 1.5.dp,
-                dashed = presence.away,
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    client.name + if (client.isSelf) " (you)" else "",
+                    client.name,
                     color = if (presence.away) BoneMuted else Bone,
                     fontStyle = if (presence.away) FontStyle.Italic else FontStyle.Normal,
-                    fontWeight = if (presence.talking && client.isSelf) FontWeight.Bold else FontWeight.Normal,
-                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (talking) FontWeight.SemiBold else FontWeight.Normal,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
                 )
-                when {
-                    // A share outranks talk state on the subtitle: it is the
-                    // row's one tappable affordance (PHA-3289).
-                    stream != null -> Text(
-                        "sharing: ${stream.name} — tap to watch",
-                        color = Gold,
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                    )
-                    presence.talking -> Text(
-                        "talking",
-                        color = talkColor ?: Sage,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    // Away has no colour of its own — italic + faint only, so it
-                    // can never be confused with a talk state.
-                    presence.away -> Text(
-                        "away",
-                        color = BoneFaint,
-                        fontStyle = FontStyle.Italic,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+                if (client.isSelf) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("you", color = BoneFaint, style = MaterialTheme.typography.labelSmall)
                 }
             }
-            if (stream != null) {
-                StateTag("LIVE", Gold)
-                Spacer(modifier = Modifier.width(4.dp))
+            val subtitle = when {
+                stream != null -> "Sharing ${stream.name} · tap to watch"
+                talking -> "Speaking"
+                presence.away -> "Away"
+                else -> null
             }
-            // MIC and SND are independent — both show when both are true.
-            if (presence.micMuted) StateTag("MIC")
-            if (presence.outputMuted) {
-                Spacer(modifier = Modifier.width(4.dp))
-                StateTag("SND")
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    color = when {
+                        stream != null -> Gold
+                        talking -> ringColor
+                        else -> BoneFaint
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun Avatar(initial: String, ringColor: androidx.compose.ui.graphics.Color, ringWidth: androidx.compose.ui.unit.Dp, dashed: Boolean) {
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            .drawBehind {
-                val stroke = ringWidth.toPx()
-                drawCircle(
-                    color = ringColor,
-                    radius = size.minDimension / 2f - stroke / 2f,
-                    style = Stroke(
-                        width = stroke,
-                        pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(6f, 6f)) else null,
-                    ),
-                )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(initial, color = BoneMuted, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-/** 30×14dp oxblood pill, bone 9sp — the MIC/SND tags from the spec table. */
-@Composable
-private fun StateTag(text: String, color: androidx.compose.ui.graphics.Color = Oxblood) {
-    Box(
-        modifier = Modifier
-            .size(width = 30.dp, height = 14.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(color),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, color = if (color == Gold) Bg else Bone, fontSize = 9.sp, fontWeight = FontWeight.Medium)
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (stream != null) Pill("LIVE", Gold, Icons.Filled.Videocam)
+            if (presence.micMuted) Pill("MIC", Oxblood, Icons.Filled.MicOff)
+            if (presence.outputMuted) Pill("SND", Oxblood, Icons.Filled.VolumeOff)
+        }
     }
 }
 
 /**
- * 160dp bottom control bar: 104dp PTT circle centred, 52dp mute/deafen circles
- * at ±110dp, disconnect pill below the PTT button (never beside it — the design
- * keeps hang-up out of the PTT thumb zone on purpose).
+ * Bottom talk controls: mute / push-to-talk / deafen on one row, disconnect
+ * beneath. Hang-up stays out of the PTT thumb zone on purpose.
  */
 @Composable
 private fun ControlBar(
@@ -386,94 +403,103 @@ private fun ControlBar(
     onDisconnect: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
-    Box(modifier = Modifier.fillMaxWidth().height(160.dp).background(SurfaceDark)) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 8.dp)
-                .size(104.dp)
-                .clip(CircleShape)
-                .background(if (transmitting) Gold else SurfaceRaised)
-                .border(3.dp, Gold, CircleShape)
-                .pointerInput(pttIsPushToTalk) {
-                    if (pttIsPushToTalk) {
-                        detectTapGestures(
-                            onPress = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onPttPress()
-                                tryAwaitRelease()
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onPttRelease()
-                            },
-                        )
-                    }
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = if (pttIsPushToTalk) "HOLD TO TALK" else "OPEN MIC",
-                color = if (transmitting) Bg else Gold,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.width(72.dp),
+    val pttFill by animateColorAsState(if (transmitting) Gold else SurfaceRaised, label = "ptt")
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .background(SurfaceDark)
+            .border(1.dp, DividerLine, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .padding(horizontal = 24.dp)
+            .padding(top = 18.dp, bottom = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+            RoundToggle(
+                checked = inputMuted,
+                label = if (inputMuted) "Muted" else "Mute",
+                icon = { tint -> Icon(if (inputMuted) Icons.Filled.MicOff else Icons.Filled.Mic, contentDescription = "Mute microphone", tint = tint) },
+                onClick = onToggleMute,
+            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(92.dp)
+                        .clip(CircleShape)
+                        .background(pttFill)
+                        .border(2.dp, Gold, CircleShape)
+                        .pointerInput(pttIsPushToTalk) {
+                            if (pttIsPushToTalk) {
+                                detectTapGestures(
+                                    onPress = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onPttPress()
+                                        tryAwaitRelease()
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onPttRelease()
+                                    },
+                                )
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = if (pttIsPushToTalk) "Hold to talk" else "Open mic",
+                        tint = if (transmitting) Bg else Gold,
+                        modifier = Modifier.size(36.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    when {
+                        !pttIsPushToTalk && transmitting -> "Open mic · live"
+                        !pttIsPushToTalk -> "Open mic"
+                        transmitting -> "Talking"
+                        else -> "Hold to talk"
+                    },
+                    color = if (transmitting) Gold else BoneMuted,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            RoundToggle(
+                checked = outputDeafened,
+                label = if (outputDeafened) "Deafened" else "Deafen",
+                icon = { tint -> Icon(if (outputDeafened) Icons.Filled.HeadsetOff else Icons.Filled.Headset, contentDescription = "Deafen", tint = tint) },
+                onClick = onToggleDeafen,
             )
         }
-
-        CircleToggle(
-            modifier = Modifier.align(Alignment.TopCenter).offset(x = (-110).dp, y = 34.dp),
-            checked = inputMuted,
-            contentDescription = "Mute microphone",
-            onClick = onToggleMute,
-        ) { tint ->
-            Icon(if (inputMuted) Icons.Filled.MicOff else Icons.Filled.Mic, contentDescription = null, tint = tint)
-        }
-
-        CircleToggle(
-            modifier = Modifier.align(Alignment.TopCenter).offset(x = 110.dp, y = 34.dp),
-            checked = outputDeafened,
-            contentDescription = "Deafen",
-            onClick = onToggleDeafen,
-        ) { tint ->
-            Icon(
-                if (outputDeafened) Icons.Filled.HeadsetOff else Icons.Filled.Headset,
-                contentDescription = null,
-                tint = tint,
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 14.dp)
-                .size(width = 80.dp, height = 28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.5.dp, Oxblood, RoundedCornerShape(14.dp))
-                .clickable { onDisconnect() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("DISCONNECT", color = Oxblood, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-        }
+        Spacer(modifier = Modifier.height(16.dp))
+        SecondaryButton(
+            "Disconnect",
+            onClick = onDisconnect,
+            color = Oxblood,
+            icon = Icons.Filled.CallEnd,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
 @Composable
-private fun CircleToggle(
-    modifier: Modifier,
+private fun RoundToggle(
     checked: Boolean,
-    contentDescription: String,
+    label: String,
+    icon: @Composable (Color) -> Unit,
     onClick: () -> Unit,
-    content: @Composable (androidx.compose.ui.graphics.Color) -> Unit,
 ) {
-    Box(
-        modifier = modifier
-            .size(52.dp)
-            .clip(CircleShape)
-            .background(if (checked) Oxblood else SurfaceDark)
-            .border(1.5.dp, if (checked) Oxblood else BoneMuted, CircleShape)
-            .clickable(onClickLabel = contentDescription) { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        content(if (checked) Bone else BoneMuted)
+    val fill by animateColorAsState(if (checked) Oxblood else SurfaceHigh, label = "toggle")
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(fill)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            icon(if (checked) Bone else BoneMuted)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(label, color = if (checked) Bone else BoneFaint, style = MaterialTheme.typography.labelMedium)
     }
 }

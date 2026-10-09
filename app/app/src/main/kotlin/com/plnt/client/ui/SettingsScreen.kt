@@ -12,19 +12,27 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.Headset
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -41,9 +49,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.plnt.client.core.CoreBridge
 import com.plnt.client.model.AudioDeviceOption
@@ -55,10 +63,12 @@ import com.plnt.client.ui.theme.BoneFaint
 import com.plnt.client.ui.theme.BoneMuted
 import com.plnt.client.ui.theme.DividerLine
 import com.plnt.client.ui.theme.Gold
+import com.plnt.client.ui.theme.Sage
 import com.plnt.client.ui.theme.SurfaceDark
+import com.plnt.client.ui.theme.SurfaceHigh
 import com.plnt.client.ui.theme.SurfaceRaised
 
-/** #3076 screen 5: PTT mode, PTT trigger sources, identity export/import, about. */
+/** Talk mode, PTT triggers, audio devices, background permission, identity, about. */
 @Composable
 fun SettingsScreen(
     settings: Settings,
@@ -84,11 +94,11 @@ fun SettingsScreen(
         containerColor = Bg,
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceDark),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = { Text("Settings", style = MaterialTheme.typography.titleLarge, color = Bone) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Bone)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Bone)
                     }
                 },
             )
@@ -99,101 +109,61 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
         ) {
-            SectionHeader("Talk mode")
-            RadioRow("Push to talk", settings.pttMode == PttMode.PUSH_TO_TALK) { onPttModeChange(PttMode.PUSH_TO_TALK) }
-            RadioRow("Open mic", settings.pttMode == PttMode.OPEN_MIC) { onPttModeChange(PttMode.OPEN_MIC) }
-
-            SectionGap()
-
-            SectionHeader("Push-to-talk trigger")
-            // Two independent switches: both can be armed at once (design §5).
-            SwitchRow("Volume button", settings.pttOnVolumeButton, onPttOnVolumeButtonChange)
-            SwitchRow("Headset button", settings.pttOnHeadsetButton, onPttOnHeadsetButtonChange)
-            Text(
-                "The on-screen PTT button is always available regardless of these. " +
-                    "The headset button keeps working with the screen locked — the voice " +
-                    "service holds the media session. The volume button only fires while " +
-                    "PLNT is in the foreground; use the notification's Talk action from the " +
-                    "lock screen.",
-                style = MaterialTheme.typography.labelSmall,
-                color = BoneFaint,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-
-            SectionGap()
-
-            // #3282. Only devices the hardware actually reports right now are
-            // listed (#3076-style rule: never show a picker option that would
-            // silently no-op) — the lists refresh on entering this screen and, during
-            // a call, on plug/unplug.
-            SectionHeader("Audio input")
-            DevicePicker(availableInputDevices, settings.preferredInputDeviceKey, onInputDeviceChange)
-            Text(
-                "Automatic follows whatever route Android considers current (Bluetooth, then " +
-                    "wired, then the phone's own mic). Pick a specific device to keep using it " +
-                    "even while another one is connected.",
-                style = MaterialTheme.typography.labelSmall,
-                color = BoneFaint,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-
-            SectionGap()
-
-            SectionHeader("Audio output")
-            DevicePicker(availableOutputDevices, settings.preferredOutputDeviceKey, onOutputDeviceChange)
-
-            SectionGap()
-
-            SectionHeader("Background")
-            if (batteryOptimizationExempt) {
-                Text(
-                    "PLNT is exempt from battery optimisation. Calls keep running with the " +
-                        "screen off and the app in the background.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = BoneMuted,
-                )
-            } else {
-                ChevronRow("Allow PLNT to run in the background", onClick = onRequestBatteryExemption)
-                Text(
-                    "Android's battery optimisation can stop the voice service while you are " +
-                        "on a call. PLNT reconnects itself when that happens, but the exemption " +
-                        "avoids the interruption — and it is what lets a reconnect start while " +
-                        "the app is in the background.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = BoneFaint,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
+            Section("Talk mode", Icons.Outlined.RecordVoiceOver) {
+                ChoiceRow("Push to talk", "Hold the button, or a hardware trigger, to speak", settings.pttMode == PttMode.PUSH_TO_TALK) { onPttModeChange(PttMode.PUSH_TO_TALK) }
+                RowDivider()
+                ChoiceRow("Open mic", "Always transmitting while unmuted", settings.pttMode == PttMode.OPEN_MIC) { onPttModeChange(PttMode.OPEN_MIC) }
             }
 
-            SectionGap()
+            Section("Push-to-talk triggers", Icons.Outlined.Mic) {
+                // Two independent switches: both can be armed at once.
+                SwitchRow("Volume button", "Only while PLNT is in the foreground", settings.pttOnVolumeButton, onPttOnVolumeButtonChange)
+                RowDivider()
+                SwitchRow("Headset button", "Works with the screen locked", settings.pttOnHeadsetButton, onPttOnHeadsetButtonChange)
+                Footnote("The on-screen button is always live. From the lock screen, use the notification's Talk action.")
+            }
 
-            SectionHeader("Identity")
-            ChevronRow("Create new identity") { showCreate = true }
-            ChevronRow("Export identity", enabled = identityExport != null) { showExport = true }
-            ChevronRow("Import identity") { showImport = true }
+            // Only devices the hardware actually reports right now are listed —
+            // the lists refresh on entering this screen and, during a call, on
+            // plug/unplug.
+            Section("Microphone", Icons.Outlined.Mic) {
+                DevicePicker(availableInputDevices, settings.preferredInputDeviceKey, onInputDeviceChange)
+                Footnote("Automatic follows whatever Android routes to (Bluetooth, then wired, then the phone). Pick a device to keep using it even while another one is connected.")
+            }
 
-            SectionGap()
+            Section("Speaker", Icons.Outlined.Headset) {
+                DevicePicker(availableOutputDevices, settings.preferredOutputDeviceKey, onOutputDeviceChange)
+            }
 
-            SectionHeader("About")
-            Text(
-                "PLNT — voice-only TeamSpeak client. Connect, channel tree, who's talking, " +
-                    "push-to-talk / open mic, mute/deafen. No chat, no streams, no file transfer.",
-                style = MaterialTheme.typography.bodySmall,
-                color = BoneMuted,
-            )
-            // #3074's acceptance criterion is that core_version() renders on screen: it is
-            // the one place the UI shows a string that only the Rust core can produce, so a
-            // broken JNI/UniFFI link is visible without a debugger. CoreBridge.coreVersion()
-            // catches its own failures and returns "unavailable: ...", so this never crashes
-            // Settings. remember{} keeps it to one FFI call per composition, not per frame.
-            Text(
-                remember { CoreBridge.coreVersion() },
-                style = MaterialTheme.typography.labelSmall,
-                color = BoneFaint,
-                modifier = Modifier.padding(top = 8.dp),
-            )
+            Section("Background", Icons.Outlined.BatteryChargingFull) {
+                if (batteryOptimizationExempt) {
+                    InfoRow("Battery optimisation off", "Calls keep running with the screen off and the app in the background.", Sage)
+                } else {
+                    NavRow("Allow PLNT to run in the background", "Stops Android pausing the call to save battery", onClick = onRequestBatteryExemption)
+                }
+            }
+
+            Section("Identity", Icons.Outlined.Key) {
+                NavRow("Export identity", "Copy it to move this identity to another device", enabled = identityExport != null) { showExport = true }
+                RowDivider()
+                NavRow("Import identity", "Paste one exported elsewhere") { showImport = true }
+                RowDivider()
+                NavRow("Create new identity", "Servers will see you as a new user") { showCreate = true }
+            }
+
+            Section("About", Icons.Outlined.Info) {
+                InfoRow(
+                    "PLNT",
+                    "A TeamSpeak client for phones: voice, chat, and watching screen shares.",
+                    null,
+                )
+                // core_version() is the one string only the Rust core can produce,
+                // so a broken JNI/UniFFI link is visible here without a debugger.
+                Footnote(remember { CoreBridge.coreVersion() })
+            }
         }
     }
 
@@ -201,43 +171,45 @@ fun SettingsScreen(
         val clipboard = LocalClipboardManager.current
         SettingsSheet(title = "Export identity", onDismiss = { showExport = false }) {
             Text(
-                "Your TeamSpeak identity. Anyone holding this can connect as you — " +
-                    "treat it like a private key.",
-                style = MaterialTheme.typography.bodySmall,
-                color = BoneFaint,
+                "Your TeamSpeak identity. Anyone holding this can connect as you — treat it like a private key.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = BoneMuted,
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.5.dp, DividerLine, RoundedCornerShape(8.dp))
-                    .background(SurfaceRaised, RoundedCornerShape(8.dp))
-                    .padding(12.dp),
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SurfaceRaised)
+                    .border(1.dp, DividerLine, RoundedCornerShape(12.dp))
+                    .padding(14.dp),
             ) {
                 Text(identityExport, style = MaterialTheme.typography.bodySmall, color = Bone)
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            SheetAction("COPY") {
+            Spacer(modifier = Modifier.height(20.dp))
+            PrimaryButton("Copy", modifier = Modifier.fillMaxWidth(), onClick = {
                 clipboard.setText(AnnotatedString(identityExport))
                 showExport = false
-            }
+            })
         }
     }
 
     if (showCreate) {
         SettingsSheet(title = "Create new identity", onDismiss = { showCreate = false }) {
             Text(
-                "Generates a brand new TeamSpeak identity and discards the one on this " +
-                    "device. Servers that recognize this device by its old identity (server " +
-                    "groups, bans) will see a stranger. Export the current identity first if " +
-                    "you want to keep it.",
-                style = MaterialTheme.typography.bodySmall,
-                color = BoneFaint,
+                "Generates a brand new TeamSpeak identity and discards the one on this device. " +
+                    "Servers that recognise this device by its old identity (server groups, bans) will see a stranger. " +
+                    "Export the current identity first if you want to keep it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = BoneMuted,
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            SheetAction("CREATE") {
-                onCreateIdentity()
-                showCreate = false
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SecondaryButton("Cancel", onClick = { showCreate = false }, modifier = Modifier.weight(1f), color = BoneMuted)
+                PrimaryButton("Create", modifier = Modifier.weight(1f), onClick = {
+                    onCreateIdentity()
+                    showCreate = false
+                })
             }
         }
     }
@@ -248,10 +220,10 @@ fun SettingsScreen(
         SettingsSheet(title = "Import identity", onDismiss = { showImport = false }) {
             Text(
                 "Paste an exported identity. This replaces the one on this device.",
-                style = MaterialTheme.typography.bodySmall,
-                color = BoneFaint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = BoneMuted,
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             BasicTextField(
                 value = pasted,
                 onValueChange = { pasted = it; failed = false },
@@ -260,35 +232,59 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp)
-                    .border(1.5.dp, DividerLine, RoundedCornerShape(8.dp))
-                    .background(SurfaceRaised, RoundedCornerShape(8.dp))
-                    .padding(12.dp),
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SurfaceRaised)
+                    .border(1.dp, DividerLine, RoundedCornerShape(12.dp))
+                    .padding(14.dp),
             )
             if (failed) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "That isn't a valid identity.",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            SheetAction("IMPORT", enabled = pasted.isNotBlank()) {
+            Spacer(modifier = Modifier.height(20.dp))
+            PrimaryButton("Import", enabled = pasted.isNotBlank(), modifier = Modifier.fillMaxWidth(), onClick = {
                 if (onImportIdentity(pasted)) showImport = false else failed = true
-            }
+            })
         }
     }
 }
 
+@Composable
+private fun Section(title: String, icon: ImageVector, content: @Composable () -> Unit) {
+    Column(modifier = Modifier.padding(top = 20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
+            Icon(icon, contentDescription = null, tint = BoneMuted, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(title.uppercase(), color = BoneMuted, style = MaterialTheme.typography.labelSmall)
+        }
+        PlntCard { content() }
+    }
+}
+
+@Composable
+private fun RowDivider() {
+    HorizontalDivider(thickness = 1.dp, color = DividerLine, modifier = Modifier.padding(start = 16.dp))
+}
+
+@Composable
+private fun Footnote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = BoneFaint,
+        modifier = Modifier.padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 12.dp),
+    )
+}
+
 /**
- * Radio list of "Automatic" plus one row per present device, styled as the Talk
- * mode rows above. "Automatic" is a UI-only row backed by a null key, and stays
- * selected by default so the existing Bluetooth SCO routing (#3077/#3080)
- * is what an untouched install still gets.
- *
- * A device pinned earlier that is no longer connected still renders a row, so
- * the selection is visible (and clearable) rather than silently showing as
- * Automatic while a stale key is persisted.
+ * "Automatic" plus one row per present device. "Automatic" is a UI-only row
+ * backed by a null key and stays selected by default. A device pinned earlier
+ * that is no longer connected still renders, so the selection is visible (and
+ * clearable) rather than silently showing as Automatic.
  */
 @Composable
 private fun DevicePicker(
@@ -296,72 +292,92 @@ private fun DevicePicker(
     selectedKey: String?,
     onSelect: (String?) -> Unit,
 ) {
-    RadioRow("Automatic", selectedKey == null) { onSelect(null) }
+    ChoiceRow("Automatic", null, selectedKey == null) { onSelect(null) }
     devices.forEach { device ->
-        RadioRow(device.label, selectedKey == device.key) { onSelect(device.key) }
+        RowDivider()
+        ChoiceRow(device.label, null, selectedKey == device.key) { onSelect(device.key) }
     }
     if (selectedKey != null && devices.none { it.key == selectedKey }) {
-        RadioRow("Selected device (not connected)", selected = true) { onSelect(null) }
+        RowDivider()
+        ChoiceRow("Selected device", "Not connected right now", selected = true) { onSelect(null) }
     }
 }
 
 @Composable
-private fun SectionGap() {
-    Spacer(modifier = Modifier.height(20.dp))
-    HorizontalDivider(thickness = 1.dp, color = DividerLine)
-    Spacer(modifier = Modifier.height(20.dp))
-}
-
-@Composable
-private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun ChoiceRow(label: String, detail: String?, selected: Boolean, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(48.dp).clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(
-            selected = selected,
-            onClick = onClick,
-            colors = RadioButtonDefaults.colors(selectedColor = Gold, unselectedColor = BoneMuted),
-        )
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = Bone)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = Bone)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = BoneMuted)
+        }
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(if (selected) Gold else SurfaceHigh)
+                .border(1.dp, if (selected) Gold else DividerLine, RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) Icon(Icons.Filled.Check, contentDescription = null, tint = Bg, modifier = Modifier.size(14.dp))
+        }
     }
 }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun SwitchRow(label: String, detail: String?, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(48.dp).clickable { onCheckedChange(!checked) },
+        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = Bone)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = Bone)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = BoneMuted)
+        }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Gold,
-                checkedTrackColor = Gold.copy(alpha = 0.35f),
+                checkedThumbColor = Bg,
+                checkedTrackColor = Gold,
                 uncheckedThumbColor = BoneMuted,
-                uncheckedTrackColor = SurfaceRaised,
+                uncheckedTrackColor = SurfaceHigh,
+                uncheckedBorderColor = DividerLine,
             ),
         )
     }
 }
 
-/** Plain text row with the trailing "›" the design asks Compose to add. */
 @Composable
-private fun ChevronRow(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun NavRow(label: String, detail: String?, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(48.dp).clickable(enabled = enabled) { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { onClick() }.padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (enabled) Bone else BoneFaint,
-        )
-        Text("›", style = MaterialTheme.typography.bodyLarge, color = BoneMuted)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (enabled) Bone else BoneFaint)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = if (enabled) BoneMuted else BoneFaint)
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = BoneFaint)
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, detail: String, dot: androidx.compose.ui.graphics.Color?) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (dot != null) {
+            StatusDot(dot)
+            Spacer(modifier = Modifier.width(10.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = Bone)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = BoneMuted)
+        }
     }
 }
 
@@ -371,33 +387,13 @@ private fun SettingsSheet(title: String, onDismiss: () -> Unit, content: @Compos
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = SurfaceDark,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = { SheetDragHandle() },
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = Bone)
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, color = Bone)
             Spacer(modifier = Modifier.height(16.dp))
             content()
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-    }
-}
-
-@Composable
-private fun SheetAction(label: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(enabled = enabled) { onClick() }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        ) {
-            Text(
-                label,
-                color = if (enabled) Gold else Gold.copy(alpha = 0.4f),
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.labelSmall,
-            )
         }
     }
 }
