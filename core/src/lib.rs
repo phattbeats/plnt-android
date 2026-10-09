@@ -30,7 +30,8 @@ use tsclientlib::messages::c2s::{OutClientMoveMessage, OutClientMovePart};
 use tsclientlib::prelude::M2BClientUpdateExt;
 use tsclientlib::{ChannelId, OutCommandExt};
 use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
-use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
+use tsproto::connection::Event as RawEvent;
+use tsproto_packets::packets::{AudioData, CodecType, Direction, Flags, OutAudio, OutCommand, PacketType};
 
 mod udl_types;
 
@@ -120,6 +121,8 @@ enum ControlCommand {
     SetOutputMuted(bool),
     SendPcmFrame(Vec<f32>),
     SendTextMessage { target: ChatTarget, text: String },
+    /// PHA-3289: a pre-escaped `name k=v k=v` command line.
+    SendRawCommand(String),
 }
 
 #[uniffi::export]
@@ -208,6 +211,7 @@ impl Client {
             .as_ref()
             .cloned()
             .expect("sink installed at construction");
+        install_raw_listener(&mut con, Arc::clone(&sink_for_task));
         let state_for_task = Arc::clone(&self.state);
         let initial_channel_tree = channel_tree.clone();
         let sink_for_connected = Arc::clone(&sink_for_task);
@@ -298,6 +302,42 @@ impl Client {
         }
         self.cmd_tx()?
             .send(ControlCommand::SendTextMessage { target, text })
+            .map_err(|_| PlntError::NotConnected)
+    }
+
+    /// PHA-3289: send a command tsclientlib has no message type for — the TS6
+    /// screen-share signalling verbs (`requeststreaminfo`, `joinstreamrequest`,
+    /// `streamsignaling`, ...). `args` values are escaped here; pass them raw.
+    /// Replies come back as [`ConnEvent::RawCommand`]; include a `return_code`
+    /// argument to correlate the server's `error` reply with the request.
+    pub fn send_raw_command(
+        &self,
+        name: String,
+        args: HashMap<String, String>,
+    ) -> Result<(), PlntError> {
+        let name = name.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(PlntError::Invalid(format!("bad command name {name:?}")));
+        }
+        let mut line = String::from(name);
+        let mut keys: Vec<&String> = args.keys().collect();
+        keys.sort();
+        for k in keys {
+            if k.is_empty() || k.contains(|c: char| c == ' ' || c == '=' || c == '|') {
+                return Err(PlntError::Invalid(format!("bad argument key {k:?}")));
+            }
+            line.push(' ');
+            line.push_str(k);
+            line.push('=');
+            line.push_str(&ts_escape(&args[k]));
+        }
+        // tsproto's command packet cap; the TS6 streamer's offer answer is
+        // ~4-5 KB so this leaves headroom while refusing runaway payloads.
+        if line.len() > 8000 {
+            return Err(PlntError::Invalid(format!("command is {} bytes, limit 8000", line.len())));
+        }
+        self.cmd_tx()?
+            .send(ControlCommand::SendRawCommand(line))
             .map_err(|_| PlntError::NotConnected)
     }
 
@@ -505,8 +545,13 @@ async fn run_connection_loop(
     // point `con.get_state()` reflects the resumed session's (possibly new)
     // own_client id.
     let mut awaiting_resume = false;
+    let mut reinstall_raw_listener = false;
 
     loop {
+        if reinstall_raw_listener {
+            reinstall_raw_listener = false;
+            install_raw_listener(&mut con, Arc::clone(&sink));
+        }
         // Drain control commands first — `try_recv`, never `recv`. Wrapping the
         // blocking `recv()` in a `poll_fn` made this task park on a std channel
         // inside an async poll: the connection's own stream then never got
@@ -555,6 +600,12 @@ async fn run_connection_loop(
                         };
                         let cmd = state.send_message(msg_target, &text);
                         let _ = cmd.send(&mut con);
+                    }
+                }
+                ControlCommand::SendRawCommand(line) => {
+                    let cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, &line);
+                    if let Err(e) = cmd.send(&mut con) {
+                        sink.on_event(ConnEvent::Error(format!("send_raw_command: {e}")));
                     }
                 }
                 ControlCommand::SendPcmFrame(frame) => {
@@ -661,6 +712,10 @@ async fn run_connection_loop(
                             own_client_id: resumed_own_client_id.into(),
                             server_name: state.server.name.clone(),
                         }));
+                        // The resume rebuilt the tsproto client; the raw
+                        // packet listener went with the old one. Re-hook it
+                        // once `state` (which borrows `con`) is gone.
+                        reinstall_raw_listener = true;
                     }
                     channel_tree = snapshot_channel_tree(&state);
                     {
@@ -746,6 +801,148 @@ async fn run_connection_loop(
     sink.on_event(ConnEvent::Disconnected { cause, reason: reason.into() });
     let mut guard = shared_state.lock().unwrap();
     guard.connection = None;
+}
+
+// ---------------------------------------------------------------------------
+// PHA-3289: raw TS6 command passthrough
+// ---------------------------------------------------------------------------
+
+/// Hook the tsproto packet stream so the TS6-only `notifystream*` family —
+/// which tsclientlib's typed parser drops as unknown — reaches the app as
+/// [`ConnEvent::RawCommand`]. Must be re-run after tsclientlib's internal
+/// reconnect, which replaces the tsproto client.
+fn install_raw_listener(con: &mut Connection, sink: Arc<dyn EventSink>) {
+    let raw = match con.get_tsproto_client_mut() {
+        Ok(r) => r,
+        Err(e) => {
+            sink.on_event(ConnEvent::Error(format!("raw listener: {e}")));
+            return;
+        }
+    };
+    raw.event_listeners.push(Box::new(move |ev: &RawEvent| {
+        if let RawEvent::ReceivePacket(p) = ev {
+            if p.header().packet_type().is_command() {
+                let text = String::from_utf8_lossy(p.content());
+                if let Some(ev) = raw_command_event(&text) {
+                    sink.on_event(ev);
+                }
+            }
+        }
+    }));
+}
+
+/// Decide whether a raw inbound command is one the app wants, and parse it.
+/// Only the first `|`-separated part is surfaced; every stream notification
+/// seen in the wild is single-part.
+fn raw_command_event(text: &str) -> Option<ConnEvent> {
+    let name = text.split(|c| c == ' ' || c == '|').next().unwrap_or("");
+    let wanted = name.starts_with("notifystream")
+        || name == "notifyjoinstreamrequest"
+        || name == "notifyrespondjoinstreamrequest"
+        || name == "notifyremovedfromstream"
+        || (name == "error" && text.contains(" return_code="));
+    if !wanted {
+        return None;
+    }
+    let (name, args) = parse_command(text);
+    Some(ConnEvent::RawCommand { name, args })
+}
+
+/// Split `name k=v k=v` (first part only) into its name and unescaped args.
+fn parse_command(raw: &str) -> (String, HashMap<String, String>) {
+    let first_part = raw.split('|').next().unwrap_or("");
+    let mut name = String::new();
+    let mut args = HashMap::new();
+    for (i, tok) in first_part.split(' ').enumerate() {
+        if i == 0 && !tok.contains('=') {
+            name = tok.to_string();
+            continue;
+        }
+        if tok.is_empty() {
+            continue;
+        }
+        let (k, v) = tok.split_once('=').unwrap_or((tok, ""));
+        args.insert(k.to_string(), ts_unescape(v));
+    }
+    (name, args)
+}
+
+fn ts_unescape(v: &str) -> String {
+    let mut o = String::with_capacity(v.len());
+    let mut it = v.chars();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            o.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('s') => o.push(' '),
+            Some('p') => o.push('|'),
+            Some('/') => o.push('/'),
+            Some('n') => o.push('\n'),
+            Some('r') => o.push('\r'),
+            Some('t') => o.push('\t'),
+            Some('v') => o.push('\x0b'),
+            Some('f') => o.push('\x0c'),
+            Some('a') => o.push('\x07'),
+            Some('b') => o.push('\x08'),
+            Some(x) => o.push(x),
+            None => {}
+        }
+    }
+    o
+}
+
+fn ts_escape(v: &str) -> String {
+    let mut o = String::with_capacity(v.len() + 8);
+    for c in v.chars() {
+        match c {
+            '\\' => o.push_str("\\\\"),
+            '/' => o.push_str("\\/"),
+            ' ' => o.push_str("\\s"),
+            '|' => o.push_str("\\p"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            '\x0b' => o.push_str("\\v"),
+            '\x0c' => o.push_str("\\f"),
+            '\x07' => o.push_str("\\a"),
+            '\x08' => o.push_str("\\b"),
+            c => o.push(c),
+        }
+    }
+    o
+}
+
+#[cfg(test)]
+mod raw_command_tests {
+    use super::*;
+
+    #[test]
+    fn escape_round_trips() {
+        let s = "a b|c/d\\e\nf";
+        assert_eq!(ts_unescape(&ts_escape(s)), s);
+    }
+
+    #[test]
+    fn parses_stream_notification() {
+        let (name, args) = parse_command(
+            "notifystreaminfo return_code=60007 clid=11 id=0bc7 name=Default\\s-\\sFile\\sExplorer type=3 audio=0",
+        );
+        assert_eq!(name, "notifystreaminfo");
+        assert_eq!(args["name"], "Default - File Explorer");
+        assert_eq!(args["clid"], "11");
+    }
+
+    #[test]
+    fn filters_to_stream_family() {
+        assert!(raw_command_event("notifystreamstarted id=x clid=1").is_some());
+        assert!(raw_command_event("notifyrespondjoinstreamrequest clid=1 id=x decision=1 offer=v=0").is_some());
+        assert!(raw_command_event("error id=0 msg=ok return_code=60001").is_some());
+        assert!(raw_command_event("error id=0 msg=ok").is_none());
+        assert!(raw_command_event("notifytextmessage targetmode=2 msg=hi").is_none());
+        assert!(raw_command_event("notifyclientmoved clid=1 ctid=2").is_none());
+    }
 }
 
 /// Cheap signature used to decide whether to re-emit the channel tree.

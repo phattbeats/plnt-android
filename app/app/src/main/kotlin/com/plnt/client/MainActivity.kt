@@ -26,6 +26,7 @@ import com.plnt.client.ui.BookmarksScreen
 import com.plnt.client.ui.ChatScreen
 import com.plnt.client.ui.ConnectedScreen
 import com.plnt.client.ui.SettingsScreen
+import com.plnt.client.ui.StreamViewerScreen
 import com.plnt.client.ui.theme.PlntTheme
 
 class MainActivity : ComponentActivity() {
@@ -81,6 +82,13 @@ class MainActivity : ComponentActivity() {
                             onDisconnect = viewModel::disconnect,
                             onOpenSettings = { viewModel.navigate(Screen.Settings) },
                             onOpenChat = { viewModel.navigate(Screen.Chat) },
+                            onWatchStream = viewModel::watchStream,
+                        )
+                        Screen.StreamViewer -> StreamViewerScreen(
+                            view = state.streamView,
+                            eglContext = viewModel.eglBaseContext(),
+                            onAttachSink = viewModel::attachStreamSink,
+                            onStop = viewModel::stopWatching,
                         )
                         Screen.Chat -> ChatScreen(
                             messages = state.chatMessages,

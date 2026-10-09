@@ -2,6 +2,8 @@
 //! small module so the .udl stays trivial and the records/enums live next to
 //! their constructors.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// A single channel in the TeamSpeak tree. Projects the bookkeeping `Channel`
@@ -104,4 +106,13 @@ pub enum ConnEvent {
     /// outside (#3277) — carrying the fresh id here is what lets the roster's
     /// "(you)" row re-sync instead of silently going stale.
     Resumed(ConnectionState),
+    /// PHA-3289: a raw server notification tsclientlib has no message type for,
+    /// surfaced as the command name plus its first-part key/value arguments,
+    /// already unescaped. Only the TS6 screen-share family (`notifystream*`,
+    /// `notifyjoinstreamrequest`, `notifyrespondjoinstreamrequest`) and
+    /// `error` replies that carry a `return_code` are forwarded; everything
+    /// tsclientlib already models keeps flowing through the typed events.
+    /// The viewer protocol itself lives on the Kotlin side, next to the
+    /// WebRTC stack that consumes the offer.
+    RawCommand { name: String, args: HashMap<String, String> },
 }

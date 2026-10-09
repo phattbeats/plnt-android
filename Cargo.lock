@@ -1671,6 +1671,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tsclientlib",
+ "tsproto",
  "tsproto-packets",
  "uniffi",
  "uniffi_macros",

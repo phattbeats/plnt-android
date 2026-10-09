@@ -742,6 +742,8 @@ internal open class UniffiVTableCallbackInterfaceEventSink(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -775,6 +777,8 @@ internal interface UniffiLib : Library {
     fun uniffi_plnt_core_fn_method_client_join_channel(`ptr`: Pointer,`channelId`: Long,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_method_client_send_pcm_frame(`ptr`: Pointer,`frame`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_send_raw_command(`ptr`: Pointer,`name`: RustBuffer.ByValue,`args`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_method_client_send_text_message(`ptr`: Pointer,`target`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -920,6 +924,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_plnt_core_checksum_method_client_send_pcm_frame(
     ): Short
+    fun uniffi_plnt_core_checksum_method_client_send_raw_command(
+    ): Short
     fun uniffi_plnt_core_checksum_method_client_send_text_message(
     ): Short
     fun uniffi_plnt_core_checksum_method_client_set_input_muted(
@@ -955,7 +961,7 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
-    if (lib.uniffi_plnt_core_checksum_func_core_version() != 51390.toShort()) {
+    if (lib.uniffi_plnt_core_checksum_func_core_version() != 48360.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_connect() != 26877.toShort()) {
@@ -970,7 +976,10 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_plnt_core_checksum_method_client_send_pcm_frame() != 52815.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_plnt_core_checksum_method_client_send_text_message() != 26294.toShort()) {
+    if (lib.uniffi_plnt_core_checksum_method_client_send_raw_command() != 41139.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_send_text_message() != 14005.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_set_input_muted() != 20064.toShort()) {
@@ -1414,6 +1423,15 @@ public interface ClientInterface {
     fun `sendPcmFrame`(`frame`: List<kotlin.Float>)
     
     /**
+     * PHA-3289: send a command tsclientlib has no message type for — the TS6
+     * screen-share signalling verbs (`requeststreaminfo`, `joinstreamrequest`,
+     * `streamsignaling`, ...). `args` values are escaped here; pass them raw.
+     * Replies come back as [`ConnEvent::RawCommand`]; include a `return_code`
+     * argument to correlate the server's `error` reply with the request.
+     */
+    fun `sendRawCommand`(`name`: kotlin.String, `args`: Map<kotlin.String, kotlin.String>)
+    
+    /**
      * Send a text message to the current channel or to a specific client (a
      * private message). Server-wide chat is out of scope for v1 (#3281).
      */
@@ -1574,6 +1592,25 @@ open class Client: Disposable, AutoCloseable, ClientInterface {
     uniffiRustCallWithError(PlntException) { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_send_pcm_frame(
         it, FfiConverterSequenceFloat.lower(`frame`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * PHA-3289: send a command tsclientlib has no message type for — the TS6
+     * screen-share signalling verbs (`requeststreaminfo`, `joinstreamrequest`,
+     * `streamsignaling`, ...). `args` values are escaped here; pass them raw.
+     * Replies come back as [`ConnEvent::RawCommand`]; include a `return_code`
+     * argument to correlate the server's `error` reply with the request.
+     */
+    @Throws(PlntException::class)override fun `sendRawCommand`(`name`: kotlin.String, `args`: Map<kotlin.String, kotlin.String>)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_send_raw_command(
+        it, FfiConverterString.lower(`name`),FfiConverterMapStringString.lower(`args`),_status)
 }
     }
     
@@ -2270,6 +2307,22 @@ sealed class ConnEvent {
         companion object
     }
     
+    /**
+     * PHA-3289: a raw server notification tsclientlib has no message type for,
+     * surfaced as the command name plus its first-part key/value arguments,
+     * already unescaped. Only the TS6 screen-share family (`notifystream*`,
+     * `notifyjoinstreamrequest`, `notifyrespondjoinstreamrequest`) and
+     * `error` replies that carry a `return_code` are forwarded; everything
+     * tsclientlib already models keeps flowing through the typed events.
+     * The viewer protocol itself lives on the Kotlin side, next to the
+     * WebRTC stack that consumes the offer.
+     */
+    data class RawCommand(
+        val `name`: kotlin.String, 
+        val `args`: Map<kotlin.String, kotlin.String>) : ConnEvent() {
+        companion object
+    }
+    
 
     
     companion object
@@ -2317,6 +2370,10 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 )
             11 -> ConnEvent.Resumed(
                 FfiConverterTypeConnectionState.read(buf),
+                )
+            12 -> ConnEvent.RawCommand(
+                FfiConverterString.read(buf),
+                FfiConverterMapStringString.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
@@ -2407,6 +2464,14 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
                 + FfiConverterTypeConnectionState.allocationSize(value.v1)
             )
         }
+        is ConnEvent.RawCommand -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`name`)
+                + FfiConverterMapStringString.allocationSize(value.`args`)
+            )
+        }
     }
 
     override fun write(value: ConnEvent, buf: ByteBuffer) {
@@ -2471,6 +2536,12 @@ public object FfiConverterTypeConnEvent : FfiConverterRustBuffer<ConnEvent>{
             is ConnEvent.Resumed -> {
                 buf.putInt(11)
                 FfiConverterTypeConnectionState.write(value.v1, buf)
+                Unit
+            }
+            is ConnEvent.RawCommand -> {
+                buf.putInt(12)
+                FfiConverterString.write(value.`name`, buf)
+                FfiConverterMapStringString.write(value.`args`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2838,9 +2909,46 @@ public object FfiConverterSequenceTypeClientInfo: FfiConverterRustBuffer<List<Cl
         }
     }
 }
+
+
+
+public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.String> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, kotlin.String>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterString.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, kotlin.String>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterString.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterString.write(v, buf)
+        }
+    }
+}
         /**
          * Build version string, surfaced to the Kotlin side for the settings screen
-         * and bug reports.
+         * and bug reports. Self-describing (`"plnt-core 0.1.0"`, not bare `"0.1.0"`)
+         * because Settings -> About renders it unlabeled, directly under the app
+         * description (#3132).
          */ fun `coreVersion`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->

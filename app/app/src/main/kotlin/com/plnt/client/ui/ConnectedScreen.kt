@@ -90,6 +90,8 @@ fun ConnectedScreen(
     onDisconnect: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenChat: () -> Unit,
+    /** PHA-3289: tap a streaming client's row to watch. */
+    onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit = {},
 ) {
     // Collapse state is per-channel and sticky; channels with nothing in them
     // start collapsed (design §4), everything else starts open.
@@ -154,7 +156,7 @@ fun ConnectedScreen(
                             HorizontalDivider(thickness = 1.dp, color = if (row.isEmpty) DividerFaint else DividerLine)
                         }
                         is TreeRow.Client -> {
-                            ClientRowView(row.client, row.depth)
+                            ClientRowView(row.client, row.depth, onWatchStream)
                             HorizontalDivider(thickness = 1.dp, color = DividerLine)
                         }
                     }
@@ -242,8 +244,13 @@ private fun ChannelRowView(
 }
 
 @Composable
-private fun ClientRowView(client: ClientRow, depth: Int) {
+private fun ClientRowView(
+    client: ClientRow,
+    depth: Int,
+    onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit,
+) {
     val presence = client.presence
+    val stream = client.streaming
     val talkColor = when {
         presence.talking && client.isSelf -> Gold
         presence.talking -> Sage
@@ -255,7 +262,13 @@ private fun ClientRowView(client: ClientRow, depth: Int) {
         else -> Bg
     }
 
-    Box(modifier = Modifier.fillMaxWidth().height(52.dp).background(rowBackground)) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .background(rowBackground)
+            .then(if (stream != null) Modifier.clickable { onWatchStream(stream) } else Modifier),
+    ) {
         // 3dp left-edge bar, talk state only.
         talkColor?.let {
             Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(it))
@@ -282,6 +295,14 @@ private fun ClientRowView(client: ClientRow, depth: Int) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 when {
+                    // A share outranks talk state on the subtitle: it is the
+                    // row's one tappable affordance (PHA-3289).
+                    stream != null -> Text(
+                        "sharing: ${stream.name} — tap to watch",
+                        color = Gold,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
                     presence.talking -> Text(
                         "talking",
                         color = talkColor ?: Sage,
@@ -296,6 +317,10 @@ private fun ClientRowView(client: ClientRow, depth: Int) {
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
+            }
+            if (stream != null) {
+                StateTag("LIVE", Gold)
+                Spacer(modifier = Modifier.width(4.dp))
             }
             // MIC and SND are independent — both show when both are true.
             if (presence.micMuted) StateTag("MIC")
@@ -331,15 +356,15 @@ private fun Avatar(initial: String, ringColor: androidx.compose.ui.graphics.Colo
 
 /** 30×14dp oxblood pill, bone 9sp — the MIC/SND tags from the spec table. */
 @Composable
-private fun StateTag(text: String) {
+private fun StateTag(text: String, color: androidx.compose.ui.graphics.Color = Oxblood) {
     Box(
         modifier = Modifier
             .size(width = 30.dp, height = 14.dp)
             .clip(RoundedCornerShape(3.dp))
-            .background(Oxblood),
+            .background(color),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Bone, fontSize = 9.sp, fontWeight = FontWeight.Medium)
+        Text(text, color = if (color == Gold) Bg else Bone, fontSize = 9.sp, fontWeight = FontWeight.Medium)
     }
 }
 

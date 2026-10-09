@@ -39,6 +39,8 @@ data class ClientRow(
     val name: String,
     val isSelf: Boolean,
     val presence: ClientPresence,
+    /** PHA-3289: non-null while this client is screen-sharing in our channel. */
+    val streaming: com.plnt.client.stream.StreamInfo? = null,
 )
 
 data class ChannelNode(
@@ -103,6 +105,8 @@ sealed class Screen {
     data object Connected : Screen()
     data object Settings : Screen()
     data object Chat : Screen()
+    /** PHA-3289: full-screen viewer for one screen share. */
+    data object StreamViewer : Screen()
 }
 
 enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
@@ -141,4 +145,6 @@ data class AppState(
      * dismissed the first still re-fires the `LaunchedEffect` that consumes it.
      */
     val batteryPromptRequest: String? = null,
+    /** PHA-3289: the viewer session's progress; IDLE when nothing is being watched. */
+    val streamView: com.plnt.client.stream.StreamViewState = com.plnt.client.stream.StreamViewState(),
 )
