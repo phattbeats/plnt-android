@@ -152,6 +152,49 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newBookmarkId(): String = UUID.randomUUID().toString()
 
+    /**
+     * PHA-4108: a `ts3server://…` invite was opened (deep link or pasted text).
+     * Parses it and raises the Join/Save sheet. A link that names a server we
+     * already have is still offered — the user may want to reconnect or re-save
+     * with the invite's channel — but [ServerLink.find] tolerates a whole
+     * message, so sharing "join me: ts3server://…" works. No-ops on junk.
+     */
+    fun handleServerLink(raw: String?) {
+        val link = com.plnt.client.model.ServerLink.find(raw) ?: return
+        _state.update { it.copy(pendingInvite = link) }
+    }
+
+    fun dismissInvite() {
+        _state.update { it.copy(pendingInvite = null) }
+    }
+
+    /**
+     * Turns the pending invite into a [Bookmark] (reusing a matching saved one
+     * so we keep its id and label instead of spawning a duplicate), optionally
+     * saves it, and connects. The nickname comes from the invite only when it
+     * carries one; otherwise a matching bookmark's nickname, else a fresh
+     * random one — nobody should be forced onto the inviter's name.
+     */
+    fun acceptInvite(save: Boolean) {
+        val link = _state.value.pendingInvite ?: return
+        val existing = _state.value.bookmarks.firstOrNull {
+            it.address.equals(link.address, ignoreCase = true) && it.port == link.port
+        }
+        val bookmark = (existing ?: Bookmark(
+            id = newBookmarkId(),
+            label = link.label ?: link.address,
+            address = link.address,
+            port = link.port,
+            nickname = com.plnt.client.data.NicknameGenerator.random(),
+        )).copy(
+            nickname = link.nickname ?: existing?.nickname ?: com.plnt.client.data.NicknameGenerator.random(),
+            serverPassword = link.serverPassword ?: existing?.serverPassword,
+        )
+        if (save) addOrUpdateBookmark(bookmark)
+        _state.update { it.copy(pendingInvite = null) }
+        connect(bookmark)
+    }
+
     fun connect(bookmark: Bookmark) {
         roster.clear()
         talking.clear()

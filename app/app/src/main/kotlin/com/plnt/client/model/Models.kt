@@ -147,4 +147,11 @@ data class AppState(
     val batteryPromptRequest: String? = null,
     /** PHA-3289: the viewer session's progress; IDLE when nothing is being watched. */
     val streamView: com.plnt.client.stream.StreamViewState = com.plnt.client.stream.StreamViewState(),
+    /**
+     * PHA-4108: a server link (`ts3server://…`) the user opened, waiting on the
+     * "Join / Save" sheet. Null when there is nothing to offer. Held in state
+     * rather than acted on immediately so the user always sees where a tap is
+     * about to connect them before any network call.
+     */
+    val pendingInvite: ServerLink? = null,
 )
