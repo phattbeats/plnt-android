@@ -39,10 +39,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.unit.dp
 import com.plnt.client.model.ServerLink
-import com.plnt.client.ui.theme.Bone
-import com.plnt.client.ui.theme.BoneFaint
-import com.plnt.client.ui.theme.BoneMuted
-import com.plnt.client.ui.theme.Gold
+import com.plnt.client.ui.theme.TextNormal
+import com.plnt.client.ui.theme.TextFaint
+import com.plnt.client.ui.theme.TextMuted
+import com.plnt.client.ui.theme.Brand
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceHigh
 import com.plnt.client.ui.theme.SurfaceRaised
@@ -77,7 +77,7 @@ fun InviteSheet(
             Text(
                 if (knownServer) "Connect to this server?" else "You've been invited",
                 style = MaterialTheme.typography.titleLarge,
-                color = Bone,
+                color = TextNormal,
             )
             Spacer(modifier = Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -85,22 +85,22 @@ fun InviteSheet(
                     modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(SurfaceHigh),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Outlined.Dns, contentDescription = null, tint = Gold, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Outlined.Dns, contentDescription = null, tint = Brand, modifier = Modifier.size(22.dp))
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column {
                     Text(
                         invite.label ?: invite.address,
-                        color = Bone,
+                        color = TextNormal,
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
                         "${invite.address}:${invite.port}",
-                        color = BoneMuted,
+                        color = TextMuted,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     invite.channel?.let {
-                        Text("channel: $it", color = BoneFaint, style = MaterialTheme.typography.labelSmall)
+                        Text("channel: $it", color = TextFaint, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -109,24 +109,24 @@ fun InviteSheet(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                    .background(if (save) Gold.copy(alpha = 0.08f) else SurfaceRaised)
+                    .background(if (save) Brand.copy(alpha = 0.08f) else SurfaceRaised)
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Checkbox(
                     checked = save,
                     onCheckedChange = { save = it },
-                    colors = CheckboxDefaults.colors(checkedColor = Gold, uncheckedColor = BoneMuted),
+                    colors = CheckboxDefaults.colors(checkedColor = Brand, uncheckedColor = TextMuted),
                 )
                 Text(
                     if (knownServer) "Already in your servers" else "Save to my servers",
-                    color = if (knownServer) BoneFaint else BoneMuted,
+                    color = if (knownServer) TextFaint else TextMuted,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SecondaryButton("Not now", onClick = onDismiss, modifier = Modifier.weight(1f), color = BoneMuted)
+                SecondaryButton("Not now", onClick = onDismiss, modifier = Modifier.weight(1f), color = TextMuted)
                 PrimaryButton(
                     "Join",
                     icon = Icons.Filled.Login,
@@ -163,11 +163,11 @@ fun ShareInviteSheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Invite to ${link.label ?: link.address}", style = MaterialTheme.typography.titleLarge, color = Bone)
+            Text("Invite to ${link.label ?: link.address}", style = MaterialTheme.typography.titleLarge, color = TextNormal)
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                "They scan this or open the link in PLNT, and the server is filled in for them.",
-                color = BoneMuted,
+                "They scan this or open the link in TeamSpeak, and the server is filled in for them.",
+                color = TextMuted,
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(modifier = Modifier.height(20.dp))
@@ -186,10 +186,10 @@ fun ShareInviteSheet(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
-            Text(uri, color = BoneFaint, style = MaterialTheme.typography.labelSmall)
+            Text(uri, color = TextFaint, style = MaterialTheme.typography.labelSmall)
             Spacer(modifier = Modifier.height(20.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SecondaryButton("Close", onClick = onDismiss, modifier = Modifier.weight(1f), color = BoneMuted)
+                SecondaryButton("Close", onClick = onDismiss, modifier = Modifier.weight(1f), color = TextMuted)
                 PrimaryButton("Share link", modifier = Modifier.weight(1f), onClick = { shareText(context, uri) })
             }
         }

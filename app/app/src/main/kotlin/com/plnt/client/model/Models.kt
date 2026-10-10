@@ -105,6 +105,8 @@ sealed class Screen {
     data object Connected : Screen()
     data object Settings : Screen()
     data object Chat : Screen()
+    /** The one place the PLNT name and mark still appear (PHA-3072 rebrand). */
+    data object About : Screen()
     /** PHA-3289: full-screen viewer for one screen share. */
     data object StreamViewer : Screen()
 }

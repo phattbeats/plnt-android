@@ -60,15 +60,17 @@ import com.plnt.client.model.Bookmark
 import com.plnt.client.model.ConnectionPhase
 import com.plnt.client.model.ServerConnectionStatus
 import com.plnt.client.ui.theme.Bg
-import com.plnt.client.ui.theme.Bone
-import com.plnt.client.ui.theme.BoneFaint
-import com.plnt.client.ui.theme.BoneMuted
+import com.plnt.client.ui.theme.OnBrand
+import com.plnt.client.ui.theme.Warning
+import com.plnt.client.ui.theme.TextNormal
+import com.plnt.client.ui.theme.TextFaint
+import com.plnt.client.ui.theme.TextMuted
 import com.plnt.client.ui.theme.DividerLine
 import com.plnt.client.ui.theme.DotStale
-import com.plnt.client.ui.theme.Gold
-import com.plnt.client.ui.theme.Mauve
-import com.plnt.client.ui.theme.Oxblood
-import com.plnt.client.ui.theme.Sage
+import com.plnt.client.ui.theme.Brand
+import com.plnt.client.ui.theme.Accent
+import com.plnt.client.ui.theme.Danger
+import com.plnt.client.ui.theme.Speaking
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceHigh
 import com.plnt.client.ui.theme.SurfaceRaised
@@ -112,25 +114,29 @@ fun BookmarksScreen(
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
-                    Column {
-                        Text("PLNT", style = MaterialTheme.typography.titleLarge, color = Bone)
-                        Text("Servers", style = MaterialTheme.typography.labelMedium, color = BoneMuted)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TeamSpeakMark(size = 32.dp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text("TeamSpeak", style = MaterialTheme.typography.titleLarge, color = TextNormal)
+                            Text("Servers", style = MaterialTheme.typography.labelMedium, color = TextMuted)
+                        }
                     }
                 },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = BoneMuted)
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = TextMuted)
                     }
                     Box(
                         modifier = Modifier
                             .padding(end = 12.dp)
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(Gold)
+                            .background(Brand)
                             .clickable { startAdd() },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = "Add server", tint = Bg)
+                        Icon(Icons.Filled.Add, contentDescription = "Add server", tint = OnBrand)
                     }
                 },
             )
@@ -140,15 +146,15 @@ fun BookmarksScreen(
             if (connectionStatus.busy) {
                 Text(
                     if (connectionStatus.phase == ConnectionPhase.RECONNECTING) "Reconnecting…" else "Connecting…",
-                    color = Gold,
+                    color = Brand,
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                 )
             }
             lastError?.let { error ->
                 Text(
                     error,
-                    color = Bone,
-                    modifier = Modifier.fillMaxWidth().background(Oxblood.copy(alpha = 0.25f)).padding(16.dp),
+                    color = TextNormal,
+                    modifier = Modifier.fillMaxWidth().background(Danger.copy(alpha = 0.25f)).padding(16.dp),
                 )
             }
             if (bookmarks.isEmpty()) {
@@ -173,7 +179,7 @@ fun BookmarksScreen(
                     item {
                         Text(
                             "Swipe a server right to edit, left to remove.",
-                            color = BoneFaint,
+                            color = TextFaint,
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
@@ -193,16 +199,16 @@ fun BookmarksScreen(
             containerColor = SurfaceRaised,
             shape = RoundedCornerShape(20.dp),
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove server?", color = Bone, style = MaterialTheme.typography.titleMedium) },
-            text = { Text(target.label.ifBlank { target.address }, color = BoneMuted) },
+            title = { Text("Remove server?", color = TextNormal, style = MaterialTheme.typography.titleMedium) },
+            text = { Text(target.label.ifBlank { target.address }, color = TextMuted) },
             confirmButton = {
                 TextButton(onClick = { onDelete(target.id); pendingDelete = null }) {
-                    Text("Remove", color = Oxblood, style = MaterialTheme.typography.labelLarge)
+                    Text("Remove", color = Danger, style = MaterialTheme.typography.labelLarge)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) {
-                    Text("Cancel", color = BoneMuted, style = MaterialTheme.typography.labelLarge)
+                    Text("Cancel", color = TextMuted, style = MaterialTheme.typography.labelLarge)
                 }
             },
         )
@@ -242,14 +248,14 @@ private fun EmptyState(modifier: Modifier, onAdd: () -> Unit) {
             modifier = Modifier.size(96.dp).clip(CircleShape).background(SurfaceRaised),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Outlined.Dns, contentDescription = null, tint = Gold, modifier = Modifier.size(44.dp))
+            TeamSpeakMark(size = 56.dp)
         }
         Spacer(modifier = Modifier.height(24.dp))
-        Text("No servers yet", style = MaterialTheme.typography.titleLarge, color = Bone)
+        Text("No servers yet", style = MaterialTheme.typography.titleLarge, color = TextNormal)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "Add a TeamSpeak server and PLNT keeps the nickname and password with it.",
-            color = BoneMuted,
+            "Add a TeamSpeak server and its nickname and password are kept with it.",
+            color = TextMuted,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
         )
@@ -289,7 +295,7 @@ private fun SwipeableBookmarkRow(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(if (toDelete) Oxblood.copy(alpha = 0.25f) else Mauve.copy(alpha = 0.2f)),
+                    .background(if (toDelete) Danger.copy(alpha = 0.25f) else Accent.copy(alpha = 0.2f)),
                 contentAlignment = if (toDelete) Alignment.CenterEnd else Alignment.CenterStart,
             ) {
                 Row(
@@ -300,13 +306,13 @@ private fun SwipeableBookmarkRow(
                     Icon(
                         if (toDelete) Icons.Filled.Delete else Icons.Filled.Edit,
                         contentDescription = null,
-                        tint = if (toDelete) Oxblood else Mauve,
+                        tint = if (toDelete) Danger else Accent,
                         modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         if (toDelete) "Remove" else "Edit",
-                        color = if (toDelete) Oxblood else Mauve,
+                        color = if (toDelete) Danger else Accent,
                         style = MaterialTheme.typography.labelLarge,
                     )
                 }
@@ -323,44 +329,39 @@ private fun BookmarkRow(bookmark: Bookmark, connected: Boolean, pending: Boolean
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(SurfaceDark)
+            .background(SurfaceRaised)
             .clickable(enabled = connectEnabled) { onConnect() }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(SurfaceHigh),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Outlined.Dns, contentDescription = null, tint = Gold, modifier = Modifier.size(22.dp))
-        }
+        ServerTile(bookmark.label.ifBlank { bookmark.address }, connected)
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 bookmark.label.ifBlank { bookmark.address },
-                color = Bone,
+                color = TextNormal,
                 style = MaterialTheme.typography.titleSmall,
                 maxLines = 1,
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 "${bookmark.address}:${bookmark.port}",
-                color = BoneMuted,
+                color = TextMuted,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
             )
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                StatusDot(if (connected) Sage else if (pending) Gold else DotStale)
+                StatusDot(if (connected) Speaking else if (pending) Warning else DotStale)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     if (connected) "connected" else if (pending) "connecting…" else "as ${bookmark.nickname}",
-                    color = BoneFaint,
+                    color = TextFaint,
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                 )
             }
         }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = BoneFaint)
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = TextFaint)
     }
 }
 
@@ -390,7 +391,7 @@ private fun BookmarkSheet(
             Text(
                 if (isNew) "Add server" else "Edit server",
                 style = MaterialTheme.typography.titleLarge,
-                color = Bone,
+                color = TextNormal,
             )
             Spacer(modifier = Modifier.height(20.dp))
             PlntTextField("Label", label, { label = it }, placeholder = "Home")
@@ -416,7 +417,7 @@ private fun BookmarkSheet(
                         Icon(
                             Icons.Filled.Refresh,
                             contentDescription = "Generate nickname",
-                            tint = BoneMuted,
+                            tint = TextMuted,
                             modifier = Modifier.size(18.dp),
                         )
                     }
@@ -434,7 +435,7 @@ private fun BookmarkSheet(
                         Icon(
                             if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
                             contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                            tint = BoneMuted,
+                            tint = TextMuted,
                             modifier = Modifier.size(18.dp),
                         )
                     }
@@ -446,7 +447,7 @@ private fun BookmarkSheet(
                 SecondaryButton(
                     "Share invite link",
                     icon = Icons.Filled.Share,
-                    color = Gold,
+                    color = Brand,
                     modifier = Modifier.fillMaxWidth(),
                     onClick = onShare,
                 )
@@ -455,7 +456,7 @@ private fun BookmarkSheet(
             Spacer(modifier = Modifier.height(28.dp))
             val canSave = address.isNotBlank()
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SecondaryButton("Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), color = BoneMuted)
+                SecondaryButton("Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), color = TextMuted)
                 PrimaryButton(
                     if (isNew) "Add" else "Save",
                     enabled = canSave,
@@ -474,5 +475,30 @@ private fun BookmarkSheet(
                 )
             }
         }
+    }
+}
+
+/**
+ * Discord-style server tile: the server's initials on a squircle in a colour
+ * derived from its name, so each server is recognisable at a glance. The
+ * corners tighten (circle -> squircle) on the live server, as Discord's
+ * guild rail does for the selected guild.
+ */
+@Composable
+private fun ServerTile(name: String, live: Boolean) {
+    val initials = name
+        .split(' ', '.', '-', '_')
+        .filter { it.isNotBlank() }
+        .take(2)
+        .joinToString("") { it.first().uppercase() }
+        .ifEmpty { "?" }
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(if (live) 16.dp else 24.dp))
+            .background(avatarTint(name)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(initials, color = OnBrand, style = MaterialTheme.typography.titleSmall)
     }
 }

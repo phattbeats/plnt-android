@@ -50,12 +50,13 @@ import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.model.ChatMessage
 import com.plnt.client.model.ClientRow
 import com.plnt.client.ui.theme.Bg
-import com.plnt.client.ui.theme.Bone
-import com.plnt.client.ui.theme.BoneFaint
-import com.plnt.client.ui.theme.BoneMuted
+import com.plnt.client.ui.theme.OnBrand
+import com.plnt.client.ui.theme.TextNormal
+import com.plnt.client.ui.theme.TextFaint
+import com.plnt.client.ui.theme.TextMuted
 import com.plnt.client.ui.theme.DividerLine
-import com.plnt.client.ui.theme.Gold
-import com.plnt.client.ui.theme.Mauve
+import com.plnt.client.ui.theme.Brand
+import com.plnt.client.ui.theme.Accent
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceHigh
 import com.plnt.client.ui.theme.SurfaceRaised
@@ -96,17 +97,17 @@ fun ChatScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
                     Column {
-                        Text("Chat", style = MaterialTheme.typography.titleLarge, color = Bone)
+                        Text("Chat", style = MaterialTheme.typography.titleLarge, color = TextNormal)
                         Text(
                             if (target is ChatMessageTarget.Channel) "Channel" else "Private · $targetLabel",
                             style = MaterialTheme.typography.labelMedium,
-                            color = BoneMuted,
+                            color = TextMuted,
                         )
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Bone)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextNormal)
                     }
                 },
             )
@@ -123,14 +124,14 @@ fun ChatScreen(
                         modifier = Modifier.size(72.dp).clip(CircleShape).background(SurfaceRaised),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = Mauve, modifier = Modifier.size(32.dp))
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = Brand, modifier = Modifier.size(32.dp))
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Nothing here yet", style = MaterialTheme.typography.titleMedium, color = Bone)
+                    Text("Nothing here yet", style = MaterialTheme.typography.titleMedium, color = TextNormal)
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         "Messages in this channel, and private ones, show up here.",
-                        color = BoneMuted,
+                        color = TextMuted,
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                     )
@@ -140,7 +141,7 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     reverseLayout = true,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(messages.asReversed()) { msg -> ChatBubble(msg) }
                 }
@@ -149,8 +150,8 @@ fun ChatScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                     .background(SurfaceDark)
-                    .border(1.dp, DividerLine, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Box {
@@ -162,17 +163,17 @@ fun ChatScreen(
                             .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("To: $targetLabel", color = Mauve, style = MaterialTheme.typography.labelMedium)
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose recipient", tint = Mauve, modifier = Modifier.size(18.dp))
+                        Text("To: $targetLabel", color = TextNormal, style = MaterialTheme.typography.labelMedium)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose recipient", tint = TextMuted, modifier = Modifier.size(18.dp))
                     }
                     DropdownMenu(expanded = targetMenuOpen, onDismissRequest = { targetMenuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text("Channel", color = Bone) },
+                            text = { Text("Channel", color = TextNormal) },
                             onClick = { target = ChatMessageTarget.Channel; targetMenuOpen = false },
                         )
                         peers.forEach { peer ->
                             DropdownMenuItem(
-                                text = { Text(peer.name, color = Bone) },
+                                text = { Text(peer.name, color = TextNormal) },
                                 onClick = { target = ChatMessageTarget.Direct(peer.clientId); targetMenuOpen = false },
                             )
                         }
@@ -191,14 +192,14 @@ fun ChatScreen(
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         if (draft.isEmpty()) {
-                            Text("Message…", color = BoneFaint, style = MaterialTheme.typography.bodyMedium)
+                            Text("Message…", color = TextFaint, style = MaterialTheme.typography.bodyMedium)
                         }
                         BasicTextField(
                             value = draft,
                             onValueChange = { draft = it },
                             singleLine = true,
-                            textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium).copy(color = Bone),
-                            cursorBrush = SolidColor(Gold),
+                            textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium).copy(color = TextNormal),
+                            cursorBrush = SolidColor(Brand),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -208,14 +209,14 @@ fun ChatScreen(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
-                            .background(if (canSend) Gold else SurfaceHigh)
+                            .background(if (canSend) Brand else SurfaceHigh)
                             .clickable(enabled = canSend) { send() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.Send,
                             contentDescription = "Send",
-                            tint = if (canSend) Bg else BoneFaint,
+                            tint = if (canSend) OnBrand else TextFaint,
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -225,45 +226,42 @@ fun ChatScreen(
     }
 }
 
+/**
+ * Discord-style message: avatar on the left, bold name with a "private" tag
+ * for DMs, text beneath. Everyone's messages — yours included — line up on
+ * the left like a channel, not like an SMS thread.
+ */
 @Composable
 private fun ChatBubble(msg: ChatMessage) {
-    val mine = msg.isSelf
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        if (!mine) {
-            Avatar(msg.fromName, size = 28.dp)
-            Spacer(modifier = Modifier.width(8.dp))
-        }
-        Column(
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = if (mine) 18.dp else 4.dp,
-                        bottomEnd = if (mine) 4.dp else 18.dp,
-                    ),
+        Avatar(msg.fromName, size = 36.dp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    msg.fromName,
+                    color = if (msg.isSelf) Brand else TextNormal,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
                 )
-                .background(if (mine) Gold.copy(alpha = 0.18f) else SurfaceRaised)
-                .padding(horizontal = 14.dp, vertical = 9.dp),
-        ) {
-            if (!mine || msg.isDirect) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (!mine) {
-                        Text(msg.fromName, color = Mauve, style = MaterialTheme.typography.labelMedium)
-                    }
-                    if (msg.isDirect) {
-                        if (!mine) Spacer(modifier = Modifier.width(6.dp))
-                        Text("private", color = BoneFaint, style = MaterialTheme.typography.labelSmall)
-                    }
+                if (msg.isDirect) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "PRIVATE",
+                        color = Accent,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Accent.copy(alpha = 0.16f))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    )
                 }
-                Spacer(modifier = Modifier.height(2.dp))
             }
-            Text(msg.text, color = Bone, style = MaterialTheme.typography.bodyMedium)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(msg.text, color = TextNormal, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

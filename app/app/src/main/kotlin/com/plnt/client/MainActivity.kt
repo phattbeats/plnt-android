@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.Screen
+import com.plnt.client.ui.AboutScreen
 import com.plnt.client.ui.BookmarksScreen
 import com.plnt.client.ui.ChatScreen
 import com.plnt.client.ui.ConnectedScreen
@@ -115,6 +116,7 @@ class MainActivity : ComponentActivity() {
                             onSend = viewModel::sendChatMessage,
                             onBack = { viewModel.navigate(Screen.Connected) },
                         )
+                        Screen.About -> AboutScreen(onBack = { viewModel.navigate(Screen.Settings) })
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
@@ -129,6 +131,7 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onImportIdentity = viewModel::importIdentity,
                             onCreateIdentity = viewModel::createNewIdentity,
+                            onOpenAbout = { viewModel.navigate(Screen.About) },
                             onBack = {
                                 viewModel.navigate(
                                     if (state.phase == com.plnt.client.model.ConnectionPhase.CONNECTED) {

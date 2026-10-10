@@ -147,7 +147,7 @@ library failed to load it reads `unavailable: <exception>` instead.
 - **Kotlin audio** uses `VOICE_COMMUNICATION` stream type.
 - **Foreground service** with `FOREGROUND_SERVICE_MICROPHONE` for
   background voice.
-- **Compose UI** with the PLNT palette (colors locked from the spike).
+- **Compose UI** in TeamSpeak branding with a Discord-style layout (PHA-3072 rebrand, 2026-10-10); the PLNT name, plant mark and palette appear only on Settings → About.
 
 The build pipeline delivers the bridge for those features. Voice-session
 APIs (connect, channel tree, PTT) are scheduled for follow-up tickets —

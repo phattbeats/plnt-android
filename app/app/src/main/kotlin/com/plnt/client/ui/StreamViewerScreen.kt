@@ -44,11 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.plnt.client.stream.StreamViewPhase
 import com.plnt.client.stream.StreamViewState
-import com.plnt.client.ui.theme.Bone
-import com.plnt.client.ui.theme.BoneMuted
-import com.plnt.client.ui.theme.Gold
-import com.plnt.client.ui.theme.Oxblood
-import com.plnt.client.ui.theme.Sage
+import com.plnt.client.ui.theme.TextNormal
+import com.plnt.client.ui.theme.TextMuted
+import com.plnt.client.ui.theme.Brand
+import com.plnt.client.ui.theme.Danger
+import com.plnt.client.ui.theme.Speaking
 import kotlinx.coroutines.delay
 import org.webrtc.EglBase
 import org.webrtc.RendererCommon
@@ -97,10 +97,10 @@ fun StreamViewerScreen(
         StreamViewPhase.FAILED -> view.detail ?: "Could not connect"
     }
     val statusColor = when (view.phase) {
-        StreamViewPhase.PLAYING -> Sage
-        StreamViewPhase.FAILED -> Oxblood
-        StreamViewPhase.ENDED -> BoneMuted
-        else -> Gold
+        StreamViewPhase.PLAYING -> Speaking
+        StreamViewPhase.FAILED -> Danger
+        StreamViewPhase.ENDED -> TextMuted
+        else -> Brand
     }
 
     Box(
@@ -142,13 +142,13 @@ fun StreamViewerScreen(
                     ) {
                         Icon(Icons.Filled.Videocam, contentDescription = null, tint = statusColor, modifier = Modifier.size(32.dp))
                     }
-                    else -> CircularProgressIndicator(color = Gold, strokeWidth = 3.dp, modifier = Modifier.size(44.dp))
+                    else -> CircularProgressIndicator(color = Brand, strokeWidth = 3.dp, modifier = Modifier.size(44.dp))
                 }
                 Spacer(modifier = Modifier.height(20.dp))
-                Text(status, color = Bone, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                Text(status, color = TextNormal, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
                 if (view.phase == StreamViewPhase.FAILED || view.phase == StreamViewPhase.ENDED) {
                     Spacer(modifier = Modifier.height(24.dp))
-                    SecondaryButton("Back to channel", onClick = onStop, color = Bone)
+                    SecondaryButton("Back to channel", onClick = onStop, color = TextNormal)
                 }
             }
         }
@@ -171,7 +171,7 @@ fun StreamViewerScreen(
                     Text(
                         view.stream?.name ?: "Stream",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Bone,
+                        color = TextNormal,
                         maxLines = 1,
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -188,7 +188,7 @@ fun StreamViewerScreen(
                         .clickable(onClick = onStop),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Filled.Close, contentDescription = "Stop watching", tint = Bone)
+                    Icon(Icons.Filled.Close, contentDescription = "Stop watching", tint = TextNormal)
                 }
             }
         }

@@ -491,7 +491,7 @@ class VoiceService : Service() {
     /** Start watching [stream]; any stream already being watched is left first. */
     fun watchStream(stream: StreamInfo) {
         stopWatching()
-        val nick = connectionParams?.bookmark?.nickname ?: "PLNT"
+        val nick = connectionParams?.bookmark?.nickname ?: "TeamSpeak User"
         val session = StreamViewerSession(
             context = applicationContext,
             eglBase = eglBase,
@@ -1259,9 +1259,9 @@ class VoiceService : Service() {
             servicePendingIntent(ACTION_DISCONNECT, 3),
         )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("PLNT")
+            .setContentTitle("TeamSpeak")
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.stat_sys_speakerphone)
+            .setSmallIcon(com.plnt.client.R.drawable.ic_teamspeak)
             .setOngoing(connectionParams != null)
             // CATEGORY_CALL + VISIBILITY_PUBLIC put the row (and its actions)
             // on the lock screen with its content intact; setSilent stops the

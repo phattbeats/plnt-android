@@ -93,7 +93,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = (binder as? VoiceService.LocalBinder)?.service()
             if (svc == null) {
-                bindingFailed("PLNT could not bind to its voice service (invalid binder).")
+                bindingFailed("The app could not bind to its voice service (invalid binder).")
                 return
             }
             val token = bindingGeneration.invalidate()
@@ -117,15 +117,15 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            bindingFailed("PLNT lost its voice service. Tap the server to reconnect.")
+            bindingFailed("The app lost its voice service. Tap the server to reconnect.")
         }
 
         override fun onBindingDied(name: ComponentName?) {
-            bindingFailed("PLNT's voice-service binding died. Tap the server to reconnect.")
+            bindingFailed("The voice-service binding died. Tap the server to reconnect.")
         }
 
         override fun onNullBinding(name: ComponentName?) {
-            bindingFailed("PLNT's voice service returned no binder. Tap the server to retry.")
+            bindingFailed("The voice service returned no binder. Tap the server to retry.")
         }
     }
 
@@ -164,9 +164,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         bindingStatus = VoiceServiceBindingStatus()
         try {
             bindingRegistered = app.bindService(Intent(app, VoiceService::class.java), connection, Context.BIND_AUTO_CREATE)
-            if (!bindingRegistered) bindingFailed("PLNT could not start its voice service. Tap a server to retry.")
+            if (!bindingRegistered) bindingFailed("The app could not start its voice service. Tap a server to retry.")
         } catch (t: Throwable) {
-            bindingFailed("PLNT could not bind its voice service: ${t.message ?: t.javaClass.simpleName}")
+            bindingFailed("The app could not bind its voice service: ${t.message ?: t.javaClass.simpleName}")
         }
     }
 
@@ -201,7 +201,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         when {
             svc != null -> action(svc)
             bindingStatus.canQueue -> pendingActions.add(action)
-            else -> bindingFailed(bindingStatus.error ?: "PLNT's voice service is unavailable.")
+            else -> bindingFailed(bindingStatus.error ?: "The voice service is unavailable.")
         }
     }
 
@@ -554,8 +554,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         // redials on its own, so this says what is actually happening rather
         // than announcing a death.
         DisconnectCause.SYSTEM_KILL ->
-            "Android stopped PLNT in the background. It will reconnect on its own — " +
-                "exempting PLNT from battery optimisation prevents the interruption."
+            "Android stopped TeamSpeak in the background. It will reconnect on its own — " +
+                "exempting TeamSpeak from battery optimisation prevents the interruption."
         DisconnectCause.CONNECTION_LOST -> "Connection lost: ${ev.reason}"
         DisconnectCause.ERROR -> ev.reason
         // VoiceService replaces this with the real cause before it gets here.
