@@ -128,9 +128,19 @@ jobs:
           ls -la app/app/build/outputs/apk/debug/app-debug.apk
           file app/app/build/outputs/apk/debug/app-debug.apk
           unzip -l app/app/build/outputs/apk/debug/app-debug.apk | head -30
-          # Which key signed it: CN=PLNT is the shared key (installs over older
-          # CI builds); CN=Android Debug means the secret was missing.
-          keytool -printcert -jarfile app/app/build/outputs/apk/debug/app-debug.apk | grep -E "Owner|SHA256:" || true
+          # Which key signed it. minSdk 26 means v2/v3 signatures only, which
+          # `keytool -printcert -jarfile` cannot read, so look at the APK
+          # Signing Block directly: the shared key's cert says O=phattbeats.
+          # With the secret present, anything else fails the build.
+          python3 - <<'PY'
+          import os, sys
+          b = open("app/app/build/outputs/apk/debug/app-debug.apk", "rb").read()
+          i = b.rfind(b"APK Sig Block 42")
+          shared = i > 0 and b"phattbeats" in b[max(0, i - 20000):i]
+          print("signed with shared PLNT key:", shared)
+          if os.environ.get("PLNT_KEYSTORE_FILE") and not shared:
+              sys.exit("shared keystore was provided but the APK is not signed with it")
+          PY
 
       - name: "Smoke: jniLibs contains the right .so files"
         # cargo-ndk names these by Android ABI, not by Rust target triple —
