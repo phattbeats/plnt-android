@@ -16,7 +16,27 @@ android {
         versionName = "0.1.0"
     }
 
+    // One fixed signing key for every CI build, so a new APK installs over
+    // the last one instead of Android refusing it ("app cannot be installed")
+    // because each runner made up its own debug key. CI decodes the key from
+    // repo secrets into PLNT_KEYSTORE_FILE; local builds without it keep the
+    // normal per-machine debug key.
+    val sharedKeystore = System.getenv("PLNT_KEYSTORE_FILE")?.let(::file)?.takeIf { it.exists() }
+    signingConfigs {
+        if (sharedKeystore != null) {
+            create("shared") {
+                storeFile = sharedKeystore
+                storePassword = System.getenv("PLNT_KEYSTORE_PASSWORD")
+                keyAlias = "plnt"
+                keyPassword = System.getenv("PLNT_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (sharedKeystore != null) signingConfig = signingConfigs.getByName("shared")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

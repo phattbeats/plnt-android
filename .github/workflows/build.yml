@@ -98,7 +98,20 @@ jobs:
                      "platforms;${ANDROID_PLATFORM}" \
                      "build-tools;35.0.0"
 
+      - name: Decode shared signing key
+        # Same key on every run, so CI APKs install over each other. Absent on
+        # fork PRs (no secrets); the build then falls back to a debug key.
+        env:
+          PLNT_KEYSTORE_B64: ${{ secrets.PLNT_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$PLNT_KEYSTORE_B64" ]; then
+            echo "$PLNT_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/plnt.jks"
+            echo "PLNT_KEYSTORE_FILE=$RUNNER_TEMP/plnt.jks" >> "$GITHUB_ENV"
+          fi
+
       - name: Build with build.sh
+        env:
+          PLNT_KEYSTORE_PASSWORD: ${{ secrets.PLNT_KEYSTORE_PASSWORD }}
         run: |
           # build.sh will:
           #  1. Install Rust targets aarch64-linux-android + x86_64-linux-android
@@ -115,6 +128,9 @@ jobs:
           ls -la app/app/build/outputs/apk/debug/app-debug.apk
           file app/app/build/outputs/apk/debug/app-debug.apk
           unzip -l app/app/build/outputs/apk/debug/app-debug.apk | head -30
+          # Which key signed it: CN=PLNT is the shared key (installs over older
+          # CI builds); CN=Android Debug means the secret was missing.
+          keytool -printcert -jarfile app/app/build/outputs/apk/debug/app-debug.apk | grep -E "Owner|SHA256:" || true
 
       - name: "Smoke: jniLibs contains the right .so files"
         # cargo-ndk names these by Android ABI, not by Rust target triple —
