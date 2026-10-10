@@ -53,17 +53,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
-import com.plnt.client.core.CoreBridge
 import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
 import com.plnt.client.ui.theme.Bg
-import com.plnt.client.ui.theme.Bone
-import com.plnt.client.ui.theme.BoneFaint
-import com.plnt.client.ui.theme.BoneMuted
+import com.plnt.client.ui.theme.OnBrand
+import com.plnt.client.ui.theme.TextNormal
+import com.plnt.client.ui.theme.TextFaint
+import com.plnt.client.ui.theme.TextMuted
 import com.plnt.client.ui.theme.DividerLine
-import com.plnt.client.ui.theme.Gold
-import com.plnt.client.ui.theme.Sage
+import com.plnt.client.ui.theme.Brand
+import com.plnt.client.ui.theme.Speaking
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceHigh
 import com.plnt.client.ui.theme.SurfaceRaised
@@ -84,6 +84,7 @@ fun SettingsScreen(
     onOutputDeviceChange: (String?) -> Unit,
     onImportIdentity: (String) -> Boolean,
     onCreateIdentity: () -> Unit,
+    onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
     var showExport by remember { mutableStateOf(false) }
@@ -95,10 +96,10 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
-                title = { Text("Settings", style = MaterialTheme.typography.titleLarge, color = Bone) },
+                title = { Text("Settings", style = MaterialTheme.typography.titleLarge, color = TextNormal) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Bone)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextNormal)
                     }
                 },
             )
@@ -120,7 +121,7 @@ fun SettingsScreen(
 
             Section("Push-to-talk triggers", Icons.Outlined.Mic) {
                 // Two independent switches: both can be armed at once.
-                SwitchRow("Volume button", "Only while PLNT is in the foreground", settings.pttOnVolumeButton, onPttOnVolumeButtonChange)
+                SwitchRow("Volume button", "Only while TeamSpeak is open", settings.pttOnVolumeButton, onPttOnVolumeButtonChange)
                 RowDivider()
                 SwitchRow("Headset button", "Works with the screen locked", settings.pttOnHeadsetButton, onPttOnHeadsetButtonChange)
                 Footnote("The on-screen button is always live. From the lock screen, use the notification's Talk action.")
@@ -140,9 +141,9 @@ fun SettingsScreen(
 
             Section("Background", Icons.Outlined.BatteryChargingFull) {
                 if (batteryOptimizationExempt) {
-                    InfoRow("Battery optimisation off", "Calls keep running with the screen off and the app in the background.", Sage)
+                    InfoRow("Battery optimisation off", "Calls keep running with the screen off and the app in the background.", Speaking)
                 } else {
-                    NavRow("Allow PLNT to run in the background", "Stops Android pausing the call to save battery", onClick = onRequestBatteryExemption)
+                    NavRow("Allow TeamSpeak to run in the background", "Stops Android pausing the call to save battery", onClick = onRequestBatteryExemption)
                 }
             }
 
@@ -155,14 +156,7 @@ fun SettingsScreen(
             }
 
             Section("About", Icons.Outlined.Info) {
-                InfoRow(
-                    "PLNT",
-                    "A TeamSpeak client for phones: voice, chat, and watching screen shares.",
-                    null,
-                )
-                // core_version() is the one string only the Rust core can produce,
-                // so a broken JNI/UniFFI link is visible here without a debugger.
-                Footnote(remember { CoreBridge.coreVersion() })
+                NavRow("About this app", "Version, credits and licences", onClick = onOpenAbout)
             }
         }
     }
@@ -173,7 +167,7 @@ fun SettingsScreen(
             Text(
                 "Your TeamSpeak identity. Anyone holding this can connect as you — treat it like a private key.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BoneMuted,
+                color = TextMuted,
             )
             Spacer(modifier = Modifier.height(14.dp))
             Box(
@@ -184,7 +178,7 @@ fun SettingsScreen(
                     .border(1.dp, DividerLine, RoundedCornerShape(12.dp))
                     .padding(14.dp),
             ) {
-                Text(identityExport, style = MaterialTheme.typography.bodySmall, color = Bone)
+                Text(identityExport, style = MaterialTheme.typography.bodySmall, color = TextNormal)
             }
             Spacer(modifier = Modifier.height(20.dp))
             PrimaryButton("Copy", modifier = Modifier.fillMaxWidth(), onClick = {
@@ -201,11 +195,11 @@ fun SettingsScreen(
                     "Servers that recognise this device by its old identity (server groups, bans) will see a stranger. " +
                     "Export the current identity first if you want to keep it.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BoneMuted,
+                color = TextMuted,
             )
             Spacer(modifier = Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SecondaryButton("Cancel", onClick = { showCreate = false }, modifier = Modifier.weight(1f), color = BoneMuted)
+                SecondaryButton("Cancel", onClick = { showCreate = false }, modifier = Modifier.weight(1f), color = TextMuted)
                 PrimaryButton("Create", modifier = Modifier.weight(1f), onClick = {
                     onCreateIdentity()
                     showCreate = false
@@ -221,14 +215,14 @@ fun SettingsScreen(
             Text(
                 "Paste an exported identity. This replaces the one on this device.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BoneMuted,
+                color = TextMuted,
             )
             Spacer(modifier = Modifier.height(14.dp))
             BasicTextField(
                 value = pasted,
                 onValueChange = { pasted = it; failed = false },
-                textStyle = MaterialTheme.typography.bodySmall.copy(color = Bone),
-                cursorBrush = SolidColor(Gold),
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = TextNormal),
+                cursorBrush = SolidColor(Brand),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp)
@@ -257,9 +251,9 @@ fun SettingsScreen(
 private fun Section(title: String, icon: ImageVector, content: @Composable () -> Unit) {
     Column(modifier = Modifier.padding(top = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
-            Icon(icon, contentDescription = null, tint = BoneMuted, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(title.uppercase(), color = BoneMuted, style = MaterialTheme.typography.labelSmall)
+            Text(title.uppercase(), color = TextMuted, style = MaterialTheme.typography.labelSmall)
         }
         PlntCard { content() }
     }
@@ -275,7 +269,7 @@ private fun Footnote(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
-        color = BoneFaint,
+        color = TextFaint,
         modifier = Modifier.padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 12.dp),
     )
 }
@@ -310,18 +304,18 @@ private fun ChoiceRow(label: String, detail: String?, selected: Boolean, onClick
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = Bone)
-            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = BoneMuted)
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = TextNormal)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = TextMuted)
         }
         Box(
             modifier = Modifier
                 .size(22.dp)
                 .clip(RoundedCornerShape(11.dp))
-                .background(if (selected) Gold else SurfaceHigh)
-                .border(1.dp, if (selected) Gold else DividerLine, RoundedCornerShape(11.dp)),
+                .background(if (selected) Brand else SurfaceHigh)
+                .border(1.dp, if (selected) Brand else DividerLine, RoundedCornerShape(11.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            if (selected) Icon(Icons.Filled.Check, contentDescription = null, tint = Bg, modifier = Modifier.size(14.dp))
+            if (selected) Icon(Icons.Filled.Check, contentDescription = null, tint = OnBrand, modifier = Modifier.size(14.dp))
         }
     }
 }
@@ -333,16 +327,16 @@ private fun SwitchRow(label: String, detail: String?, checked: Boolean, onChecke
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = Bone)
-            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = BoneMuted)
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = TextNormal)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = TextMuted)
         }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Bg,
-                checkedTrackColor = Gold,
-                uncheckedThumbColor = BoneMuted,
+                checkedThumbColor = OnBrand,
+                checkedTrackColor = Brand,
+                uncheckedThumbColor = TextMuted,
                 uncheckedTrackColor = SurfaceHigh,
                 uncheckedBorderColor = DividerLine,
             ),
@@ -357,10 +351,10 @@ private fun NavRow(label: String, detail: String?, enabled: Boolean = true, onCl
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (enabled) Bone else BoneFaint)
-            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = if (enabled) BoneMuted else BoneFaint)
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (enabled) TextNormal else TextFaint)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = if (enabled) TextMuted else TextFaint)
         }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = BoneFaint)
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = TextFaint)
     }
 }
 
@@ -375,8 +369,8 @@ private fun InfoRow(label: String, detail: String, dot: androidx.compose.ui.grap
             Spacer(modifier = Modifier.width(10.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = Bone)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = BoneMuted)
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = TextNormal)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = TextMuted)
         }
     }
 }
@@ -391,7 +385,7 @@ private fun SettingsSheet(title: String, onDismiss: () -> Unit, content: @Compos
         dragHandle = { SheetDragHandle() },
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, color = Bone)
+            Text(title, style = MaterialTheme.typography.titleLarge, color = TextNormal)
             Spacer(modifier = Modifier.height(16.dp))
             content()
         }

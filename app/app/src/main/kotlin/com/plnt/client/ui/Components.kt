@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -35,11 +36,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.plnt.client.ui.theme.AvatarTints
 import com.plnt.client.ui.theme.Bg
-import com.plnt.client.ui.theme.Bone
-import com.plnt.client.ui.theme.BoneFaint
-import com.plnt.client.ui.theme.BoneMuted
+import com.plnt.client.ui.theme.BrandDeep
+import com.plnt.client.ui.theme.OnBrand
+import com.plnt.client.ui.theme.TextNormal
+import com.plnt.client.ui.theme.TextFaint
+import com.plnt.client.ui.theme.TextMuted
 import com.plnt.client.ui.theme.DividerLine
-import com.plnt.client.ui.theme.Gold
+import com.plnt.client.ui.theme.Brand
 import com.plnt.client.ui.theme.SurfaceDark
 import com.plnt.client.ui.theme.SurfaceRaised
 
@@ -48,7 +51,7 @@ import com.plnt.client.ui.theme.SurfaceRaised
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text.uppercase(),
-        color = BoneMuted,
+        color = TextMuted,
         style = MaterialTheme.typography.labelSmall,
         modifier = modifier.padding(start = 4.dp, bottom = 8.dp),
     )
@@ -105,17 +108,17 @@ fun PrimaryButton(
         modifier = modifier
             .height(48.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (enabled) Gold else Gold.copy(alpha = 0.35f))
+            .background(if (enabled) Brand else Brand.copy(alpha = 0.35f))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = Bg, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, tint = OnBrand, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
         }
-        Text(text, color = Bg, style = MaterialTheme.typography.labelLarge)
+        Text(text, color = OnBrand, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -126,7 +129,7 @@ fun SecondaryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    color: Color = Bone,
+    color: Color = TextNormal,
     icon: ImageVector? = null,
 ) {
     val tint = if (enabled) color else color.copy(alpha = 0.4f)
@@ -150,7 +153,7 @@ fun SecondaryButton(
 
 /** Text-only action for sheet footers. */
 @Composable
-fun TextAction(text: String, onClick: () -> Unit, enabled: Boolean = true, color: Color = Gold) {
+fun TextAction(text: String, onClick: () -> Unit, enabled: Boolean = true, color: Color = Brand) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
@@ -173,7 +176,7 @@ fun Avatar(name: String, size: Dp = 36.dp, modifier: Modifier = Modifier) {
     ) {
         Text(
             name.firstOrNull()?.uppercase() ?: "?",
-            color = Bone,
+            color = TextNormal,
             style = if (size >= 40.dp) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
         )
     }
@@ -209,14 +212,14 @@ fun PlntTextField(
         ) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 if (value.isEmpty() && placeholder.isNotEmpty()) {
-                    Text(placeholder, color = BoneFaint, style = MaterialTheme.typography.bodyLarge)
+                    Text(placeholder, color = TextFaint, style = MaterialTheme.typography.bodyLarge)
                 }
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
                     singleLine = true,
-                    textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyLarge).copy(color = Bone),
-                    cursorBrush = SolidColor(Gold),
+                    textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyLarge).copy(color = TextNormal),
+                    cursorBrush = SolidColor(Brand),
                     visualTransformation = visualTransformation,
                     keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                     modifier = Modifier.fillMaxWidth(),
@@ -240,7 +243,23 @@ fun SheetDragHandle() {
         Box(
             modifier = Modifier
                 .size(width = 36.dp, height = 4.dp)
-                .background(BoneFaint, RoundedCornerShape(2.dp)),
+                .background(TextFaint, RoundedCornerShape(2.dp)),
+        )
+    }
+}
+
+/** The TeamSpeak mark on a brand-blue circle — the app's identity in headers. */
+@Composable
+fun TeamSpeakMark(size: Dp = 32.dp, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.size(size).clip(CircleShape).background(BrandDeep),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painterResource(com.plnt.client.R.drawable.ic_teamspeak),
+            contentDescription = "TeamSpeak",
+            tint = OnBrand,
+            modifier = Modifier.size(size * 0.6f),
         )
     }
 }
