@@ -73,7 +73,8 @@ class MainActivity : ComponentActivity() {
                     when (state.screen) {
                         Screen.Bookmarks -> BookmarksScreen(
                             bookmarks = state.bookmarks,
-                            sessionConnected = state.sessionConnected,
+                            connectionStatus = state.connectionStatus,
+                            lastError = state.lastError,
                             onConnect = viewModel::connect,
                             onSave = viewModel::addOrUpdateBookmark,
                             onDelete = viewModel::deleteBookmark,

@@ -109,14 +109,10 @@ sealed class Screen {
     data object StreamViewer : Screen()
 }
 
-enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
-
 data class AppState(
     val screen: Screen = Screen.Bookmarks,
     val bookmarks: List<Bookmark> = emptyList(),
-    /** Bookmark ids connected to during this app session — drives the sage row dot. */
-    val sessionConnected: Set<String> = emptySet(),
-    val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED,
+    val connectionStatus: ServerConnectionStatus = ServerConnectionStatus(),
     val serverName: String = "",
     val ownClientId: Long? = null,
     val channelTree: List<ChannelNode> = emptyList(),
@@ -156,4 +152,33 @@ data class AppState(
     val pendingInvite: ServerLink? = null,
     /** PHA-3289: our own outgoing screen share; IDLE when not sharing. */
     val streamSend: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
+) {
+    val phase: ConnectionPhase get() = connectionStatus.phase
+}
+
+
+/** Service replay replaces stale/pending UI attribution, including after Activity recreation. */
+fun AppState.withVoiceConnectionSnapshot(snapshot: VoiceConnectionSnapshot, initialReplay: Boolean = false): AppState {
+    val nextScreen = when {
+        snapshot.status.phase == ConnectionPhase.DISCONNECTED -> Screen.Bookmarks
+        snapshot.status.phase == ConnectionPhase.CONNECTED && (initialReplay || phase != ConnectionPhase.CONNECTED) -> Screen.Connected
+        initialReplay -> Screen.Bookmarks
+        else -> screen
+    }
+    return copy(
+        connectionStatus = snapshot.status,
+        ownClientId = snapshot.ownClientId,
+        serverName = snapshot.serverName,
+        lastError = snapshot.lastError,
+        screen = nextScreen,
+        channelTree = if (snapshot.status.phase == ConnectionPhase.DISCONNECTED) emptyList() else channelTree,
+    )
+}
+
+fun AppState.withVoiceBindingFailure(reason: String): AppState = copy(
+    connectionStatus = connectionStatus.disconnected(),
+    ownClientId = null,
+    channelTree = emptyList(),
+    screen = Screen.Bookmarks,
+    lastError = reason,
 )

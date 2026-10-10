@@ -57,6 +57,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.plnt.client.data.NicknameGenerator
 import com.plnt.client.model.Bookmark
+import com.plnt.client.model.ConnectionPhase
+import com.plnt.client.model.ServerConnectionStatus
 import com.plnt.client.ui.theme.Bg
 import com.plnt.client.ui.theme.Bone
 import com.plnt.client.ui.theme.BoneFaint
@@ -80,7 +82,8 @@ import com.plnt.client.ui.theme.SurfaceRaised
 @Composable
 fun BookmarksScreen(
     bookmarks: List<Bookmark>,
-    sessionConnected: Set<String>,
+    connectionStatus: ServerConnectionStatus,
+    lastError: String?,
     onConnect: (Bookmark) -> Unit,
     onSave: (Bookmark) -> Unit,
     onDelete: (String) -> Unit,
@@ -133,31 +136,49 @@ fun BookmarksScreen(
             )
         },
     ) { padding ->
-        if (bookmarks.isEmpty()) {
-            EmptyState(modifier = Modifier.fillMaxSize().padding(padding), onAdd = ::startAdd)
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(bookmarks, key = { it.id }) { bookmark ->
-                    SwipeableBookmarkRow(
-                        bookmark = bookmark,
-                        connectedThisSession = bookmark.id in sessionConnected,
-                        onConnect = { onConnect(bookmark) },
-                        onEdit = { editing = bookmark; isNew = false },
-                        onDelete = { pendingDelete = bookmark },
-                    )
-                }
-                item {
-                    Text(
-                        "Swipe a server right to edit, left to remove.",
-                        color = BoneFaint,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    )
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (connectionStatus.busy) {
+                Text(
+                    if (connectionStatus.phase == ConnectionPhase.RECONNECTING) "Reconnecting…" else "Connecting…",
+                    color = Gold,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                )
+            }
+            lastError?.let { error ->
+                Text(
+                    error,
+                    color = Bone,
+                    modifier = Modifier.fillMaxWidth().background(Oxblood.copy(alpha = 0.25f)).padding(16.dp),
+                )
+            }
+            if (bookmarks.isEmpty()) {
+                EmptyState(modifier = Modifier.fillMaxSize(), onAdd = ::startAdd)
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(bookmarks, key = { it.id }) { bookmark ->
+                        SwipeableBookmarkRow(
+                            bookmark = bookmark,
+                            connected = connectionStatus.isConnected(bookmark.id),
+                            pending = connectionStatus.isPending(bookmark.id),
+                            connectEnabled = !connectionStatus.busy,
+                            onConnect = { onConnect(bookmark) },
+                            onEdit = { editing = bookmark; isNew = false },
+                            onDelete = { pendingDelete = bookmark },
+                        )
+                    }
+                    item {
+                        Text(
+                            "Swipe a server right to edit, left to remove.",
+                            color = BoneFaint,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        )
+                    }
                 }
             }
         }
@@ -240,7 +261,9 @@ private fun EmptyState(modifier: Modifier, onAdd: () -> Unit) {
 @Composable
 private fun SwipeableBookmarkRow(
     bookmark: Bookmark,
-    connectedThisSession: Boolean,
+    connected: Boolean,
+    pending: Boolean,
+    connectEnabled: Boolean,
     onConnect: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -290,18 +313,18 @@ private fun SwipeableBookmarkRow(
             }
         },
     ) {
-        BookmarkRow(bookmark, connectedThisSession, onConnect)
+        BookmarkRow(bookmark, connected, pending, connectEnabled, onConnect)
     }
 }
 
 @Composable
-private fun BookmarkRow(bookmark: Bookmark, connectedThisSession: Boolean, onConnect: () -> Unit) {
+private fun BookmarkRow(bookmark: Bookmark, connected: Boolean, pending: Boolean, connectEnabled: Boolean, onConnect: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(SurfaceDark)
-            .clickable { onConnect() }
+            .clickable(enabled = connectEnabled) { onConnect() }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -327,10 +350,10 @@ private fun BookmarkRow(bookmark: Bookmark, connectedThisSession: Boolean, onCon
                 maxLines = 1,
             )
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                StatusDot(if (connectedThisSession) Sage else DotStale)
+                StatusDot(if (connected) Sage else if (pending) Gold else DotStale)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    if (connectedThisSession) "connected this session" else "as ${bookmark.nickname}",
+                    if (connected) "connected" else if (pending) "connecting…" else "as ${bookmark.nickname}",
                     color = BoneFaint,
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
