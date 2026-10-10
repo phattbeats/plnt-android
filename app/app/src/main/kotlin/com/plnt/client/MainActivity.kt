@@ -36,6 +36,19 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { /* no-op: connect() surfaces a core error if mic capture ends up denied */ }
 
+    // PHA-3289 send side: the system "Start recording or casting?" prompt.
+    private val requestScreenCapture = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) viewModel.startScreenShare(data)
+    }
+
+    private fun launchScreenCapture() {
+        val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java) ?: return
+        runCatching { requestScreenCapture.launch(mpm.createScreenCaptureIntent()) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestRuntimePermissions()
@@ -85,6 +98,9 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { viewModel.navigate(Screen.Settings) },
                             onOpenChat = { viewModel.navigate(Screen.Chat) },
                             onWatchStream = viewModel::watchStream,
+                            shareState = state.streamSend,
+                            onShareScreen = ::launchScreenCapture,
+                            onStopShare = viewModel::stopScreenShare,
                         )
                         Screen.StreamViewer -> StreamViewerScreen(
                             view = state.streamView,

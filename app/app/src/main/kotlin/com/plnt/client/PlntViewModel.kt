@@ -90,6 +90,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             // service's word for it rather than trusting our own last write.
             svc.setStateListener { st -> viewModelScope.launch { onVoiceState(st) } }
             svc.setStreamStateListener { st -> viewModelScope.launch { onStreamViewState(st) } }
+            svc.setSendStateListener { st -> viewModelScope.launch { _state.update { it.copy(streamSend = st) } } }
             val queued = pendingActions.toList()
             pendingActions.clear()
             queued.forEach { it(svc) }
@@ -291,6 +292,19 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun eglBaseContext(): org.webrtc.EglBase.Context? = voiceService?.eglBaseContext()
+
+    // ---- PHA-3289: sharing our own screen ------------------------------
+
+    /** [permissionData] is the MediaProjection grant the Activity just got from the system prompt. */
+    fun startScreenShare(permissionData: android.content.Intent) {
+        val nick = _state.value.bookmarks.firstOrNull { it.id in _state.value.sessionConnected }?.nickname
+        val title = if (nick.isNullOrBlank()) "Phone screen" else "$nick's phone"
+        runOnService { it.startScreenShare(permissionData, title) }
+    }
+
+    fun stopScreenShare() {
+        runOnService { it.stopScreenShare() }
+    }
 
     private fun onStreamViewState(st: com.plnt.client.stream.StreamViewState) {
         _state.update { it.copy(streamView = st) }

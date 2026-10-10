@@ -30,3 +30,17 @@ data class StreamViewState(
     val width: Int = 0,
     val height: Int = 0,
 )
+
+/** Where our own screen share is (PHA-3289, send side). */
+enum class StreamSendPhase { IDLE, STARTING, LIVE, ENDED, FAILED }
+
+data class StreamSendState(
+    val phase: StreamSendPhase = StreamSendPhase.IDLE,
+    val title: String = "",
+    /** Server stream id once `notifystreamstarted` names us. */
+    val streamId: String = "",
+    /** Desktop viewers currently connected to us. */
+    val viewers: Int = 0,
+    /** Human-readable detail for ENDED / FAILED, null otherwise. */
+    val detail: String? = null,
+)

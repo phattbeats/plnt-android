@@ -37,6 +37,8 @@ import com.plnt.client.model.PttMode
 import com.plnt.client.stream.StreamInfo
 import com.plnt.client.stream.StreamViewState
 import com.plnt.client.stream.StreamViewerSession
+import com.plnt.client.stream.StreamSendState
+import com.plnt.client.stream.StreamSenderSession
 import org.webrtc.EglBase
 import org.webrtc.VideoSink
 import kotlinx.coroutines.CoroutineScope
@@ -127,6 +129,10 @@ class VoiceService : Service() {
     private var streamSession: StreamViewerSession? = null
     private var streamSink: VideoSink? = null
     private var streamStateListener: ((StreamViewState) -> Unit)? = null
+
+    // PHA-3289 send side: our own screen share. Same lifetime rules as the viewer.
+    private var sendSession: StreamSenderSession? = null
+    private var sendStateListener: ((StreamSendState) -> Unit)? = null
 
     private data class ConnectionParams(val bookmark: Bookmark, val identityPem: String)
     private var connectionParams: ConnectionParams? = null
@@ -414,6 +420,72 @@ class VoiceService : Service() {
         streamSession = null
         runCatching { s.stop() }
         streamStateListener?.invoke(StreamViewState())
+    }
+
+    fun setSendStateListener(listener: ((StreamSendState) -> Unit)?) {
+        sendStateListener = listener
+        listener?.invoke(sendSession?.current ?: StreamSendState())
+    }
+
+    /**
+     * Share this phone's screen into the current channel. [permissionData] is
+     * the MediaProjection grant from the system "Start recording or casting?"
+     * prompt; it must be used once, right away.
+     *
+     * Android 14+ refuses MediaProjection unless the service is already in
+     * the foreground with type `mediaProjection`, so the type is added before
+     * capture starts and dropped again in [stopScreenShare].
+     */
+    fun startScreenShare(permissionData: Intent, title: String) {
+        stopScreenShare()
+        if (client == null) return
+        promoteForProjection(true)
+        val dm = resources.displayMetrics
+        // Long edge capped at 1280: TS desktop streams default to 720p and a
+        // phone's native resolution would just cost bitrate.
+        val scale = minOf(1f, 1280f / maxOf(dm.widthPixels, dm.heightPixels))
+        val w = ((dm.widthPixels * scale).toInt() / 2) * 2
+        val h = ((dm.heightPixels * scale).toInt() / 2) * 2
+        val session = StreamSenderSession(
+            context = applicationContext,
+            eglBase = eglBase,
+            permissionData = permissionData,
+            ownClientId = { ownClientId },
+            sendRaw = { name, args -> sendRawCommand(name, args) },
+            onState = { st ->
+                mainHandler.post {
+                    sendStateListener?.invoke(st)
+                    if (st.phase == com.plnt.client.stream.StreamSendPhase.ENDED ||
+                        st.phase == com.plnt.client.stream.StreamSendPhase.FAILED
+                    ) {
+                        if (sendSession != null && sendSession?.current?.phase == st.phase) {
+                            sendSession = null
+                            promoteForProjection(false)
+                        }
+                    }
+                }
+            },
+        )
+        sendSession = session
+        session.start(title, w, h)
+    }
+
+    fun stopScreenShare() {
+        val s = sendSession ?: return
+        sendSession = null
+        runCatching { s.stop() }
+        promoteForProjection(false)
+        sendStateListener?.invoke(StreamSendState())
+    }
+
+    /** Adds or drops the `mediaProjection` foreground type on top of the voice types. */
+    private fun promoteForProjection(on: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        if (micForegroundActive) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        if (on) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        runCatching { startForeground(NOTIFICATION_ID, buildNotification(), types) }
+            .onFailure { Log.w(TAG, "foreground type update (projection=$on) refused", it) }
     }
 
     /** The viewer screen's renderer; null when it goes away. Survives across sessions. */
@@ -843,6 +915,7 @@ class VoiceService : Service() {
             }
             is CoreEvent.RawCommand -> {
                 streamSession?.onRaw(ev)
+                sendSession?.onRaw(ev)
                 eventListener?.invoke(ev)
             }
             is CoreEvent.Disconnected -> {
@@ -938,6 +1011,7 @@ class VoiceService : Service() {
     private fun teardownClientOnly() {
         // A stream cannot outlive the connection its signalling rides on.
         stopWatching()
+        stopScreenShare()
         runCatching { client?.disconnect() }
         runCatching { client?.close() }
         client = null
