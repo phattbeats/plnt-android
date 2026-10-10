@@ -33,6 +33,8 @@ use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
 use tsproto::connection::Event as RawEvent;
 use tsproto_packets::packets::{AudioData, CodecType, Direction, Flags, OutAudio, OutCommand, PacketType};
 
+#[cfg(target_os = "android")]
+mod android_ctx;
 mod udl_types;
 
 pub use udl_types::{Channel, ChatTarget, ClientInfo, ConnEvent, ConnectionState, DisconnectCause};
