@@ -34,6 +34,10 @@ import com.plnt.client.data.SessionStore
 import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.PttMode
+import com.plnt.client.model.ConnectionGeneration
+import com.plnt.client.model.ConnectionPhase
+import com.plnt.client.model.ServerConnectionStatus
+import com.plnt.client.model.VoiceConnectionSnapshot
 import com.plnt.client.stream.StreamInfo
 import com.plnt.client.stream.StreamViewState
 import com.plnt.client.stream.StreamViewerSession
@@ -120,6 +124,14 @@ class VoiceService : Service() {
 
     private var client: CoreClient? = null
     private var audioEngine: AudioEngine? = null
+    private val clientGeneration = ConnectionGeneration()
+    private var connectionStatus = ServerConnectionStatus()
+    private var connectionServerName = ""
+    private var connectionError: String? = null
+    private var cachedChannels: List<com.plnt.client.core.CoreChannel> = emptyList()
+    private var cachedClients: List<com.plnt.client.core.CoreClientInfo> = emptyList()
+    private var uiOwner: Any? = null
+    private var connectionListener: ((VoiceConnectionSnapshot) -> Unit)? = null
     private var eventListener: ((CoreEvent) -> Unit)? = null
     private var stateListener: ((VoiceState) -> Unit)? = null
 
@@ -288,6 +300,9 @@ class VoiceService : Service() {
         // the flag that sets. Without this a perfectly ordinary foreground
         // connect could come up output-only.
         startForeground(withMicrophone = true)
+        clientGeneration.invalidate()
+        reconnectJob?.cancel()
+        reconnectJob = null
         disconnectCause = null
         hasConnectedOnce = false
         reconnecting = false
@@ -297,6 +312,11 @@ class VoiceService : Service() {
         lastChannelId = null
         ownClientId = null
         connectionParams = ConnectionParams(bookmark, identityPem)
+        connectionStatus = connectionStatus.start(bookmark.id)
+        connectionError = null
+        cachedChannels = emptyList()
+        cachedClients = emptyList()
+        publishConnectionSnapshot()
         persistSession()
         doConnect()
     }
@@ -313,8 +333,74 @@ class VoiceService : Service() {
         syncCaptureWithForegroundType()
     }
 
+    fun currentConnectionSnapshot() = VoiceConnectionSnapshot(
+        generation = clientGeneration.current(),
+        status = connectionStatus,
+        ownClientId = ownClientId,
+        serverName = connectionServerName,
+        lastError = connectionError,
+    )
+
+    fun setConnectionListener(owner: Any, listener: ((VoiceConnectionSnapshot) -> Unit)?) {
+        uiOwner = owner
+        connectionListener = listener
+        listener?.invoke(currentConnectionSnapshot())
+    }
+
+    /** A newly bound UI must see the live roster, not start a second client. */
     fun setEventListener(listener: ((CoreEvent) -> Unit)?) {
         eventListener = listener
+        if (connectionStatus.phase == ConnectionPhase.CONNECTED || connectionStatus.phase == ConnectionPhase.RECONNECTING) {
+            listener?.invoke(CoreEvent.ChannelTree(cachedChannels))
+            listener?.invoke(CoreEvent.ClientList(cachedClients))
+        }
+    }
+
+    fun clearUiListeners(owner: Any) {
+        if (uiOwner !== owner) return
+        uiOwner = null
+        connectionListener = null
+        eventListener = null
+        stateListener = null
+        streamStateListener = null
+        sendStateListener = null
+    }
+
+    private fun publishConnectionSnapshot() {
+        connectionListener?.invoke(currentConnectionSnapshot())
+    }
+
+    private fun emitEvent(ev: CoreEvent) {
+        when (ev) {
+            is CoreEvent.Connected -> {
+                connectionStatus = connectionStatus.connected()
+                connectionServerName = ev.serverName
+                connectionError = null
+            }
+            is CoreEvent.Resumed -> {
+                connectionStatus = connectionStatus.connected()
+                connectionServerName = ev.serverName
+                connectionError = null
+            }
+            is CoreEvent.Reconnecting, is CoreEvent.TemporaryDisconnect -> {
+                connectionStatus = connectionStatus.reconnecting()
+            }
+            is CoreEvent.Disconnected -> {
+                connectionStatus = connectionStatus.disconnected()
+                connectionError = if (ev.cause == DisconnectCause.USER || ev.cause == DisconnectCause.APP_REQUESTED) null else ev.reason
+                cachedChannels = emptyList()
+                cachedClients = emptyList()
+            }
+            is CoreEvent.Error -> connectionError = ev.message
+            is CoreEvent.ChannelTree -> cachedChannels = ev.channels
+            is CoreEvent.ClientList -> cachedClients = ev.clients
+            is CoreEvent.ClientMoved -> cachedClients = cachedClients.map {
+                if (it.id == ev.clientId) it.copy(channelId = ev.channelId) else it
+            }
+            else -> Unit
+        }
+        publishConnectionSnapshot()
+        eventListener?.invoke(ev)
     }
 
     /**
@@ -532,6 +618,11 @@ class VoiceService : Service() {
         shutdown(DisconnectCause.USER, "disconnected by user")
     }
 
+    /** Initial setup failed before the asynchronous native connect was launched. */
+    fun failConnectionStart(reason: String) {
+        shutdown(DisconnectCause.ERROR, reason)
+    }
+
     /**
      * Teardown that ends the *session*: the user hung up, or a first connect
      * failed in a way retrying cannot fix. Every caller supplies the cause it
@@ -571,7 +662,7 @@ class VoiceService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         transmitting = false
         emitState()
-        if (notify) eventListener?.invoke(CoreEvent.Disconnected(cause, reason))
+        if (notify) emitEvent(CoreEvent.Disconnected(cause, reason))
     }
 
     /**
@@ -606,7 +697,7 @@ class VoiceService : Service() {
             // outlives this service instance needs to know the call dropped.
             // What changed is what happens next: the snapshot survives, so the
             // sticky restart redials without the user touching anything.
-            eventListener?.invoke(
+            emitEvent(
                 CoreEvent.Disconnected(DisconnectCause.SYSTEM_KILL, "Android stopped the voice service"),
             )
         }
@@ -648,6 +739,7 @@ class VoiceService : Service() {
             logLifecycle("restore", "session already live — nothing to restore")
             return
         }
+        val restoreGeneration = clientGeneration.current()
         serviceScope.launch {
             val restored = withContext(Dispatchers.IO) {
                 val session = runCatching { sessionStore.load() }.getOrNull()
@@ -656,6 +748,7 @@ class VoiceService : Service() {
                 val pem = session?.let { runCatching { identityStore.peek() }.getOrNull() }
                 if (session != null && pem != null) session to pem else null
             }
+            if (!clientGeneration.accepts(restoreGeneration) || connectionParams != null) return@launch
             if (restored == null) {
                 logLifecycle("restore", "no persisted session — nothing to reconnect to")
                 // Don't sit in the foreground holding a call notification for a
@@ -685,6 +778,9 @@ class VoiceService : Service() {
             lastChannelId = session.lastChannelId
             ownClientId = null
             connectionParams = ConnectionParams(session.bookmark, pem)
+            connectionStatus = connectionStatus.start(session.bookmark.id).reconnecting()
+            connectionError = null
+            publishConnectionSnapshot()
             updateNotification()
             doConnect()
         }
@@ -752,9 +848,19 @@ class VoiceService : Service() {
         teardownClientOnly()
         ensureAudioEngine()
 
-        val c = CoreBridge.newClient(
-            onEvent = { ev -> mainHandler.post { handleEvent(ev) } },
-            onPcmFrame = { clientId, samples ->
+        val generation = clientGeneration.current()
+        var callbackClient: CoreClient? = null
+        val c = try { CoreBridge.newClient(
+            onEvent = { ev -> mainHandler.post {
+                if (clientGeneration.accepts(generation, callbackClient, client)) handleEvent(ev)
+            } },
+            // Playback stays on the core's audio thread, as before: the
+            // generation check is an AtomicLong read and onPlaybackFrame is
+            // thread-safe. Posting ~50 frames/s per speaker through the main
+            // looper made UI jank audible and burst-filled the non-blocking
+            // AudioTrack, which drops whatever does not fit.
+            onPcmFrame = { clientId, samples -> run {
+                if (!clientGeneration.accepts(generation)) return@run
                 if (samples.size == CORE_FRAME_SAMPLES) {
                     // The field, not a captured local: the engine now outlives
                     // any one client, so a captured reference could outlive the
@@ -763,9 +869,17 @@ class VoiceService : Service() {
                 } else {
                     Log.w(TAG, "PcmFrame from client $clientId: ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
                 }
-            },
-        )
+            } },
+        ) } catch (t: Throwable) {
+            if (!clientGeneration.accepts(generation)) return
+            Log.e(TAG, "native client setup failed", t)
+            if (hasConnectedOnce) scheduleReconnect(reconnectBackoffMs)
+            else shutdown(DisconnectCause.ERROR, t.message ?: t.javaClass.simpleName)
+            return
+        }
+        callbackClient = c
         client = c
+        publishConnectionSnapshot()
         applySendingGate()
 
         serviceScope.launch(Dispatchers.IO) {
@@ -778,12 +892,13 @@ class VoiceService : Service() {
                     params.bookmark.serverPassword,
                 )
             } catch (t: Throwable) {
-                Log.e(TAG, "connect() failed", t)
                 withContext(Dispatchers.Main) {
-                    if (client === c) {
-                        runCatching { c.close() }
-                        client = null
-                    }
+                    // A failed old attempt must never shut down a newer session.
+                    if (!clientGeneration.accepts(generation, c, client)) return@withContext
+                    Log.e(TAG, "connect() failed", t)
+                    clientGeneration.invalidate()
+                    runCatching { c.close() }
+                    client = null
                     if (hasConnectedOnce) {
                         scheduleReconnect(reconnectBackoffMs)
                     } else {
@@ -869,7 +984,7 @@ class VoiceService : Service() {
     private fun reportAudioFailure(stage: String, error: Throwable) {
         logLifecycle("audioFailure", "$stage: $error")
         val what = if (stage == "capture") "Microphone" else "Playback"
-        eventListener?.invoke(
+        emitEvent(
             CoreEvent.Error("$what unavailable: ${error.message ?: error.javaClass.simpleName}"),
         )
         updateNotification()
@@ -895,7 +1010,7 @@ class VoiceService : Service() {
                         .build(),
                 )
                 updateNotification()
-                eventListener?.invoke(ev)
+                emitEvent(ev)
             }
             is CoreEvent.ClientMoved -> {
                 if (ev.clientId == ownClientId) {
@@ -904,19 +1019,19 @@ class VoiceService : Service() {
                     // user is actually in, not the one they joined from.
                     persistSession()
                 }
-                eventListener?.invoke(ev)
+                emitEvent(ev)
             }
             is CoreEvent.Resumed -> {
                 // tsclientlib's internal reconnect can hand back a different
                 // own_client_id than before the blip (#3277) — re-sync the
                 // copy `ClientMoved` above compares against, same as Connected.
                 ownClientId = ev.ownClientId
-                eventListener?.invoke(ev)
+                emitEvent(ev)
             }
             is CoreEvent.RawCommand -> {
                 streamSession?.onRaw(ev)
                 sendSession?.onRaw(ev)
-                eventListener?.invoke(ev)
+                emitEvent(ev)
             }
             is CoreEvent.Disconnected -> {
                 // APP_REQUESTED means our own shutdown()/teardownClientOnly()
@@ -938,7 +1053,7 @@ class VoiceService : Service() {
                     shutdown(ev.cause, ev.reason)
                 }
             }
-            else -> eventListener?.invoke(ev)
+            else -> emitEvent(ev)
         }
     }
 
@@ -961,18 +1076,20 @@ class VoiceService : Service() {
             enterAwaitingNetwork()
             return
         }
+        clientGeneration.invalidate()
         awaitingNetwork = false
         reconnectAttempts += 1
         reconnecting = true
         Log.i(TAG, "reconnect attempt $reconnectAttempts in ${delayMs}ms")
         updateNotification()
-        eventListener?.invoke(CoreEvent.Reconnecting)
+        emitEvent(CoreEvent.Reconnecting)
         reconnectJob?.cancel()
         val thisDelay = delayMs
         reconnectBackoffMs = (reconnectBackoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+        val scheduledGeneration = clientGeneration.current()
         reconnectJob = serviceScope.launch {
             if (thisDelay > 0) delay(thisDelay)
-            doConnect()
+            if (clientGeneration.accepts(scheduledGeneration) && connectionParams != null) doConnect()
         }
     }
 
@@ -996,7 +1113,7 @@ class VoiceService : Service() {
         releaseWakeLock()
         updateNotification()
         emitState()
-        if (!wasAwaiting) eventListener?.invoke(CoreEvent.Reconnecting)
+        if (!wasAwaiting) emitEvent(CoreEvent.Reconnecting)
     }
 
     /**
@@ -1009,6 +1126,8 @@ class VoiceService : Service() {
 
     /** Tears down the core client only — the [AudioEngine] deliberately outlives it, see [ensureAudioEngine]. */
     private fun teardownClientOnly() {
+        // Invalidate before disconnect/close, including already queued callbacks.
+        clientGeneration.invalidate()
         // A stream cannot outlive the connection its signalling rides on.
         stopWatching()
         stopScreenShare()

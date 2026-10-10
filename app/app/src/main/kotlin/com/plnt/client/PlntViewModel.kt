@@ -25,6 +25,12 @@ import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Screen
+import com.plnt.client.model.ServerTapAction
+import com.plnt.client.model.ConnectionGeneration
+import com.plnt.client.model.VoiceServiceBindingStatus
+import com.plnt.client.model.VoiceConnectionSnapshot
+import com.plnt.client.model.withVoiceConnectionSnapshot
+import com.plnt.client.model.withVoiceBindingFailure
 import com.plnt.client.service.VoiceService
 import com.plnt.client.service.VoiceState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +65,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<AppState> = _state
 
     private var voiceService: VoiceService? = null
+    private var bindingStatus = VoiceServiceBindingStatus()
+    private var bindingRegistered = false
+    private val bindingGeneration = ConnectionGeneration()
     private val pendingActions = mutableListOf<(VoiceService) -> Unit>()
 
     /** Whether the one-time battery-optimisation prompt has already been shown. */
@@ -82,27 +91,87 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val svc = (binder as VoiceService.LocalBinder).service()
+            val svc = (binder as? VoiceService.LocalBinder)?.service()
+            if (svc == null) {
+                bindingFailed("PLNT could not bind to its voice service (invalid binder).")
+                return
+            }
+            val token = bindingGeneration.invalidate()
+            bindingStatus = bindingStatus.bound()
             voiceService = svc
-            svc.setEventListener { ev -> viewModelScope.launch { onCoreEvent(ev) } }
-            // Mute/PTT can be changed from the notification, the lock screen or a
-            // headset button while this UI isn't even on screen — take the
-            // service's word for it rather than trusting our own last write.
-            svc.setStateListener { st -> viewModelScope.launch { onVoiceState(st) } }
-            svc.setStreamStateListener { st -> viewModelScope.launch { onStreamViewState(st) } }
-            svc.setSendStateListener { st -> viewModelScope.launch { _state.update { it.copy(streamSend = st) } } }
+            // Replay before queued user actions: the foreground service owns truth.
+            onServiceSnapshot(svc.currentConnectionSnapshot(), initialReplay = true)
+            svc.setConnectionListener(this@PlntViewModel) { snapshot ->
+                dispatchFromService(svc, token, snapshot.generation) { onServiceSnapshot(snapshot) }
+            }
+            svc.setEventListener { ev ->
+                val generation = svc.currentConnectionSnapshot().generation
+                dispatchFromService(svc, token, generation) { onCoreEvent(ev) }
+            }
+            svc.setStateListener { st -> dispatchFromService(svc, token) { onVoiceState(st) } }
+            svc.setStreamStateListener { st -> dispatchFromService(svc, token) { onStreamViewState(st) } }
+            svc.setSendStateListener { st -> dispatchFromService(svc, token) { _state.update { it.copy(streamSend = st) } } }
             val queued = pendingActions.toList()
             pendingActions.clear()
             queued.forEach { it(svc) }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            voiceService = null
+            bindingFailed("PLNT lost its voice service. Tap the server to reconnect.")
+        }
+
+        override fun onBindingDied(name: ComponentName?) {
+            bindingFailed("PLNT's voice-service binding died. Tap the server to reconnect.")
+        }
+
+        override fun onNullBinding(name: ComponentName?) {
+            bindingFailed("PLNT's voice service returned no binder. Tap the server to retry.")
+        }
+    }
+
+    private fun dispatchFromService(svc: VoiceService, token: Long, generation: Long? = null, action: () -> Unit) {
+        viewModelScope.launch {
+            if (!bindingGeneration.accepts(token) || voiceService !== svc) return@launch
+            if (generation != null && svc.currentConnectionSnapshot().generation != generation) return@launch
+            action()
+        }
+    }
+
+    private fun onServiceSnapshot(snapshot: VoiceConnectionSnapshot, initialReplay: Boolean = false) {
+        _state.update { it.withVoiceConnectionSnapshot(snapshot, initialReplay) }
+    }
+
+    private fun bindingFailed(reason: String) {
+        bindingGeneration.invalidate()
+        voiceService?.clearUiListeners(this)
+        voiceService = null
+        bindingStatus = bindingStatus.failure(reason)
+        pendingActions.clear()
+        streamPollJob?.cancel()
+        streamPollJob = null
+        roster.clear()
+        clientsById.clear()
+        channelsById.clear()
+        talking.clear()
+        streams.clear()
+        _state.update { it.withVoiceBindingFailure(reason) }
+    }
+
+    private fun requestVoiceBinding() {
+        val app = getApplication<Application>()
+        if (bindingRegistered) runCatching { app.unbindService(connection) }
+        bindingRegistered = false
+        bindingStatus = VoiceServiceBindingStatus()
+        try {
+            bindingRegistered = app.bindService(Intent(app, VoiceService::class.java), connection, Context.BIND_AUTO_CREATE)
+            if (!bindingRegistered) bindingFailed("PLNT could not start its voice service. Tap a server to retry.")
+        } catch (t: Throwable) {
+            bindingFailed("PLNT could not bind its voice service: ${t.message ?: t.javaClass.simpleName}")
         }
     }
 
     init {
-        app.bindService(Intent(app, VoiceService::class.java), connection, Context.BIND_AUTO_CREATE)
+        requestVoiceBinding()
         viewModelScope.launch {
             val settings = dataStore.loadSettings()
             batteryPromptShown = dataStore.batteryPromptShown()
@@ -128,7 +197,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun runOnService(action: (VoiceService) -> Unit) {
-        voiceService?.let(action) ?: pendingActions.add(action)
+        val svc = voiceService
+        when {
+            svc != null -> action(svc)
+            bindingStatus.canQueue -> pendingActions.add(action)
+            else -> bindingFailed(bindingStatus.error ?: "PLNT's voice service is unavailable.")
+        }
     }
 
     fun navigate(screen: Screen) {
@@ -197,23 +271,54 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connect(bookmark: Bookmark) {
+        if (bindingStatus.failed) {
+            requestVoiceBinding()
+            if (bindingStatus.failed) return
+        }
+        when (_state.value.connectionStatus.tapAction(bookmark.id)) {
+            ServerTapAction.IGNORE -> return
+            ServerTapAction.REOPEN -> {
+                navigate(Screen.Connected)
+                return
+            }
+            ServerTapAction.CONNECT -> Unit
+        }
         roster.clear()
         talking.clear()
         channelsById.clear()
         clientsById.clear()
         _state.update {
             it.copy(
-                phase = ConnectionPhase.CONNECTING,
+                connectionStatus = it.connectionStatus.start(bookmark.id),
+                screen = Screen.Bookmarks,
                 lastError = null,
                 channelTree = emptyList(),
-                sessionConnected = it.sessionConnected + bookmark.id,
+                ownClientId = null,
                 chatMessages = emptyList(),
             )
         }
-        val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
-        val app = getApplication<Application>()
-        ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
-        runOnService { it.connect(bookmark, identity) }
+        try {
+            val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
+            val app = getApplication<Application>()
+            ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
+            runOnService { svc ->
+                // A tap queued before binding must not duplicate a live connection.
+                when (svc.currentConnectionSnapshot().status.tapAction(bookmark.id)) {
+                    ServerTapAction.REOPEN -> {
+                        onServiceSnapshot(svc.currentConnectionSnapshot())
+                        navigate(Screen.Connected)
+                    }
+                    ServerTapAction.IGNORE -> onServiceSnapshot(svc.currentConnectionSnapshot())
+                    ServerTapAction.CONNECT -> try {
+                        svc.connect(bookmark, identity)
+                    } catch (t: Throwable) {
+                        svc.failConnectionStart(t.message ?: t.javaClass.simpleName)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            onCoreEvent(CoreEvent.Disconnected(DisconnectCause.ERROR, t.message ?: t.javaClass.simpleName))
+        }
         // Asked at the first connect rather than at first launch: this is the
         // moment the exemption starts to matter, and the moment the user has
         // context for why an app is asking for it (#3290 item 6). Once only
@@ -258,7 +363,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.disconnect() }
         _state.update {
             it.copy(
-                phase = ConnectionPhase.DISCONNECTED,
+                connectionStatus = it.connectionStatus.disconnected(),
+                lastError = null,
                 channelTree = emptyList(),
                 screen = Screen.Bookmarks,
                 ownClientId = null,
@@ -297,7 +403,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     /** [permissionData] is the MediaProjection grant the Activity just got from the system prompt. */
     fun startScreenShare(permissionData: android.content.Intent) {
-        val nick = _state.value.bookmarks.firstOrNull { it.id in _state.value.sessionConnected }?.nickname
+        val nick = _state.value.bookmarks.firstOrNull { it.id == _state.value.connectionStatus.activeBookmarkId }?.nickname
         val title = if (nick.isNullOrBlank()) "Phone screen" else "$nick's phone"
         runOnService { it.startScreenShare(permissionData, title) }
     }
@@ -490,7 +596,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 ownChannelId = null
                 _state.update {
                     it.copy(
-                        phase = ConnectionPhase.CONNECTED,
+                        connectionStatus = it.connectionStatus.connected(),
+                        lastError = null,
                         ownClientId = ev.ownClientId,
                         serverName = ev.serverName,
                         screen = Screen.Connected,
@@ -498,7 +605,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             is CoreEvent.Reconnecting -> _state.update {
-                it.copy(phase = ConnectionPhase.RECONNECTING, lastError = null)
+                it.copy(connectionStatus = it.connectionStatus.reconnecting(), lastError = null)
             }
             is CoreEvent.Disconnected -> {
                 streams.clear()
@@ -506,7 +613,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 streamPollJob = null
                 _state.update {
                     it.copy(
-                        phase = ConnectionPhase.DISCONNECTED,
+                        connectionStatus = it.connectionStatus.disconnected(),
+                        ownClientId = null,
+                        channelTree = emptyList(),
                         lastError = disconnectMessage(ev),
                         screen = Screen.Bookmarks,
                         streamView = com.plnt.client.stream.StreamViewState(),
@@ -515,10 +624,10 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             }
             is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.TemporaryDisconnect -> _state.update {
-                it.copy(lastError = "temp disconnect: ${ev.reason}")
+                it.copy(connectionStatus = it.connectionStatus.reconnecting(), lastError = "temp disconnect: ${ev.reason}")
             }
             is CoreEvent.Resumed -> {
-                _state.update { it.copy(lastError = null, ownClientId = ev.ownClientId, serverName = ev.serverName) }
+                _state.update { it.copy(connectionStatus = it.connectionStatus.connected(), lastError = null, ownClientId = ev.ownClientId, serverName = ev.serverName) }
                 // Roster rows already reflect the resumed session (ClientList
                 // ticks kept flowing all along) — only isSelf needs redoing
                 // now that ownClientId has moved.
@@ -626,7 +735,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         // Deliberately does NOT disconnect — the whole point of #3078 is
         // that the call outlives this ViewModel. Only drop the binding.
-        runCatching { getApplication<Application>().unbindService(connection) }
+        bindingGeneration.invalidate()
+        pendingActions.clear()
+        voiceService?.clearUiListeners(this)
+        voiceService = null
+        if (bindingRegistered) runCatching { getApplication<Application>().unbindService(connection) }
+        bindingRegistered = false
         super.onCleared()
     }
 }
