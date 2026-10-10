@@ -21,6 +21,9 @@
          come up connected-and-audible instead of dying — then upgrade to the
          microphone type from the foreground. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- PHA-3289 send side: sharing the screen needs a mediaProjection-type
+         foreground service on Android 14+, added only while a share runs. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- #3290 item 6. Two reasons, both about surviving the background: OEM
          battery managers are the likeliest killer of the voice service, and
          the exemption is on Android's documented list of ways an app is
@@ -85,7 +88,7 @@
         <service
             android:name=".service.VoiceService"
             android:exported="false"
-            android:foregroundServiceType="microphone|mediaPlayback" />
+            android:foregroundServiceType="microphone|mediaPlayback|mediaProjection" />
 
     </application>
 

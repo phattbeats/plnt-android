@@ -28,6 +28,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.StopScreenShare
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.HeadsetOff
@@ -100,6 +102,10 @@ fun ConnectedScreen(
     onOpenChat: () -> Unit,
     /** PHA-3289: tap a streaming client's row to watch. */
     onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit = {},
+    /** PHA-3289 send side: our own share and its start/stop. */
+    shareState: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
+    onShareScreen: () -> Unit = {},
+    onStopShare: () -> Unit = {},
 ) {
     // Collapse state is per-channel and sticky; channels with nothing in them
     // start collapsed, everything else starts open.
@@ -195,6 +201,9 @@ fun ConnectedScreen(
                 onPttPress = onPttPress,
                 onPttRelease = onPttRelease,
                 onDisconnect = onDisconnect,
+                shareState = shareState,
+                onShareScreen = onShareScreen,
+                onStopShare = onStopShare,
             )
         }
     }
@@ -401,6 +410,9 @@ private fun ControlBar(
     onPttPress: () -> Unit,
     onPttRelease: () -> Unit,
     onDisconnect: () -> Unit,
+    shareState: com.plnt.client.stream.StreamSendState,
+    onShareScreen: () -> Unit,
+    onStopShare: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     val pttFill by animateColorAsState(if (transmitting) Gold else SurfaceRaised, label = "ptt")
@@ -470,6 +482,25 @@ private fun ControlBar(
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
+        val sharing = shareState.phase == com.plnt.client.stream.StreamSendPhase.STARTING ||
+            shareState.phase == com.plnt.client.stream.StreamSendPhase.LIVE
+        SecondaryButton(
+            when {
+                shareState.phase == com.plnt.client.stream.StreamSendPhase.STARTING -> "Starting share…"
+                sharing && shareState.viewers > 0 -> "Stop sharing · ${shareState.viewers} watching"
+                sharing -> "Stop sharing · live"
+                else -> "Share screen"
+            },
+            onClick = if (sharing) onStopShare else onShareScreen,
+            color = Gold,
+            icon = if (sharing) Icons.Filled.StopScreenShare else Icons.Filled.ScreenShare,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (shareState.phase == com.plnt.client.stream.StreamSendPhase.FAILED && shareState.detail != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(shareState.detail, color = Oxblood, style = MaterialTheme.typography.labelSmall)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
         SecondaryButton(
             "Disconnect",
             onClick = onDisconnect,

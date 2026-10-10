@@ -55,3 +55,35 @@ construction.
   over the text channel). A server that moves these commands onto its WebRTC
   data channel would need the TS6 command layer PLNT does not have; the app
   reports "no stream found" there rather than failing silently.
+
+## Sending (phone → desktop)
+
+Proven against a live TS6 6.0 server and desktop viewer with the RAID sender
+probe (PHA-3289). Implemented in `stream/StreamSenderSession.kt`.
+
+1. `setupstream name=<title> type=3 accessibility=1 mode=1 bitrate=4608 viewer_limit=0 audio=0`.
+   The server **requires `accessibility`** (error 1542 without it) and echoes it
+   back as `access` in `notifystreamstarted clid=<us> id=<sid>`.
+2. A viewer clicking "watch" arrives as `notifyjoinstreamrequest clid=<viewer> id=<sid> is_remove=0`.
+3. Reply `respondjoinstreamrequest id=<sid> clid=<viewer> decision=1 offer=<sdp> msg=`.
+   One PeerConnection per viewer, all fed by one MediaProjection capture track.
+4. The viewer answers via `notifystreamsignaling json={"cmd":"answer","args":{"answer":<sdp>}}`;
+   ICE trickles both ways as `iceCandidate` messages.
+5. `is_remove=1` / `notifystreamclientleft` drops a viewer; `stopstream id=<sid>` ends the share.
+
+### What the desktop viewer cannot take (each one crashes TeamSpeak)
+
+- **H264 Constrained Baseline (42e01f).** TS6 6.0 accepts it in its answer,
+  has no decoder for it, and the whole client crashes. `TsOfferShape` only
+  offers H264 **High** (`64xxxx`) and VP8, the formats TS streamers send.
+- A non-libwebrtc sender (the aiortc test probe) trips an `RTC_CHECK` on the
+  desktop's network thread about 2 s after connecting, on every codec. The app
+  uses libwebrtc, the same engine as the desktop client.
+
+The offer otherwise mirrors a real TS streamer: video stream id
+`outgoing_video`, an inactive audio m-line after video, and no inline
+candidates (they are trickled).
+
+Android 14+ refuses MediaProjection unless the service is already foreground
+with type `mediaProjection`; `VoiceService.startScreenShare` adds that type for
+the duration of the share and drops it afterwards.

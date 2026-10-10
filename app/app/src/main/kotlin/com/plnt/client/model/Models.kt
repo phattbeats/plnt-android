@@ -154,4 +154,6 @@ data class AppState(
      * about to connect them before any network call.
      */
     val pendingInvite: ServerLink? = null,
+    /** PHA-3289: our own outgoing screen share; IDLE when not sharing. */
+    val streamSend: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
 )
