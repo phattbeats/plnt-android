@@ -854,8 +854,13 @@ class VoiceService : Service() {
             onEvent = { ev -> mainHandler.post {
                 if (clientGeneration.accepts(generation, callbackClient, client)) handleEvent(ev)
             } },
-            onPcmFrame = { clientId, samples -> mainHandler.post {
-                if (!clientGeneration.accepts(generation, callbackClient, client)) return@post
+            // Playback stays on the core's audio thread, as before: the
+            // generation check is an AtomicLong read and onPlaybackFrame is
+            // thread-safe. Posting ~50 frames/s per speaker through the main
+            // looper made UI jank audible and burst-filled the non-blocking
+            // AudioTrack, which drops whatever does not fit.
+            onPcmFrame = { clientId, samples -> run {
+                if (!clientGeneration.accepts(generation)) return@run
                 if (samples.size == CORE_FRAME_SAMPLES) {
                     // The field, not a captured local: the engine now outlives
                     // any one client, so a captured reference could outlive the
