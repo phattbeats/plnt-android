@@ -243,6 +243,9 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         logLifecycle("onCreate", "")
+        // Before any connect: the native DNS resolver needs the app Context
+        // to resolve server hostnames on Android (PHA-3289).
+        com.plnt.client.core.AndroidContext.ensure(this)
         createNotificationChannel()
         mediaSession = MediaSessionCompat(this, "PlntVoice").apply {
             setCallback(object : MediaSessionCompat.Callback() {
