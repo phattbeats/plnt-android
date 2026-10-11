@@ -35,8 +35,10 @@ use tsproto_packets::packets::{AudioData, CodecType, Direction, Flags, OutAudio,
 
 #[cfg(target_os = "android")]
 mod android_ctx;
+mod identity_file;
 mod udl_types;
 
+pub use identity_file::import_from_ini;
 pub use udl_types::{Channel, ChatTarget, ClientInfo, ConnEvent, ConnectionState, DisconnectCause};
 
 /// Build version string, surfaced to the Kotlin side for the settings screen
@@ -510,6 +512,33 @@ impl IdentityObj {
     pub fn level(&self) -> u8 {
         self.inner.level()
     }
+}
+
+/// Import from a TeamSpeak identity `.ini` file's contents (PHA-4116).
+///
+/// This is the path for a user who exports an identity from the official client
+/// on another machine. It is entirely offline — no myTeamSpeak account, no
+/// network, no official-client secret.
+///
+/// Takes the file's *text*, not a path: on Android the user picks the file
+/// through the Storage Access Framework, so the caller reads the content URI and
+/// hands us the string.
+///
+/// Returns the portable identity string to persist — the same form
+/// [`IdentityObj::export`] writes and `Client::connect` accepts.
+#[uniffi::export]
+pub fn import_identity_ini(contents: String) -> Result<String, PlntError> {
+    Ok(identity_file::import_from_ini(&contents)?.export())
+}
+
+/// Inspect a `.ini` without importing it — for the import UI to show what the
+/// file actually holds (nickname, security level) before the user commits.
+///
+/// Returns a human-readable summary of public metadata only. It never includes
+/// key material, so it is safe to log.
+#[uniffi::export]
+pub fn describe_identity_ini(contents: String) -> Result<String, PlntError> {
+    Ok(identity_file::import_from_ini(&contents)?.describe())
 }
 
 // ---------------------------------------------------------------------------

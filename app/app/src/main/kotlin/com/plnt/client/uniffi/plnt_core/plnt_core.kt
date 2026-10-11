@@ -744,6 +744,10 @@ internal open class UniffiVTableCallbackInterfaceEventSink(
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -801,6 +805,10 @@ internal interface UniffiLib : Library {
     fun uniffi_plnt_core_fn_init_callback_vtable_eventsink(`vtable`: UniffiVTableCallbackInterfaceEventSink,
     ): Unit
     fun uniffi_plnt_core_fn_func_core_version(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_plnt_core_fn_func_describe_identity_ini(`contents`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_plnt_core_fn_func_import_identity_ini(`contents`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_plnt_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -916,6 +924,10 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_plnt_core_checksum_func_core_version(
     ): Short
+    fun uniffi_plnt_core_checksum_func_describe_identity_ini(
+    ): Short
+    fun uniffi_plnt_core_checksum_func_import_identity_ini(
+    ): Short
     fun uniffi_plnt_core_checksum_method_client_connect(
     ): Short
     fun uniffi_plnt_core_checksum_method_client_disconnect(
@@ -962,6 +974,12 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_plnt_core_checksum_func_core_version() != 48360.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_func_describe_identity_ini() != 55588.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_func_import_identity_ini() != 8271.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_connect() != 26877.toShort()) {
@@ -2954,6 +2972,47 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_core_version(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * Inspect a `.ini` without importing it — for the import UI to show what the
+         * file actually holds (nickname, security level) before the user commits.
+         *
+         * Returns a human-readable summary of public metadata only. It never includes
+         * key material, so it is safe to log.
+         */
+    @Throws(PlntException::class) fun `describeIdentityIni`(`contents`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_describe_identity_ini(
+        FfiConverterString.lower(`contents`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Import from a TeamSpeak identity `.ini` file's contents (PHA-4116).
+         *
+         * This is the path for a user who exports an identity from the official client
+         * on another machine. It is entirely offline — no myTeamSpeak account, no
+         * network, no official-client secret.
+         *
+         * Takes the file's *text*, not a path: on Android the user picks the file
+         * through the Storage Access Framework, so the caller reads the content URI and
+         * hands us the string.
+         *
+         * Returns the portable identity string to persist — the same form
+         * [`IdentityObj::export`] writes and `Client::connect` accepts.
+         */
+    @Throws(PlntException::class) fun `importIdentityIni`(`contents`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_import_identity_ini(
+        FfiConverterString.lower(`contents`),_status)
 }
     )
     }
