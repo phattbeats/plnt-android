@@ -540,6 +540,27 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Import an identity from an exported TeamSpeak `.ini` file (PHA-4116).
+     *
+     * Takes the file's text, not a path: Android hands back a Storage Access
+     * Framework content URI, so the caller reads the stream and gives us the
+     * string. Returns the persisted identity, or null if the file wasn't a
+     * readable export — the stored identity is left alone on failure.
+     */
+    fun importIdentityFromIni(contents: String): String? {
+        val pem = identityStore.importIni(contents) ?: return null
+        _state.update { it.copy(identityExport = pem) }
+        return pem
+    }
+
+    /**
+     * What an exported `.ini` contains, without importing it — so the UI can
+     * show the user what they are about to replace their identity with before
+     * they commit. Public metadata only; never key material.
+     */
+    fun describeIdentityIni(contents: String): String? = identityStore.describeIni(contents)
+
+    /**
      * What to show after a disconnect, or null when there is nothing to
      * explain. #3283: every disconnect used to render the core's raw reason
      * string, so a user who hung up saw "client.disconnect" as an error and —

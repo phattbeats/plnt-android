@@ -208,6 +208,33 @@ object CoreBridge {
         false
     }
 
+    /**
+     * Import a TeamSpeak identity from an exported `.ini` file's contents
+     * (PHA-4116). Returns the portable identity string to persist, or null if
+     * the file isn't a readable identity export.
+     *
+     * Takes text rather than a path because Android hands us a Storage Access
+     * Framework content URI, not a filesystem path — the caller reads the
+     * stream and gives us the string.
+     */
+    fun importIdentityIni(contents: String): String? = try {
+        uniffi.plnt_core.importIdentityIni(contents)
+    } catch (e: Throwable) {
+        null
+    }
+
+    /**
+     * Describe a `.ini` without importing it, so the UI can show what the file
+     * holds before the user commits to replacing their identity. Returns a
+     * public-metadata summary (name, nickname, level) — never key material,
+     * so it is safe to log.
+     */
+    fun describeIdentityIni(contents: String): String? = try {
+        uniffi.plnt_core.describeIdentityIni(contents)
+    } catch (e: Throwable) {
+        null
+    }
+
     private fun translate(ev: uniffi.plnt_core.ConnEvent): CoreEvent = when (ev) {
         is uniffi.plnt_core.ConnEvent.Connected ->
             CoreEvent.Connected(ev.v1.ownClientId.toLong(), ev.v1.serverName)
