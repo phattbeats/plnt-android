@@ -243,6 +243,7 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         logLifecycle("onCreate", "")
+        Diag.init(filesDir)
         // Before any connect: the native DNS resolver needs the app Context
         // to resolve server hostnames on Android (PHA-3289).
         com.plnt.client.core.AndroidContext.ensure(this)
@@ -374,6 +375,21 @@ class VoiceService : Service() {
     }
 
     private fun emitEvent(ev: CoreEvent) {
+        // PHA-4176: the core's `diag ...` lines are trace data, not user errors.
+        if (ev is CoreEvent.Error && ev.message.startsWith("diag ")) {
+            Diag.add(ev.message)
+            return
+        }
+        when (ev) {
+            is CoreEvent.Disconnected -> {
+                Diag.add("Disconnected cause=${ev.cause} reason=${ev.reason}")
+                if (ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED) Diag.armReport()
+            }
+            is CoreEvent.TemporaryDisconnect -> Diag.add("TemporaryDisconnect ${ev.reason}")
+            is CoreEvent.Error -> Diag.add("Error ${ev.message}")
+            is CoreEvent.Connected -> Diag.add("Connected")
+            else -> Unit
+        }
         when (ev) {
             is CoreEvent.Connected -> {
                 connectionStatus = connectionStatus.connected()

@@ -193,6 +193,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.setPreferredOutputDevice(settings.preferredOutputDeviceKey)
             }
             refreshAudioDevices()
+            // PHA-4176 diagnostic build: opening the app is the whole test, so
+            // join the first saved server without a tap.
+            _state.value.bookmarks.firstOrNull()?.let { connect(it) }
         }
     }
 
@@ -588,6 +591,13 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private fun onCoreEvent(ev: CoreEvent) {
         when (ev) {
             is CoreEvent.Connected -> {
+                // PHA-4176: post the previous dropped session's trace, if any.
+                com.plnt.client.service.Diag.takeReport()?.let { report ->
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(3000)
+                        runOnService { it.sendTextMessage(ChatMessageTarget.Channel, report) }
+                    }
+                }
                 roster.clear()
                 talking.clear()
                 channelsById.clear()
@@ -608,6 +618,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(connectionStatus = it.connectionStatus.reconnecting(), lastError = null)
             }
             is CoreEvent.Disconnected -> {
+                // PHA-4176: rejoin after an unrequested drop so the trace can be posted.
+                if (ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED) {
+                    _state.value.bookmarks.firstOrNull()?.let { b ->
+                        viewModelScope.launch { kotlinx.coroutines.delay(5000); connect(b) }
+                    }
+                }
                 streams.clear()
                 streamPollJob?.cancel()
                 streamPollJob = null

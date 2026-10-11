@@ -548,8 +548,39 @@ async fn run_connection_loop(
     // own_client id.
     let mut awaiting_resume = false;
     let mut reinstall_raw_listener = false;
+    // PHA-4176 diagnostics: reported through `ConnEvent::Error("diag ...")` so
+    // no binding change is needed. Gap = time between two passes of this loop;
+    // pongs only go out while it spins, so a multi-second gap is the stall.
+    let diag_start = std::time::Instant::now();
+    let mut diag_last_iter = diag_start;
+    let mut diag_last_report = diag_start;
+    let mut diag_max_gap_ms: u128 = 0;
+    let mut diag_iters: u64 = 0;
+    let mut diag_audio_ok: u64 = 0;
+    let mut diag_audio_err: u64 = 0;
+    let mut diag_audio_max_ms: u128 = 0;
 
     loop {
+        {
+            let now = std::time::Instant::now();
+            let gap = now.duration_since(diag_last_iter).as_millis();
+            diag_last_iter = now;
+            diag_iters += 1;
+            diag_max_gap_ms = diag_max_gap_ms.max(gap);
+            if gap >= 500 {
+                sink.on_event(ConnEvent::Error(format!(
+                    "diag loop_gap_ms={gap} t={}s", now.duration_since(diag_start).as_secs()
+                )));
+            }
+            if now.duration_since(diag_last_report).as_secs() >= 5 {
+                diag_last_report = now;
+                sink.on_event(ConnEvent::Error(format!(
+                    "diag t={}s iters={diag_iters} max_gap_ms={diag_max_gap_ms} audio_ok={diag_audio_ok} audio_err={diag_audio_err} audio_max_ms={diag_audio_max_ms}",
+                    now.duration_since(diag_start).as_secs()
+                )));
+                diag_max_gap_ms = 0;
+            }
+        }
         if reinstall_raw_listener {
             reinstall_raw_listener = false;
             install_raw_listener(&mut con, Arc::clone(&sink));
@@ -628,8 +659,14 @@ async fn run_connection_loop(
                                 codec: CodecType::OpusVoice,
                                 data: &out_packet_buf[..len],
                             });
-                            if let Err(e) = con.send_audio(pkt) {
+                            let t0 = std::time::Instant::now();
+                            let res = con.send_audio(pkt);
+                            diag_audio_max_ms = diag_audio_max_ms.max(t0.elapsed().as_millis());
+                            if let Err(e) = res {
+                                diag_audio_err += 1;
                                 sink.on_event(ConnEvent::Error(format!("send_audio: {e}")));
+                            } else {
+                                diag_audio_ok += 1;
                             }
                         }
                         Err(e) => {
