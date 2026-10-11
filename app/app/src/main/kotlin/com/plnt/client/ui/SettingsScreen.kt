@@ -51,6 +51,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.plnt.client.model.AudioDeviceOption
@@ -86,14 +89,29 @@ fun SettingsScreen(
     onShareAudioChange: (Boolean) -> Unit,
     onStreamQualityChange: (resolution: Int, fps: Int, bitrateKbps: Int) -> Unit,
     onImportIdentity: (String) -> Boolean,
+    onImportIdentityIni: (String) -> String?,
+    onDescribeIdentityIni: (String) -> String?,
     onCreateIdentity: () -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     var qualityPicker by remember { mutableStateOf<QualityKnob?>(null) }
+    var importPreview by remember { mutableStateOf<String?>(null) }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        // Storage Access Framework hands back a content URI, not a path — read
+        // the stream ourselves and hand the text down (PHA-4116).
+        if (uri == null) return@rememberLauncherForActivityResult
+        val text = runCatching {
+            context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()
+        if (text != null) importPreview = text
+    }
 
     Scaffold(
         containerColor = Bg,
@@ -167,7 +185,7 @@ fun SettingsScreen(
             Section("Identity", Icons.Outlined.Key) {
                 NavRow("Export identity", "Copy it to move this identity to another device", enabled = identityExport != null) { showExport = true }
                 RowDivider()
-                NavRow("Import identity", "Paste one exported elsewhere") { showImport = true }
+                NavRow("Import identity", "From a file the official client exported, or paste one") { showImport = true }
                 RowDivider()
                 NavRow("Create new identity", "Servers will see you as a new user") { showCreate = true }
             }
@@ -244,11 +262,52 @@ fun SettingsScreen(
         var failed by remember { mutableStateOf(false) }
         SettingsSheet(title = "Import identity", onDismiss = { showImport = false }) {
             Text(
-                "Paste an exported identity. This replaces the one on this device.",
+                "Pick the `.ini` the official client exported, or paste an identity string. " +
+                    "This replaces the identity on this device.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted,
             )
             Spacer(modifier = Modifier.height(14.dp))
+            SecondaryButton(
+                text = "Choose identity file…",
+                onClick = {
+                    // `.ini` and `text/*` so Android's picker surfaces the export
+                    // on Android too, not just a desktop-authored `.ini`.
+                    filePicker.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (importPreview != null) {
+                val described = onDescribeIdentityIni(importPreview!!)
+                Spacer(modifier = Modifier.height(12.dp))
+                if (described != null) {
+                    Text(
+                        "Found an identity in this file — $described",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted,
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    PrimaryButton("Import from file", modifier = Modifier.fillMaxWidth(), onClick = {
+                        if (onImportIdentityIni(importPreview!!) != null) {
+                            importPreview = null
+                            showImport = false
+                        }
+                    })
+                } else {
+                    Text(
+                        "That file doesn't contain a TeamSpeak identity.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                "Or paste an identity string",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             BasicTextField(
                 value = pasted,
                 onValueChange = { pasted = it; failed = false },
