@@ -142,7 +142,11 @@ pub fn import_from_ini(text: &str) -> Result<ImportedIdentity, ImportError> {
         let value = unquote(value.trim());
         match key.trim() {
             IDENTITY_KEY => identity_values.push(value),
-            "name" => name = Some(value.to_string()),
+            // `name` is what the official client writes; `id` is what
+            // third-party writers (TSIdentityTool, for one) use for the same
+            // slot. Accept either so a file from any of them describes itself.
+            // Neither is used for authentication — display only.
+            "name" | "id" => name = Some(value.to_string()),
             "nickname" => nickname = Some(value.to_string()),
             _ => {}
         }
@@ -245,6 +249,17 @@ mod tests {
             import_from_ini("[Identity]\nidentity=not-a-real-key\n"),
             Err(ImportError::MalformedIdentity(_))
         ));
+    }
+
+    /// The official client writes `name=`; third-party writers use `id=` for
+    /// the same slot. Both appear in the wild, so both must describe the file.
+    #[test]
+    fn accepts_either_name_or_id_for_the_label() {
+        let with_name = import_from_ini(&format!("[Identity]\nname=alice\nidentity={SAMPLE}\n"));
+        assert_eq!(with_name.unwrap().name.as_deref(), Some("alice"));
+
+        let with_id = import_from_ini(&format!("[Identity]\nid=alice\nidentity={SAMPLE}\n"));
+        assert_eq!(with_id.unwrap().name.as_deref(), Some("alice"));
     }
 
     /// The import path must not be able to leak key material into a log line.
