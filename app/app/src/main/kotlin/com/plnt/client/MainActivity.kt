@@ -130,6 +130,8 @@ class MainActivity : ComponentActivity() {
                             onInputDeviceChange = viewModel::setPreferredInputDevice,
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onImportIdentity = viewModel::importIdentity,
+                            onImportIdentityIni = viewModel::importIdentityFromIni,
+                            onDescribeIdentityIni = viewModel::describeIdentityIni,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },
                             onBack = {
