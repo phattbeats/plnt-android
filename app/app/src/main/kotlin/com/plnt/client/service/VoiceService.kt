@@ -383,7 +383,10 @@ class VoiceService : Service() {
         when (ev) {
             is CoreEvent.Disconnected -> {
                 Diag.add("Disconnected cause=${ev.cause} reason=${ev.reason}")
-                if (ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED) Diag.armReport()
+                if (ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED) {
+                    Diag.armReport()
+                    Diag.uploadAsync("drop")
+                }
             }
             is CoreEvent.TemporaryDisconnect -> Diag.add("TemporaryDisconnect ${ev.reason}")
             is CoreEvent.Error -> Diag.add("Error ${ev.message}")
