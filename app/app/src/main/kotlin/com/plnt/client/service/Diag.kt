@@ -12,8 +12,9 @@ import java.net.URL
  * the core's `diag ...` lines so a ping-timeout drop can be read after the
  * fact without anyone attaching logcat. [report] is posted to the channel once
  * the app is back on the server, and the whole log file is uploaded to a
- * Nextcloud upload-only drop on its own (start-up, every minute while it
+ * Nextcloud upload-only drop on its own (start-up, every 15 s while it
  * grows, and right after a drop), so nobody has to fetch it from the phone.
+ * A watchdog ships a thread dump the moment the core's heartbeat stops.
  */
 object Diag {
     private const val TAG = "plnt.diag"
@@ -38,9 +39,16 @@ object Diag {
         // a background loop ships the file whenever it has grown.
         uploadAsync("start")
         Thread({
+            var n = 0
             while (true) {
-                Thread.sleep(60_000)
-                if (synchronized(this) { dirty }) upload("tick")
+                Thread.sleep(5_000)
+                n++
+                if (watchdogDue()) {
+                    add("WATCHDOG no core heartbeat for ${(System.currentTimeMillis() - lastBeat) / 1000}s\n" + threadDump())
+                    upload("stall")
+                } else if (n % 3 == 0 && synchronized(this) { dirty }) {
+                    upload("tick")
+                }
             }
         }, "plnt-diag-upload").apply { isDaemon = true }.start()
     }
@@ -80,6 +88,43 @@ object Diag {
         while (lines.size > MAX_LINES) lines.removeFirst()
         runCatching { file?.appendText(stamped + "\n") }
         dirty = true
+        when {
+            line.startsWith("diag t=") -> { lastBeat = System.currentTimeMillis(); watchdogFired = false }
+            line == "Connected" -> { connected = true; lastBeat = System.currentTimeMillis(); watchdogFired = false }
+            line.startsWith("Disconnected") -> connected = false
+        }
+    }
+
+    // Watchdog: the core posts `diag t=` every 5 s while its loop runs. Silence
+    // while connected means the loop (or the main thread relaying it) is stuck,
+    // so dump every thread's stack and ship it at once, while it is still stuck.
+    private var connected = false
+    private var lastBeat = 0L
+    private var watchdogFired = false
+
+    @Synchronized
+    private fun watchdogDue(): Boolean {
+        if (!connected || watchdogFired || System.currentTimeMillis() - lastBeat < 8_000) return false
+        watchdogFired = true
+        return true
+    }
+
+    private fun threadDump(): String = buildString {
+        for ((t, st) in Thread.getAllStackTraces()) {
+            if (st.isEmpty()) continue
+            append("  [").append(t.name).append(' ').append(t.state).append("]\n")
+            st.take(8).forEach { append("    at ").append(it).append('\n') }
+            if (length > 16_000) break
+        }
+    }
+
+    private var callbackThrows = 0
+
+    /** A core callback threw; before PHA-4176 that panicked the core's connection task. */
+    fun callbackThrew(event: String, t: Throwable) {
+        if (synchronized(this) { ++callbackThrows } > 5) return
+        add("CALLBACK THREW on $event: $t\n" + t.stackTrace.take(10).joinToString("\n") { "    at $it" })
+        uploadAsync("throw")
     }
 
     /** Mark that the last session ended badly; the next Connected posts the trace. */

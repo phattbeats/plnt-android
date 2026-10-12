@@ -79,6 +79,23 @@ pub trait EventSink: Send + Sync {
     fn on_event(&self, ev: ConnEvent);
 }
 
+/// PHA-4176: last panic message + location. Android sends a native panic's
+/// stderr nowhere, so the hook parks it here for the connection task to report.
+static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
+
+fn install_panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if let Ok(mut g) = LAST_PANIC.lock() {
+                *g = Some(info.to_string());
+            }
+            prev(info);
+        }));
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -245,8 +262,14 @@ impl Client {
         ));
         sink_for_connected.on_event(ConnEvent::ClientList(clients));
 
+        // PHA-4176: tokio swallows a panic in a spawned task, so a panicking
+        // loop just stopped — no pongs, no `Disconnected`, server drops us on
+        // ping timeout while the UI still says connected. Catch it and say so.
+        install_panic_hook();
+        let panic_sink = Arc::clone(&sink_for_task);
+        let panic_state = Arc::clone(&self.state);
         self.runtime.spawn(async move {
-            run_connection_loop(
+            let res = std::panic::AssertUnwindSafe(run_connection_loop(
                 con,
                 cmd_rx,
                 sink_for_task,
@@ -254,8 +277,28 @@ impl Client {
                 initial_channel_tree,
                 initial_tree_signature,
                 initial_client_signature,
-            )
+            ))
+            .catch_unwind()
             .await;
+            if let Err(payload) = res {
+                let msg = LAST_PANIC
+                    .lock()
+                    .ok()
+                    .and_then(|mut g| g.take())
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".into());
+                if let Ok(mut g) = panic_state.lock() {
+                    g.connection = None;
+                }
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    panic_sink.on_event(ConnEvent::Error(format!("diag PANIC {msg}")));
+                    panic_sink.on_event(ConnEvent::Disconnected {
+                        cause: DisconnectCause::ConnectionLost,
+                        reason: "core panic".into(),
+                    });
+                }));
+            }
         });
 
         Ok(())

@@ -174,10 +174,16 @@ object CoreBridge {
     ): CoreClient {
         val sink = object : uniffi.plnt_core.EventSink {
             override fun onEvent(ev: uniffi.plnt_core.ConnEvent) {
-                if (ev is uniffi.plnt_core.ConnEvent.PcmFrame) {
-                    onPcmFrame(ev.clientId.toLong(), ev.samples.toFloatArray())
-                } else {
-                    onEvent(translate(ev))
+                // PHA-4176: a throw here comes back to Rust as a panic, which
+                // silently kills the whole connection task. Never let one out.
+                try {
+                    if (ev is uniffi.plnt_core.ConnEvent.PcmFrame) {
+                        onPcmFrame(ev.clientId.toLong(), ev.samples.toFloatArray())
+                    } else {
+                        onEvent(translate(ev))
+                    }
+                } catch (t: Throwable) {
+                    com.plnt.client.service.Diag.callbackThrew(ev::class.simpleName ?: "?", t)
                 }
             }
         }
