@@ -759,21 +759,34 @@ async fn run_connection_loop(
                 let mut output = vec![0f32; PCM_FRAME_SAMPLES];
                 for cid in queue_ids {
                     let id = tsclientlib::ClientId(cid);
-                    let ended = {
-                        let q = audio.get_mut_queues().get_mut(&id).unwrap();
+                    // tsclientlib's get_next_data slices an empty buffer and panics
+                    // when a decode yields 0 samples (loss/underrun on a talker's
+                    // queue). Contain it so one bad queue can't kill the connection.
+                    let pulled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let q = audio.get_mut_queues().get_mut(&id)?;
                         match q.get_next_data(PCM_FRAME_SAMPLES) {
                             Ok((samples, is_end)) => {
                                 let n = samples.len().min(PCM_FRAME_SAMPLES);
-                                if n > 0 {
-                                    output[..n].copy_from_slice(&samples[..n]);
-                                    sink.on_event(ConnEvent::PcmFrame {
-                                        client_id: cid as u64,
-                                        samples: output[..n].to_vec(),
-                                    });
-                                }
-                                is_end
+                                output[..n].copy_from_slice(&samples[..n]);
+                                Some((n, is_end))
                             }
-                            Err(_) => continue,
+                            Err(_) => None,
+                        }
+                    }));
+                    let ended = match pulled {
+                        Ok(Some((n, is_end))) => {
+                            if n > 0 {
+                                sink.on_event(ConnEvent::PcmFrame {
+                                    client_id: cid as u64,
+                                    samples: output[..n].to_vec(),
+                                });
+                            }
+                            is_end
+                        }
+                        Ok(None) => continue,
+                        Err(_) => {
+                            audio.get_mut_queues().remove(&id);
+                            true
                         }
                     };
                     if ended && known_talkers.remove(&cid) {
