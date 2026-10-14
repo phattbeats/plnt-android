@@ -102,6 +102,27 @@ fn install_panic_hook() {
 
 /// 48 kHz × 20 ms = 960 samples per PCM frame.
 const PCM_FRAME_SAMPLES: usize = 960;
+/// tsclientlib's `AudioQueue` decodes to interleaved stereo, so one 20 ms pull
+/// is twice the mono frame; we downmix before handing it to Kotlin.
+const STEREO_FRAME_SAMPLES: usize = PCM_FRAME_SAMPLES * 2;
+/// Playback pull cadence: one 20 ms frame per tick, independent of when
+/// packets arrive.
+const AUDIO_TICK: std::time::Duration = std::time::Duration::from_millis(20);
+/// Longest the loop parks on the event stream before servicing commands and
+/// the playback tick again.
+const LOOP_WAIT: std::time::Duration = std::time::Duration::from_millis(5);
+/// Bounded command queue: about 5 s of 20 ms PCM frames. When full, audio is
+/// dropped instead of piling up behind a stall and bursting out afterwards.
+const CMD_QUEUE_CAP: usize = 256;
+/// Most commands handled per loop pass, so a backlog can't starve the
+/// connection's own stream (pongs/acks).
+const CMD_DRAIN_MAX: usize = 16;
+
+/// A poisoned lock means some thread panicked mid-update; the state is still
+/// usable, and turning every later FFI call into a panic is worse.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 /// Max bytes in a single Opus-encoded 20 ms mono packet.
 const MAX_OPUS_PACKET_BYTES: usize = 1275;
 
@@ -126,11 +147,21 @@ struct ClientState {
     /// Cached channel tree (ChannelId → record). Refreshed whenever we observe
     /// a new `BookEvents` batch from the server.
     channel_tree: HashMap<u64, Channel>,
+    /// Bumped on every connect. A loop only owns `connection` while the
+    /// handle's generation matches its own, so an old loop finishing late
+    /// can't clear a newer connection's handle.
+    next_generation: u64,
 }
 
 #[derive(Clone)]
 struct ConnectionHandle {
-    cmd_tx: std::sync::mpsc::Sender<ControlCommand>,
+    cmd_tx: std::sync::mpsc::SyncSender<ControlCommand>,
+    generation: u64,
+}
+
+/// True while `state.connection` is still the handle of connection `generation`.
+fn owns_connection(state: &ClientState, generation: u64) -> bool {
+    state.connection.as_ref().map(|h| h.generation) == Some(generation)
 }
 
 enum ControlCommand {
@@ -162,6 +193,7 @@ impl Client {
                 own_client_id: 0,
                 server_name: String::new(),
                 channel_tree: HashMap::new(),
+                next_generation: 0,
             })),
             runtime,
         })
@@ -221,12 +253,9 @@ impl Client {
         let channel_tree = snapshot_channel_tree(&state_snapshot);
         let clients = snapshot_clients(&state_snapshot);
 
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<ControlCommand>();
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<ControlCommand>(CMD_QUEUE_CAP);
 
-        let sink_for_task = self
-            .sink
-            .lock()
-            .unwrap()
+        let sink_for_task = lock(&self.sink)
             .as_ref()
             .cloned()
             .expect("sink installed at construction");
@@ -237,13 +266,18 @@ impl Client {
 
         // Publish state before spawning the loop: the loop's first act is to
         // check `connection.is_some()` and bail if it isn't set yet.
-        {
-            let mut guard = self.state.lock().unwrap();
+        // A second connect() replaces the handle; the previous loop sees it no
+        // longer owns `connection` and shuts its socket down on its own.
+        let generation = {
+            let mut guard = lock(&self.state);
+            guard.next_generation = guard.next_generation.wrapping_add(1);
+            let generation = guard.next_generation;
             guard.own_client_id = own_client_id;
             guard.server_name = server_name.clone();
             guard.channel_tree = channel_tree.clone();
-            guard.connection = Some(ConnectionHandle { cmd_tx });
-        }
+            guard.connection = Some(ConnectionHandle { cmd_tx, generation });
+            generation
+        };
 
         // `connect()` above consumed the server's first BookEvents batch itself,
         // so the loop never sees it and — on a quiet server — never emits a
@@ -277,6 +311,7 @@ impl Client {
                 initial_channel_tree,
                 initial_tree_signature,
                 initial_client_signature,
+                generation,
             ))
             .catch_unwind()
             .await;
@@ -288,8 +323,11 @@ impl Client {
                     .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
                     .or_else(|| payload.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "unknown panic".into());
-                if let Ok(mut g) = panic_state.lock() {
-                    g.connection = None;
+                {
+                    let mut g = lock(&panic_state);
+                    if owns_connection(&g, generation) {
+                        g.connection = None;
+                    }
                 }
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     panic_sink.on_event(ConnEvent::Error(format!("diag PANIC {msg}")));
@@ -307,14 +345,16 @@ impl Client {
     /// Disconnect cleanly. Drops the command channel; the background task exits.
     pub fn disconnect(&self) -> Result<(), PlntError> {
         let cmd_tx = {
-            let mut guard = self.state.lock().unwrap();
+            let mut guard = lock(&self.state);
             let handle = guard
                 .connection
                 .take()
                 .ok_or_else(|| PlntError::NotConnected)?;
             handle.cmd_tx
         };
-        let _ = cmd_tx.send(ControlCommand::Disconnect);
+        // If the queue is full the Disconnect is lost, but dropping `cmd_tx`
+        // here closes the channel and the loop treats that as a disconnect too.
+        let _ = cmd_tx.try_send(ControlCommand::Disconnect);
         Ok(())
     }
 
@@ -327,16 +367,14 @@ impl Client {
     ) -> Result<(), PlntError> {
         // Validate the id exists before sending the command.
         {
-            let guard = self.state.lock().unwrap();
+            let guard = lock(&self.state);
             if !guard.channel_tree.contains_key(&channel_id) {
                 return Err(PlntError::Invalid(format!(
                     "unknown channel id {channel_id}"
                 )));
             }
         }
-        self.cmd_tx()?
-            .send(ControlCommand::JoinChannel { channel_id, password: None })
-            .map_err(|_| PlntError::NotConnected)
+        self.send_cmd(ControlCommand::JoinChannel { channel_id, password: None })
     }
 
     /// Send a text message to the current channel or to a specific client (a
@@ -345,9 +383,7 @@ impl Client {
         if text.trim().is_empty() {
             return Err(PlntError::Invalid("message text is empty".into()));
         }
-        self.cmd_tx()?
-            .send(ControlCommand::SendTextMessage { target, text })
-            .map_err(|_| PlntError::NotConnected)
+        self.send_cmd(ControlCommand::SendTextMessage { target, text })
     }
 
     /// PHA-3289: send a command tsclientlib has no message type for — the TS6
@@ -381,21 +417,15 @@ impl Client {
         if line.len() > 8000 {
             return Err(PlntError::Invalid(format!("command is {} bytes, limit 8000", line.len())));
         }
-        self.cmd_tx()?
-            .send(ControlCommand::SendRawCommand(line))
-            .map_err(|_| PlntError::NotConnected)
+        self.send_cmd(ControlCommand::SendRawCommand(line))
     }
 
     pub fn set_input_muted(&self, muted: bool) -> Result<(), PlntError> {
-        self.cmd_tx()?
-            .send(ControlCommand::SetInputMuted(muted))
-            .map_err(|_| PlntError::NotConnected)
+        self.send_cmd(ControlCommand::SetInputMuted(muted))
     }
 
     pub fn set_output_muted(&self, muted: bool) -> Result<(), PlntError> {
-        self.cmd_tx()?
-            .send(ControlCommand::SetOutputMuted(muted))
-            .map_err(|_| PlntError::NotConnected)
+        self.send_cmd(ControlCommand::SetOutputMuted(muted))
     }
 
     /// Encode a 960-sample mono f32 frame (20 ms @ 48 kHz) as Opus and send it.
@@ -406,18 +436,30 @@ impl Client {
                 frame.len()
             )));
         }
-        self.cmd_tx()?
-            .send(ControlCommand::SendPcmFrame(frame))
-            .map_err(|_| PlntError::NotConnected)
+        self.send_cmd(ControlCommand::SendPcmFrame(frame))
     }
 }
 
 impl Client {
-    fn cmd_tx(&self) -> Result<std::sync::mpsc::Sender<ControlCommand>, PlntError> {
-        let guard = self.state.lock().unwrap();
-        match guard.connection.as_ref() {
-            Some(h) => Ok(h.cmd_tx.clone()),
-            None => Err(PlntError::NotConnected),
+    /// Queue a command for the connection loop without ever blocking the
+    /// caller (often Kotlin's main or audio thread). A full queue means the
+    /// loop is behind: PCM is dropped silently, anything else is an error.
+    fn send_cmd(&self, cmd: ControlCommand) -> Result<(), PlntError> {
+        let cmd_tx = {
+            let guard = lock(&self.state);
+            match guard.connection.as_ref() {
+                Some(h) => h.cmd_tx.clone(),
+                None => return Err(PlntError::NotConnected),
+            }
+        };
+        let is_pcm = matches!(cmd, ControlCommand::SendPcmFrame(_));
+        match cmd_tx.try_send(cmd) {
+            Ok(()) => Ok(()),
+            Err(std::sync::mpsc::TrySendError::Full(_)) if is_pcm => Ok(()),
+            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                Err(PlntError::Connection("command queue full".into()))
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => Err(PlntError::NotConnected),
         }
     }
 }
@@ -574,6 +616,7 @@ async fn run_connection_loop(
     initial_channel_tree: HashMap<u64, Channel>,
     initial_tree_signature: u64,
     initial_client_signature: u64,
+    generation: u64,
 ) {
     let mut encoder: Option<Encoder> = None;
     let mut out_packet_buf: Vec<u8> = vec![0u8; MAX_OPUS_PACKET_BYTES];
@@ -591,6 +634,19 @@ async fn run_connection_loop(
     // own_client id.
     let mut awaiting_resume = false;
     let mut reinstall_raw_listener = false;
+    // Disconnect command or closed command channel: leave the outer loop.
+    let mut exit_requested = false;
+    // Playback is pulled on a 20 ms clock, the way tsclientlib's own
+    // `fill_buffer` expects, not once per incoming packet: pulling per packet
+    // drained queues at the wrong rate and kept finished queues alive, and a
+    // finished queue panics on its next pull (PHA-4176).
+    let mut next_audio_tick = std::time::Instant::now() + AUDIO_TICK;
+    let mut mix_buf = vec![0f32; STEREO_FRAME_SAMPLES];
+    // Rate limit for repeated core errors (send_audio while the link is down
+    // would otherwise be 50 events a second).
+    let mut last_error_report: Option<std::time::Instant> = None;
+    let mut suppressed_errors: u64 = 0;
+    let mut diag_audio_skipped: u64 = 0;
     // PHA-4176 diagnostics: reported through `ConnEvent::Error("diag ...")` so
     // no binding change is needed. Gap = time between two passes of this loop;
     // pongs only go out while it spins, so a multi-second gap is the stall.
@@ -633,14 +689,20 @@ async fn run_connection_loop(
         // inside an async poll: the connection's own stream then never got
         // serviced, the server saw no acks, and it dropped us on resend timeout
         // about 25 s in while the UI still said "connected".
-        loop {
+        for _ in 0..CMD_DRAIN_MAX {
             let cmd = match cmd_rx.try_recv() {
                 Ok(v) => v,
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    exit_requested = true;
+                    break;
+                }
             };
             match cmd {
-                ControlCommand::Disconnect => break,
+                ControlCommand::Disconnect => {
+                    exit_requested = true;
+                    break;
+                }
                 ControlCommand::JoinChannel { channel_id, password } => {
                     let own_client = con.get_state().ok().map(|s| s.own_client);
                     if let Some(own) = own_client {
@@ -685,6 +747,12 @@ async fn run_connection_loop(
                     }
                 }
                 ControlCommand::SendPcmFrame(frame) => {
+                    // Mid-reconnect there is no session to send to; every frame
+                    // would fail. Drop them quietly and count them instead.
+                    if awaiting_resume {
+                        diag_audio_skipped += 1;
+                        continue;
+                    }
                     if encoder.is_none() {
                         match Encoder::new(SampleRate::Hz48000, Channels::Mono, Application::Voip) {
                             Ok(e) => encoder = Some(e),
@@ -707,7 +775,12 @@ async fn run_connection_loop(
                             diag_audio_max_ms = diag_audio_max_ms.max(t0.elapsed().as_millis());
                             if let Err(e) = res {
                                 diag_audio_err += 1;
-                                sink.on_event(ConnEvent::Error(format!("send_audio: {e}")));
+                                report_error(
+                                    &*sink,
+                                    &mut last_error_report,
+                                    &mut suppressed_errors,
+                                    format!("send_audio: {e}"),
+                                );
                             } else {
                                 diag_audio_ok += 1;
                             }
@@ -719,28 +792,40 @@ async fn run_connection_loop(
                 }
             }
         }
-        if shared_state.lock().unwrap().connection.is_none() {
+        if exit_requested || !owns_connection(&lock(&shared_state), generation) {
             break;
         }
-        // Pull one event (or none if none ready, then yield). Keep the two
-        // layers of Option apart: `None` is "nothing ready yet", `Some(None)`
-        // is "the stream ended" — flattening them together meant a connection
-        // the server had already torn down looked exactly like an idle one, so
-        // the loop spun forever and the UI never left "connected".
+        // Playback tick: one mixed 20 ms frame of everyone talking.
+        let now = std::time::Instant::now();
+        if now >= next_audio_tick {
+            next_audio_tick += AUDIO_TICK;
+            if now > next_audio_tick + AUDIO_TICK * 5 {
+                // Fell well behind (stall, doze): resync instead of bursting.
+                next_audio_tick = now + AUDIO_TICK;
+            }
+            if !audio.get_queues().is_empty() {
+                pull_playback_frame(&mut audio, &mut mix_buf, &mut known_talkers, &*sink);
+            }
+        }
+        // Wait for one event, but never longer than LOOP_WAIT so commands and
+        // the playback tick keep moving. This parks the task properly instead
+        // of spinning a core at 100% the way `now_or_never` + `yield_now` did.
+        // `next()` is cancel-safe: a timeout drops no item.
+        // Keep the two layers of Option apart: `Ok(None)` is "the stream
+        // ended", `Err(_)` is just "nothing ready yet" — flattening them made a
+        // connection the server had torn down look exactly like an idle one.
+        let wait = LOOP_WAIT.min(next_audio_tick.saturating_duration_since(now));
         let ev = {
             use futures::StreamExt;
-            con.events().next().now_or_never()
+            tokio::time::timeout(wait, con.events().next()).await
         };
         let ev = match ev {
-            Some(Some(e)) => e,
-            Some(None) => {
+            Ok(Some(e)) => e,
+            Ok(None) => {
                 stream_ended = true;
                 break;
             }
-            None => {
-                tokio::task::yield_now().await;
-                continue;
-            }
+            Err(_) => continue,
         };
         match ev {
             Ok(StreamItem::Audio(audio_pkt)) => {
@@ -749,48 +834,10 @@ async fn run_connection_loop(
                     _ => continue,
                 };
                 let from_id = tsclientlib::ClientId(from_raw);
+                // Only queue here; frames are pulled on the playback tick.
                 if let Ok(Some(_id)) = audio.handle_packet(from_id, audio_pkt) {
                     if known_talkers.insert(from_id.0) {
                         sink.on_event(ConnEvent::TalkStatus { client_id: from_id.0 as u64, talking: true });
-                    }
-                }
-                // Pull decoded 20 ms frames out of every queue.
-                let queue_ids: Vec<u16> = audio.get_queues().keys().map(|k| k.0).collect();
-                let mut output = vec![0f32; PCM_FRAME_SAMPLES];
-                for cid in queue_ids {
-                    let id = tsclientlib::ClientId(cid);
-                    // tsclientlib's get_next_data slices an empty buffer and panics
-                    // when a decode yields 0 samples (loss/underrun on a talker's
-                    // queue). Contain it so one bad queue can't kill the connection.
-                    let pulled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let q = audio.get_mut_queues().get_mut(&id)?;
-                        match q.get_next_data(PCM_FRAME_SAMPLES) {
-                            Ok((samples, is_end)) => {
-                                let n = samples.len().min(PCM_FRAME_SAMPLES);
-                                output[..n].copy_from_slice(&samples[..n]);
-                                Some((n, is_end))
-                            }
-                            Err(_) => None,
-                        }
-                    }));
-                    let ended = match pulled {
-                        Ok(Some((n, is_end))) => {
-                            if n > 0 {
-                                sink.on_event(ConnEvent::PcmFrame {
-                                    client_id: cid as u64,
-                                    samples: output[..n].to_vec(),
-                                });
-                            }
-                            is_end
-                        }
-                        Ok(None) => continue,
-                        Err(_) => {
-                            audio.get_mut_queues().remove(&id);
-                            true
-                        }
-                    };
-                    if ended && known_talkers.remove(&cid) {
-                        sink.on_event(ConnEvent::TalkStatus { client_id: cid as u64, talking: false });
                     }
                 }
             }
@@ -800,7 +847,7 @@ async fn run_connection_loop(
                         awaiting_resume = false;
                         let resumed_own_client_id = state.own_client.0;
                         {
-                            let mut guard = shared_state.lock().unwrap();
+                            let mut guard = lock(&shared_state);
                             guard.own_client_id = resumed_own_client_id;
                         }
                         sink.on_event(ConnEvent::Resumed(ConnectionState {
@@ -814,7 +861,7 @@ async fn run_connection_loop(
                     }
                     channel_tree = snapshot_channel_tree(&state);
                     {
-                        let mut guard = shared_state.lock().unwrap();
+                        let mut guard = lock(&shared_state);
                         guard.channel_tree = channel_tree.clone();
                     }
                     let signature = tree_signature(&channel_tree);
@@ -876,12 +923,37 @@ async fn run_connection_loop(
             }
             Ok(_) => {}
             Err(e) => {
-                sink.on_event(ConnEvent::Error(format!("event error: {e}")));
+                // While tsclientlib is reconnecting, an error means the
+                // reconnect itself failed for good, and polling the finished
+                // connect future again would panic. Treat it as a lost link.
+                if awaiting_resume || con.get_state().is_err() {
+                    sink.on_event(ConnEvent::Error(format!("reconnect failed: {e}")));
+                    stream_ended = true;
+                    break;
+                }
+                report_error(
+                    &*sink,
+                    &mut last_error_report,
+                    &mut suppressed_errors,
+                    format!("event error: {e}"),
+                );
             }
         }
     }
 
-    let _ = con.disconnect(DisconnectOptions::new());
+    if !stream_ended {
+        // `disconnect` only queues the packet; it goes out while the stream is
+        // polled. Give it a moment so the server sees a clean leave rather
+        // than timing us out.
+        if con.disconnect(DisconnectOptions::new()).is_ok() {
+            use futures::StreamExt;
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                con.events().for_each(|_| future::ready(())),
+            )
+            .await;
+        }
+    }
     // The cause is the load-bearing half here; the reason string is only for
     // logs and bug reports. `Requested` says the loop exited because the app
     // called `Client::disconnect()` — it does NOT say the *user* did, which is
@@ -893,9 +965,94 @@ async fn run_connection_loop(
     } else {
         (DisconnectCause::Requested, "client.disconnect")
     };
-    sink.on_event(ConnEvent::Disconnected { cause, reason: reason.into() });
-    let mut guard = shared_state.lock().unwrap();
-    guard.connection = None;
+    if diag_audio_skipped > 0 {
+        sink.on_event(ConnEvent::Error(format!("diag audio_skipped_while_reconnecting={diag_audio_skipped}")));
+    }
+    for cid in known_talkers.drain() {
+        sink.on_event(ConnEvent::TalkStatus { client_id: cid as u64, talking: false });
+    }
+    // A newer connect() may already own the slot; leave it alone then, and
+    // don't report a disconnect for a session the app has already replaced
+    // (unless it was asked to disconnect or the link died, which the app
+    // still needs to hear about).
+    let still_owner = {
+        let mut guard = lock(&shared_state);
+        let owner = owns_connection(&guard, generation);
+        if owner {
+            guard.connection = None;
+        }
+        owner
+    };
+    if still_owner || stream_ended || exit_requested {
+        sink.on_event(ConnEvent::Disconnected { cause, reason: reason.into() });
+    }
+}
+
+/// Pull one 20 ms frame from every talker's queue, mix, downmix to mono and
+/// hand it to Kotlin. Finished queues are removed by `fill_buffer_with_proc`
+/// itself. A panic inside tsclientlib's queue code is contained: all queues
+/// are reset (they refill from the next packets) instead of the connection
+/// task dying.
+fn pull_playback_frame(
+    audio: &mut AudioHandler,
+    mix_buf: &mut [f32],
+    known_talkers: &mut std::collections::HashSet<u16>,
+    sink: &dyn EventSink,
+) {
+    mix_buf.iter_mut().for_each(|s| *s = 0.0);
+    let pulled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut any = false;
+        let ended = audio.fill_buffer_with_proc(mix_buf, |_, pcm| any |= !pcm.is_empty());
+        (any, ended)
+    }));
+    let ended: Vec<u16> = match pulled {
+        Ok((any, ended)) => {
+            if any {
+                let mono: Vec<f32> = mix_buf
+                    .chunks_exact(2)
+                    .map(|lr| ((lr[0] + lr[1]) * 0.5).clamp(-1.0, 1.0))
+                    .collect();
+                sink.on_event(ConnEvent::PcmFrame { client_id: 0, samples: mono });
+            }
+            ended.into_iter().map(|id| id.0).collect()
+        }
+        Err(_) => {
+            let msg = LAST_PANIC.lock().ok().and_then(|mut g| g.take());
+            sink.on_event(ConnEvent::Error(format!(
+                "diag audio_panic (queues reset) {}",
+                msg.unwrap_or_default()
+            )));
+            audio.reset();
+            known_talkers.iter().copied().collect()
+        }
+    };
+    for cid in ended {
+        if known_talkers.remove(&cid) {
+            sink.on_event(ConnEvent::TalkStatus { client_id: cid as u64, talking: false });
+        }
+    }
+}
+
+/// Forward a core error, at most one per second; the rest are counted and the
+/// count rides along on the next one that gets through.
+fn report_error(
+    sink: &dyn EventSink,
+    last: &mut Option<std::time::Instant>,
+    suppressed: &mut u64,
+    msg: String,
+) {
+    let now = std::time::Instant::now();
+    if last.map_or(true, |t| now.duration_since(t).as_secs() >= 1) {
+        *last = Some(now);
+        if *suppressed > 0 {
+            sink.on_event(ConnEvent::Error(format!("{msg} (+{} similar suppressed)", *suppressed)));
+            *suppressed = 0;
+        } else {
+            sink.on_event(ConnEvent::Error(msg));
+        }
+    } else {
+        *suppressed += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------
