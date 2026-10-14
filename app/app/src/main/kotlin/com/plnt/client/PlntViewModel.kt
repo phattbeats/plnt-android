@@ -16,6 +16,7 @@ import com.plnt.client.core.CoreEvent
 import com.plnt.client.core.DisconnectCause
 import com.plnt.client.data.IdentityStore
 import com.plnt.client.data.PlntDataStore
+import com.plnt.client.data.SessionStore
 import com.plnt.client.model.AppState
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.ChannelNode
@@ -31,12 +32,17 @@ import com.plnt.client.model.VoiceServiceBindingStatus
 import com.plnt.client.model.VoiceConnectionSnapshot
 import com.plnt.client.model.withVoiceConnectionSnapshot
 import com.plnt.client.model.withVoiceBindingFailure
+import com.plnt.client.service.Diag
 import com.plnt.client.service.VoiceService
 import com.plnt.client.service.VoiceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
@@ -59,6 +65,7 @@ import java.util.UUID
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val identityStore = IdentityStore(app)
     private val dataStore = PlntDataStore(app)
+    private val sessionStore = SessionStore(app)
     private val powerManager = app.getSystemService(PowerManager::class.java)
 
     private val _state = MutableStateFlow(AppState())
@@ -72,6 +79,14 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Whether the one-time battery-optimisation prompt has already been shown. */
     private var batteryPromptShown = false
+
+    // A first connect that never got in is retried here — same bookmark,
+    // INITIAL_RETRY_DELAYS_MS apart. Drops after that are the service's job
+    // (it reconnects mid-session on its own). Any user connect/disconnect
+    // cancels the pending retry.
+    private var initialConnect: Bookmark? = null
+    private var initialRetries = 0
+    private var initialRetryJob: Job? = null
 
     // channelId -> talk-power-flat list of client ids we've observed there.
     private val roster = HashMap<Long, MutableSet<Long>>()
@@ -193,10 +208,39 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.setPreferredOutputDevice(settings.preferredOutputDeviceKey)
             }
             refreshAudioDevices()
-            // PHA-4176 diagnostic build: opening the app is the whole test, so
-            // join the first saved server without a tap.
-            _state.value.bookmarks.firstOrNull()?.let { connect(it) }
+            autoJoinOnOpen()
         }
+    }
+
+    /**
+     * PHA-4176 diagnostic build: opening the app is the whole test, so join
+     * without a tap — the server last connected to, else the first bookmark.
+     * Only into an idle service (never over a live, connecting or
+     * reconnecting call) and never once the user has hung up in this process.
+     */
+    private suspend fun autoJoinOnOpen() {
+        if (!Diag.ENABLED || userDisconnected) return
+        val (persisted, lastId) = withContext(Dispatchers.IO) {
+            val session = runCatching { sessionStore.load() }.getOrNull()
+            session to (session?.bookmark?.id ?: runCatching { sessionStore.lastBookmarkId() }.getOrNull())
+        }
+        val bookmarks = _state.value.bookmarks
+        val target = bookmarks.firstOrNull { it.id == lastId }
+            ?: persisted?.bookmark
+            ?: bookmarks.firstOrNull()
+            ?: return
+        runOnService { svc ->
+            val status = svc.currentConnectionSnapshot().status
+            if (userDisconnected || status.busy || status.phase == ConnectionPhase.CONNECTED) return@runOnService
+            connect(target)
+        }
+    }
+
+    private fun cancelInitialRetry() {
+        initialRetryJob?.cancel()
+        initialRetryJob = null
+        initialRetries = 0
+        initialConnect = null
     }
 
     private fun runOnService(action: (VoiceService) -> Unit) {
@@ -274,6 +318,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connect(bookmark: Bookmark) {
+        cancelInitialRetry()
+        startConnect(bookmark)
+    }
+
+    private fun startConnect(bookmark: Bookmark) {
         if (bindingStatus.failed) {
             requestVoiceBinding()
             if (bindingStatus.failed) return
@@ -286,6 +335,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             }
             ServerTapAction.CONNECT -> Unit
         }
+        initialConnect = bookmark
         roster.clear()
         talking.clear()
         channelsById.clear()
@@ -363,6 +413,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        cancelInitialRetry()
+        userDisconnected = true
         runOnService { it.disconnect() }
         _state.update {
             it.copy(
@@ -591,13 +643,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private fun onCoreEvent(ev: CoreEvent) {
         when (ev) {
             is CoreEvent.Connected -> {
-                // PHA-4176: post the previous dropped session's trace, if any.
-                com.plnt.client.service.Diag.takeReport()?.let { report ->
-                    viewModelScope.launch {
-                        kotlinx.coroutines.delay(3000)
-                        runOnService { it.sendTextMessage(ChatMessageTarget.Channel, report) }
-                    }
-                }
+                initialConnect = null
+                initialRetries = 0
                 roster.clear()
                 talking.clear()
                 channelsById.clear()
@@ -618,11 +665,22 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(connectionStatus = it.connectionStatus.reconnecting(), lastError = null)
             }
             is CoreEvent.Disconnected -> {
-                // PHA-4176: rejoin after an unrequested drop so the trace can be posted.
-                if (ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED) {
-                    _state.value.bookmarks.firstOrNull()?.let { b ->
-                        viewModelScope.launch { kotlinx.coroutines.delay(5000); connect(b) }
+                // Also covers a hang-up from the notification, which never
+                // passes through disconnect() above.
+                if (ev.cause == DisconnectCause.USER) userDisconnected = true
+                val retry = initialConnect
+                if (retry != null && ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED &&
+                    initialRetries < INITIAL_RETRY_DELAYS_MS.size
+                ) {
+                    val wait = INITIAL_RETRY_DELAYS_MS[initialRetries++]
+                    initialRetryJob?.cancel()
+                    initialRetryJob = viewModelScope.launch {
+                        delay(wait)
+                        initialRetryJob = null
+                        startConnect(retry)
                     }
+                } else {
+                    initialConnect = null
                 }
                 streams.clear()
                 streamPollJob?.cancel()
@@ -638,7 +696,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             }
-            is CoreEvent.Error -> _state.update { it.copy(lastError = ev.message) }
+            // `diag ...` lines are trace data; the service already keeps them
+            // from here, this is only the backstop.
+            is CoreEvent.Error -> if (!ev.message.startsWith("diag ")) _state.update { it.copy(lastError = ev.message) }
             is CoreEvent.TemporaryDisconnect -> _state.update {
                 it.copy(connectionStatus = it.connectionStatus.reconnecting(), lastError = "temp disconnect: ${ev.reason}")
             }
@@ -758,5 +818,16 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         if (bindingRegistered) runCatching { getApplication<Application>().unbindService(connection) }
         bindingRegistered = false
         super.onCleared()
+    }
+
+    private companion object {
+        val INITIAL_RETRY_DELAYS_MS = longArrayOf(5_000L, 10_000L, 20_000L)
+
+        /**
+         * The user hung up at some point in this process. Process-wide rather
+         * than per-ViewModel so reopening the app after a hang-up does not
+         * auto-join again behind their back.
+         */
+        @Volatile var userDisconnected = false
     }
 }

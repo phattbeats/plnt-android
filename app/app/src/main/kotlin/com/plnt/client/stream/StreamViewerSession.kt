@@ -1,6 +1,8 @@
 package com.plnt.client.stream
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.plnt.client.core.CoreEvent
 import org.json.JSONObject
@@ -51,8 +53,10 @@ import org.webrtc.audio.JavaAudioDeviceModule
  * at [StreamViewPhase.CONNECTING]. A user-supplied TURN server is the planned
  * answer for that, not anything hosted by us.
  *
- * All callbacks arrive on WebRTC's own threads; [onState] is dispatched as-is
- * and the owner hops to Main.
+ * The owner calls in on the main thread. WebRTC callbacks arrive on its own
+ * threads and are posted back onto main ([onMain]) before they touch any
+ * state or the peer, so nothing here races and nothing uses a peer that
+ * [stop] has already disposed.
  */
 class StreamViewerSession(
     context: Context,
@@ -62,9 +66,10 @@ class StreamViewerSession(
     private val onState: (StreamViewState) -> Unit,
 ) {
     private val tag = "StreamViewer"
+    private val main = Handler(Looper.getMainLooper())
     private val factory: PeerConnectionFactory
     private var pc: PeerConnection? = null
-    private var sink: VideoSink? = null
+    @Volatile private var sink: VideoSink? = null
     private var videoTrack: VideoTrack? = null
     private var sid: String = ""
     private var streamerClid: Long = 0
@@ -150,7 +155,9 @@ class StreamViewerSession(
         }
         sink?.let { s -> videoTrack?.let { runCatching { it.removeSink(s) } } }
         videoTrack = null
-        runCatching { pc?.close() }
+        // close() then dispose(): close alone leaves the native peer alive,
+        // and disposing the factory under a live peer is undefined.
+        pc?.let { runCatching { it.close() }; runCatching { it.dispose() } }
         pc = null
         runCatching { factory.dispose() }
         if (state.phase != StreamViewPhase.ENDED && state.phase != StreamViewPhase.FAILED) {
@@ -214,7 +221,7 @@ class StreamViewerSession(
             sdpObserver("setRemote(offer)") {
                 peer.createAnswer(
                     object : SdpObserver by noopSdp {
-                        override fun onCreateSuccess(desc: SessionDescription) {
+                        override fun onCreateSuccess(desc: SessionDescription) = onMain {
                             peer.setLocalDescription(
                                 sdpObserver("setLocal(answer)") {
                                     // Non-trickle candidates are not needed: the
@@ -224,7 +231,7 @@ class StreamViewerSession(
                                 desc,
                             )
                         }
-                        override fun onCreateFailure(error: String?) {
+                        override fun onCreateFailure(error: String?) = onMain {
                             update(state.copy(phase = StreamViewPhase.FAILED, detail = "createAnswer: $error"))
                         }
                     },
@@ -245,8 +252,13 @@ class StreamViewerSession(
         sendRaw(name, args + ("return_code" to rc))
     }
 
+    /** Runs [block] on the main thread, unless the session has been stopped by then. */
+    private fun onMain(block: () -> Unit) {
+        main.post { if (!closed) block() }
+    }
+
     private val observer = object : PeerConnection.Observer {
-        override fun onIceCandidate(c: IceCandidate) {
+        override fun onIceCandidate(c: IceCandidate) = onMain {
             sendSignal(
                 JSONObject().put("cmd", "iceCandidate").put(
                     "args",
@@ -256,7 +268,7 @@ class StreamViewerSession(
         }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
         override fun onSignalingChange(s: PeerConnection.SignalingState?) {}
-        override fun onIceConnectionChange(s: PeerConnection.IceConnectionState?) {
+        override fun onIceConnectionChange(s: PeerConnection.IceConnectionState?) = onMain {
             Log.i(tag, "ice=$s")
             when (s) {
                 PeerConnection.IceConnectionState.FAILED ->
@@ -275,9 +287,11 @@ class StreamViewerSession(
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
         override fun onTrack(transceiver: RtpTransceiver?) {
             val track = transceiver?.receiver?.track() as? VideoTrack ?: return
-            videoTrack = track
-            track.addSink(frameProbe)
-            sink?.let { runCatching { track.addSink(it) } }
+            onMain {
+                videoTrack = track
+                track.addSink(frameProbe)
+                sink?.let { runCatching { track.addSink(it) } }
+            }
         }
     }
 
@@ -286,11 +300,17 @@ class StreamViewerSession(
         override fun onFrame(frame: VideoFrame) {
             val w = frame.rotatedWidth
             val h = frame.rotatedHeight
-            val s = state
-            if (s.phase != StreamViewPhase.PLAYING || s.width != w || s.height != h) {
-                update(s.copy(phase = StreamViewPhase.PLAYING, width = w, height = h, detail = null))
+            // Decoder thread: only a change is worth a hop to main, where the
+            // check is repeated against the then-current state.
+            if (!changes(state, w, h)) return
+            onMain {
+                val s = state
+                if (changes(s, w, h)) update(s.copy(phase = StreamViewPhase.PLAYING, width = w, height = h, detail = null))
             }
         }
+
+        private fun changes(s: StreamViewState, w: Int, h: Int) =
+            s.phase != StreamViewPhase.PLAYING || s.width != w || s.height != h
     }
 
     private fun update(s: StreamViewState) {
@@ -306,8 +326,8 @@ class StreamViewerSession(
     }
 
     private fun sdpObserver(what: String, onSet: () -> Unit) = object : SdpObserver by noopSdp {
-        override fun onSetSuccess() = onSet()
-        override fun onSetFailure(error: String?) {
+        override fun onSetSuccess() = onMain(onSet)
+        override fun onSetFailure(error: String?) = onMain {
             Log.w(tag, "$what failed: $error")
             update(state.copy(phase = StreamViewPhase.FAILED, detail = "$what: $error"))
         }

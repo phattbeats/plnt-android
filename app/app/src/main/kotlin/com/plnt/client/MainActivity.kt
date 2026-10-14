@@ -35,7 +35,11 @@ class MainActivity : ComponentActivity() {
 
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { /* no-op: connect() surfaces a core error if mic capture ends up denied */ }
+    ) { granted ->
+        // A join that started while the prompt was up (auto-join on open) is
+        // running output-only; now that the mic is ours, upgrade it.
+        if (granted[Manifest.permission.RECORD_AUDIO] == true) viewModel.onAppForegrounded()
+    }
 
     // PHA-3289 send side: the system "Start recording or casting?" prompt.
     private val requestScreenCapture = registerForActivityResult(

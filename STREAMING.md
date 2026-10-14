@@ -1,6 +1,7 @@
-# Screen-share viewing over TS6 (PHA-3289)
+# Screen sharing over TS6 (PHA-3289)
 
-PLNT can watch a TeamSpeak 6 screen share started from a desktop TS6 client.
+PLNT can watch a TeamSpeak 6 screen share started from a desktop TS6 client,
+and share the phone's own screen to desktop viewers (see "Sending" below).
 Nothing here depends on any particular server: the signalling rides the same
 TS3-style command channel the voice client already uses, and the media is a
 direct WebRTC connection to the streamer's PC, exactly as between two desktop
@@ -36,6 +37,10 @@ construction.
 - `app/.../stream/StreamViewerSession.kt` — one viewing session: join,
   answer, trickle, realign, leave. Owned by `VoiceService` so it survives the
   Activity being recreated.
+- `app/.../stream/StreamSenderSession.kt` — sharing this phone's screen:
+  `setupstream`, one PeerConnection per viewer fed by a MediaProjection
+  capture track, `stopstream`. Also owned by `VoiceService`; see "Sending"
+  below.
 - `app/.../ui/StreamViewerScreen.kt` — the `SurfaceViewRenderer` screen.
 
 ## Limits (v1)
@@ -44,10 +49,8 @@ construction.
   candidates; there is no relay. A phone behind carrier-grade NAT that cannot
   reach the streamer directly fails with "could not reach the streamer". The
   planned fix is a user-supplied TURN server in Settings, never one we host.
-- **Viewing only.** Sharing the phone screen (`MediaProjection` → encoder →
-  `setupstream`) is not implemented; the `setupstream` parameters have not been
-  recovered yet.
-- **One stream at a time.**
+- **One stream at a time** each way: one stream watched, one share sent.
+  Sending is implemented (see "Sending" below); it is video only (`audio=0`).
 - **Audio routing.** The share's audio plays through libwebrtc's own audio
   device module, alongside the voice `AudioEngine`. Both target the
   communication stream, so it works, but volume keys act on both together.

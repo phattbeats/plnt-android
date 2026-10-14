@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 30 and below; same exclusions as data_extraction_rules.xml. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="plnt_identity.xml" />
+    <exclude domain="sharedpref" path="plnt_session.xml" />
+    <exclude domain="file" path="plnt-diag.log" />
+</full-backup-content>

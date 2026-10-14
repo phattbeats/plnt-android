@@ -104,8 +104,9 @@ sealed class CoreEvent {
      * the TS6 screen-share family (`notifystream*`, `notifyjoinstreamrequest`,
      * `notifyrespondjoinstreamrequest`) and `error` replies carrying a
      * `return_code`. Values are already unescaped. Consumed by
-     * [com.plnt.client.stream.StreamDirectory] and
-     * [com.plnt.client.stream.StreamViewerSession]; nothing else should need it.
+     * [com.plnt.client.stream.StreamDirectory],
+     * [com.plnt.client.stream.StreamViewerSession] and
+     * [com.plnt.client.stream.StreamSenderSession]; nothing else should need it.
      */
     data class RawCommand(val name: String, val args: Map<String, String>) : CoreEvent()
 }

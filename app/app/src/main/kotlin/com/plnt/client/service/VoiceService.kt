@@ -1,5 +1,6 @@
 package com.plnt.client.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,9 +8,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.ComponentCallbacks2
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -66,6 +69,9 @@ private const val NOTIFICATION_CHANNEL_ID = "plnt-voice-call"
 private const val NOTIFICATION_ID = 1
 private const val INITIAL_BACKOFF_MS = 1_000L
 private const val MAX_BACKOFF_MS = 30_000L
+// Identical-prefix core errors ("send_audio: …" at frame rate) reach the
+// log/Diag/UI at most once per this window.
+private const val ERROR_REPEAT_WINDOW_MS = 5_000L
 // There is deliberately no MAX_RECONNECT_ATTEMPTS. It used to be 10, which with
 // the 1→2→4→8→16→30s backoff ended a live session after roughly three minutes
 // offline — a ceiling the user never asked for and could only recover from by
@@ -137,7 +143,8 @@ class VoiceService : Service() {
 
     // PHA-3289: the one screen-share viewer. Lives here, not in the ViewModel,
     // so a rotation or the Activity being recreated does not drop the stream.
-    private val eglBase: EglBase by lazy { EglBase.create() }
+    private val eglBaseLazy = lazy { EglBase.create() }
+    private val eglBase: EglBase by eglBaseLazy
     private var streamSession: StreamViewerSession? = null
     private var streamSink: VideoSink? = null
     private var streamStateListener: ((StreamViewState) -> Unit)? = null
@@ -145,6 +152,10 @@ class VoiceService : Service() {
     // PHA-3289 send side: our own screen share. Same lifetime rules as the viewer.
     private var sendSession: StreamSenderSession? = null
     private var sendStateListener: ((StreamSendState) -> Unit)? = null
+    // A share stopped before the server named it; it still owes a `stopstream`.
+    private var orphanedSend: StreamSenderSession? = null
+    /** A screen share holds the `mediaProjection` foreground type; see [foregroundTypes]. */
+    private var projectionActive = false
 
     private data class ConnectionParams(val bookmark: Bookmark, val identityPem: String)
     private var connectionParams: ConnectionParams? = null
@@ -200,6 +211,11 @@ class VoiceService : Service() {
     private var availableOutputDevices: List<AudioDeviceOption> = emptyList()
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    /** Latest onStartCommand id, so a hang-up only un-starts us if no newer start is pending. */
+    private var lastStartId = 0
+    /** Error-prefix -> elapsedRealtime it was last let through; see [errorSuppressed]. */
+    private val errorLastSeen = HashMap<String, Long>()
     private lateinit var mediaSession: MediaSessionCompat
 
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
@@ -267,7 +283,9 @@ class VoiceService : Service() {
                 }
             })
         }
-        connectivityManager.registerDefaultNetworkCallback(networkCallback)
+        // On the main looper: the callback reads and writes the same session
+        // state every other path here touches only from the main thread.
+        connectivityManager.registerDefaultNetworkCallback(networkCallback, mainHandler)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -281,6 +299,7 @@ class VoiceService : Service() {
         } else {
             logLifecycle("onStartCommand", "action=${intent.action} flags=$flags")
         }
+        lastStartId = startId
         startForeground(withMicrophone = true)
         // A start command that came from the notification's own actions is one
         // of the documented exemptions from the API 34 while-in-use rule, so
@@ -332,8 +351,13 @@ class VoiceService : Service() {
      * reopening capture on the engine that has been running output-only.
      */
     fun onAppForegrounded() {
-        if (connectionParams == null || micForegroundActive) return
-        startForeground(withMicrophone = true)
+        if (connectionParams == null) return
+        // Without RECORD_AUDIO neither step can succeed, and retrying capture
+        // would raise "Microphone unavailable" on every return to the app.
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+        if (!micForegroundActive) startForeground(withMicrophone = true)
+        // Also covers a mic type that was granted while RECORD_AUDIO was not
+        // yet (first run below API 34): capture failed then, and opens now.
         syncCaptureWithForegroundType()
     }
 
@@ -380,14 +404,12 @@ class VoiceService : Service() {
             Diag.add(ev.message)
             return
         }
+        if (ev is CoreEvent.Error && errorSuppressed(ev.message)) return
         when (ev) {
-            is CoreEvent.Disconnected -> {
-                Diag.add("Disconnected cause=${ev.cause} reason=${ev.reason}")
-                if (ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED) {
-                    Diag.armReport()
-                    Diag.uploadAsync("drop")
-                }
-            }
+            is CoreEvent.Disconnected -> Diag.disconnected(
+                "cause=${ev.cause} reason=${ev.reason}",
+                unrequested = ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED,
+            )
             is CoreEvent.TemporaryDisconnect -> Diag.add("TemporaryDisconnect ${ev.reason}")
             is CoreEvent.Error -> Diag.add("Error ${ev.message}")
             is CoreEvent.Connected -> Diag.add("Connected")
@@ -423,6 +445,21 @@ class VoiceService : Service() {
         }
         publishConnectionSnapshot()
         eventListener?.invoke(ev)
+    }
+
+    /**
+     * Whether [message] repeats an error with the same prefix (the text before
+     * the first `:`) seen less than [ERROR_REPEAT_WINDOW_MS] ago. A failing
+     * `send_audio` reports once per 20 ms frame; letting each through flooded
+     * the log, the diag upload and the error banner.
+     */
+    private fun errorSuppressed(message: String): Boolean {
+        val key = message.substringBefore(':').take(64)
+        val now = SystemClock.elapsedRealtime()
+        val last = errorLastSeen[key]
+        if (last != null && now - last < ERROR_REPEAT_WINDOW_MS) return true
+        errorLastSeen[key] = now
+        return false
     }
 
     /**
@@ -566,8 +603,13 @@ class VoiceService : Service() {
                     if (st.phase == com.plnt.client.stream.StreamSendPhase.ENDED ||
                         st.phase == com.plnt.client.stream.StreamSendPhase.FAILED
                     ) {
-                        if (sendSession != null && sendSession?.current?.phase == st.phase) {
+                        val s = sendSession
+                        if (s != null && s.current.phase == st.phase) {
+                            // stop() releases capture and WebRTC; a FAILED
+                            // session has not done that on its own. Idempotent.
+                            runCatching { s.stop() }
                             sendSession = null
+                            if (s.awaitingStreamId) orphanedSend = s
                             promoteForProjection(false)
                         }
                     }
@@ -582,18 +624,38 @@ class VoiceService : Service() {
         val s = sendSession ?: return
         sendSession = null
         runCatching { s.stop() }
+        // Stopped before `notifystreamstarted` arrived: the server will still
+        // start it, so keep the session around to send `stopstream` then.
+        if (s.awaitingStreamId) orphanedSend = s
         promoteForProjection(false)
         sendStateListener?.invoke(StreamSendState())
     }
 
     /** Adds or drops the `mediaProjection` foreground type on top of the voice types. */
     private fun promoteForProjection(on: Boolean) {
+        projectionActive = on
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        runCatching { startForeground(NOTIFICATION_ID, buildNotification(), foregroundTypes(micForegroundActive)) }
+            .onFailure {
+                Log.w(TAG, "foreground type update (projection=$on) refused", it)
+                // Don't let a refused projection type poison every later
+                // startForeground(); the share fails on its own without it.
+                if (on) projectionActive = false
+            }
+    }
+
+    /**
+     * The one place foreground-service types are computed. Every
+     * startForeground() goes through here, so a notification action or a
+     * reconnect mid-share cannot strip `mediaProjection` (Android stops the
+     * projection the moment the type goes away).
+     */
+    private fun foregroundTypes(withMicrophone: Boolean): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
         var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-        if (micForegroundActive) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        if (on) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-        runCatching { startForeground(NOTIFICATION_ID, buildNotification(), types) }
-            .onFailure { Log.w(TAG, "foreground type update (projection=$on) refused", it) }
+        if (withMicrophone) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        if (projectionActive) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        return types
     }
 
     /** The viewer screen's renderer; null when it goes away. Survives across sessions. */
@@ -685,6 +747,13 @@ class VoiceService : Service() {
         transmitting = false
         emitState()
         if (notify) emitEvent(CoreEvent.Disconnected(cause, reason))
+        // A hang-up also ends the *started* state, or START_STICKY would bring
+        // this instance back after a kill with an "Idle" call notification.
+        // A bound UI keeps the instance alive regardless, and the next connect
+        // starts it again. stopSelfResult(lastStartId) is a no-op when a newer
+        // start is already queued — a connect racing this hang-up — so that
+        // start still gets its startForeground().
+        if (cause == DisconnectCause.USER) stopSelfResult(lastStartId)
     }
 
     /**
@@ -724,6 +793,7 @@ class VoiceService : Service() {
             )
         }
         mediaSession.release()
+        if (eglBaseLazy.isInitialized()) runCatching { eglBase.release() }
         super.onDestroy()
     }
 
@@ -1052,7 +1122,13 @@ class VoiceService : Service() {
             }
             is CoreEvent.RawCommand -> {
                 streamSession?.onRaw(ev)
-                sendSession?.onRaw(ev)
+                // An orphaned setup is older than any live one, so the first
+                // `notifystreamstarted` for us is its; it must not reach the
+                // new session as well.
+                val orphan = orphanedSend
+                val consumed = orphan != null && orphan.onLateRaw(ev)
+                if (orphan != null && !orphan.awaitingStreamId) orphanedSend = null
+                if (!consumed) sendSession?.onRaw(ev)
                 emitEvent(ev)
             }
             is CoreEvent.Disconnected -> {
@@ -1067,6 +1143,10 @@ class VoiceService : Service() {
                 // A drop that raced a teardown we have already reported.
                 if (disconnectCause != null) return
                 if (hasConnectedOnce && connectionParams != null) {
+                    // Not routed through emitEvent, so Diag has to hear about it
+                    // here — otherwise its watchdog reads the reconnect's
+                    // silence as a stall and the drop itself is never shipped.
+                    Diag.disconnected("cause=${ev.cause} reason=${ev.reason} (reconnecting)", unrequested = true)
                     scheduleReconnect(reconnectBackoffMs)
                 } else {
                     // First-connect failure delivered async instead of thrown
@@ -1103,6 +1183,7 @@ class VoiceService : Service() {
         reconnectAttempts += 1
         reconnecting = true
         Log.i(TAG, "reconnect attempt $reconnectAttempts in ${delayMs}ms")
+        Diag.disconnected("reconnect attempt $reconnectAttempts in ${delayMs}ms", unrequested = false)
         updateNotification()
         emitEvent(CoreEvent.Reconnecting)
         reconnectJob?.cancel()
@@ -1128,6 +1209,7 @@ class VoiceService : Service() {
     private fun enterAwaitingNetwork() {
         val wasAwaiting = awaitingNetwork
         awaitingNetwork = true
+        if (!wasAwaiting) Diag.disconnected("awaiting network", unrequested = false)
         reconnecting = true
         reconnectJob?.cancel()
         teardownClientOnly()
@@ -1153,6 +1235,9 @@ class VoiceService : Service() {
         // A stream cannot outlive the connection its signalling rides on.
         stopWatching()
         stopScreenShare()
+        // Its late `notifystreamstarted` can only come over this connection,
+        // and the server ends our streams with it anyway.
+        orphanedSend = null
         runCatching { client?.disconnect() }
         runCatching { client?.close() }
         client = null
@@ -1160,18 +1245,40 @@ class VoiceService : Service() {
 
     // ---- wake lock ------------------------------------------------------
 
+    /**
+     * Partial wake lock plus a Wi-Fi lock. The wake lock keeps the CPU up; the
+     * Wi-Fi lock keeps the radio out of power-save, which otherwise batches
+     * packets with the screen off — late voice and missed pings on Wi-Fi.
+     */
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "plnt:voice").apply {
-            setReferenceCounted(false)
-            acquire()
+        if (wakeLock?.isHeld != true) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "plnt:voice").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+        if (wifiLock?.isHeld != true) {
+            val wm = applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager ?: return
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = runCatching {
+                wm.createWifiLock(mode, "plnt:voice").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }.onFailure { Log.w(TAG, "wifi lock unavailable", it) }.getOrNull()
         }
     }
 
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+        wifiLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
+        wifiLock = null
     }
 
     // ---- notification -----------------------------------------------------
@@ -1216,12 +1323,7 @@ class VoiceService : Service() {
         }
         if (withMicrophone) {
             val withMic = runCatching {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-                )
+                startForeground(NOTIFICATION_ID, notification, foregroundTypes(withMicrophone = true))
             }
             if (withMic.isSuccess) {
                 micForegroundActive = true
@@ -1232,7 +1334,7 @@ class VoiceService : Service() {
         }
         micForegroundActive = false
         runCatching {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            startForeground(NOTIFICATION_ID, notification, foregroundTypes(withMicrophone = false))
         }.onFailure {
             // Nothing left to fall back to. Logged rather than rethrown: a
             // service that is merely not in the foreground can still hold the
