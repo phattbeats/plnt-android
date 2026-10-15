@@ -24,6 +24,16 @@ jobs:
     # plus NDK + platform tools. The default 360-minute cap is generous.
     timeout-minutes: 60
 
+    # PHA-4176: a real TeamSpeak 3 server for the two-client voice test in
+    # the host suite (core/tests/two_client_audio.rs, via PLNT_TS3_ADDR).
+    services:
+      teamspeak:
+        image: teamspeak:3.13
+        env:
+          TS3SERVER_LICENSE: accept
+        ports:
+          - 9987:9987/udp
+
     env:
       # Reproducible pins — README's "Pinned toolchain versions" table.
       NDK_VERSION: "27.0.12077973"
@@ -169,6 +179,8 @@ jobs:
       # needed), so running it here catches regressions `--test
       # identity_roundtrip` alone missed (#3249).
       - name: "Test: plnt-core host suite"
+        env:
+          PLNT_TS3_ADDR: "127.0.0.1:9987"
         run: |
           sudo apt-get update && sudo apt-get install -y libopus-dev
-          cargo test -p plnt-core --target x86_64-unknown-linux-gnu
+          cargo test -p plnt-core --target x86_64-unknown-linux-gnu -- --nocapture
