@@ -114,3 +114,18 @@ video) come through as silence.
 
 Every step of a share and of watching one goes into the diagnostic trace as
 `share: …` / `watch: …` lines.
+
+### One share, and its quality (PHA-4176)
+
+At most one share of ours is live. A `notifystreamstarted` naming us that no
+session is waiting for (a share restarted before the server answered, or a
+double tap) gets an immediate `stopstream`; the share button also ignores a
+second tap while the system capture prompt is up.
+
+Video settings live in Settings → Screen sharing: resolution (1080p / 720p /
+480p), frame rate (60 / 30 / 15) and bitrate (8 / 4.5 / 2.5 / 1 Mbps), each
+defaulting to Automatic. Automatic is 1080p, 60 fps, 8 Mbps on an unmetered
+network and 720p, 30 fps, 2.5 Mbps on metered data
+(`stream/StreamQuality.kt`). The bitrate goes to the server in `setupstream`
+and, with the frame rate, is set as the encoder ceiling on every viewer's
+video sender. Changes apply to the next share.

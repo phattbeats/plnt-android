@@ -2,6 +2,7 @@ package com.plnt.client.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
@@ -31,6 +32,9 @@ class PlntDataStore(private val context: Context) {
         val PREFERRED_INPUT_DEVICE = stringPreferencesKey("preferred_input_device")
         val PREFERRED_OUTPUT_DEVICE = stringPreferencesKey("preferred_output_device")
         val SHARE_AUDIO = booleanPreferencesKey("share_audio")
+        val STREAM_RESOLUTION = intPreferencesKey("stream_resolution")
+        val STREAM_FPS = intPreferencesKey("stream_fps")
+        val STREAM_BITRATE = intPreferencesKey("stream_bitrate_kbps")
 
         /**
          * The battery-optimisation exemption is asked for once, at the first
@@ -107,6 +111,9 @@ class PlntDataStore(private val context: Context) {
             preferredInputDeviceKey = prefs[Keys.PREFERRED_INPUT_DEVICE],
             preferredOutputDeviceKey = prefs[Keys.PREFERRED_OUTPUT_DEVICE],
             shareAudio = prefs[Keys.SHARE_AUDIO] ?: true,
+            streamResolution = prefs[Keys.STREAM_RESOLUTION] ?: 0,
+            streamFps = prefs[Keys.STREAM_FPS] ?: 0,
+            streamBitrateKbps = prefs[Keys.STREAM_BITRATE] ?: 0,
         )
     }
 
@@ -123,6 +130,9 @@ class PlntDataStore(private val context: Context) {
             it[Keys.PTT_VOLUME_BUTTON] = settings.pttOnVolumeButton
             it[Keys.PTT_HEADSET_BUTTON] = settings.pttOnHeadsetButton
             it[Keys.SHARE_AUDIO] = settings.shareAudio
+            it[Keys.STREAM_RESOLUTION] = settings.streamResolution
+            it[Keys.STREAM_FPS] = settings.streamFps
+            it[Keys.STREAM_BITRATE] = settings.streamBitrateKbps
             it.remove(Keys.LEGACY_PTT_SOURCE)
             it.remove(Keys.LEGACY_INPUT_ROUTE)
             // Automatic is stored as the absence of the key, matching how loadSettings

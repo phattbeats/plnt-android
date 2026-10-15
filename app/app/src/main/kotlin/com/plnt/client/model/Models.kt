@@ -101,6 +101,11 @@ data class Settings(
     // PHA-4176: a screen share carries what the phone is playing unless this
     // is switched off. On by default — a share without sound was the bug.
     val shareAudio: Boolean = true,
+    // PHA-4176: screen-share video. 0 = Automatic: the most the share can
+    // carry on Wi-Fi, a lighter profile on mobile data (StreamQualityPolicy).
+    val streamResolution: Int = 0,
+    val streamFps: Int = 0,
+    val streamBitrateKbps: Int = 0,
 )
 
 sealed class Screen {

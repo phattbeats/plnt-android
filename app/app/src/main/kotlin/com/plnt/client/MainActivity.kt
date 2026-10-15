@@ -45,14 +45,20 @@ class MainActivity : ComponentActivity() {
     private val requestScreenCapture = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
+        captureRequestPending = false
         val data = result.data
         if (result.resultCode == RESULT_OK && data != null) viewModel.startScreenShare(data)
     }
 
     private fun launchScreenCapture() {
+        // PHA-4176: a second tap while the system prompt is still coming up
+        // used to queue a second prompt, and with it a second share.
+        if (captureRequestPending) return
         val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java) ?: return
-        runCatching { requestScreenCapture.launch(mpm.createScreenCaptureIntent()) }
+        captureRequestPending = runCatching { requestScreenCapture.launch(mpm.createScreenCaptureIntent()) }.isSuccess
     }
+
+    private var captureRequestPending = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,6 +143,7 @@ class MainActivity : ComponentActivity() {
                             onInputDeviceChange = viewModel::setPreferredInputDevice,
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
+                            onStreamQualityChange = viewModel::setStreamQuality,
                             onImportIdentity = viewModel::importIdentity,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },

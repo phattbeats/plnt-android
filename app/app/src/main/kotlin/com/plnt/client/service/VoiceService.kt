@@ -156,7 +156,9 @@ class VoiceService : Service() {
     private var sendSession: StreamSenderSession? = null
     private var sendStateListener: ((StreamSendState) -> Unit)? = null
     // A share stopped before the server named it; it still owes a `stopstream`.
-    private var orphanedSend: StreamSenderSession? = null
+    // Oldest first. Several can be pending at once (a share restarted twice
+    // before the server answered); each owes its own `stopstream`.
+    private val orphanedSends = ArrayDeque<StreamSenderSession>()
     /** A screen share holds the `mediaProjection` foreground type; see [foregroundTypes]. */
     private var projectionActive = false
 
@@ -584,21 +586,24 @@ class VoiceService : Service() {
      * the foreground with type `mediaProjection`, so the type is added before
      * capture starts and dropped again in [stopScreenShare].
      */
-    fun startScreenShare(permissionData: Intent, title: String, withAudio: Boolean) {
+    fun startScreenShare(permissionData: Intent, title: String, settings: com.plnt.client.model.Settings) {
         stopScreenShare()
         if (client == null) return
         promoteForProjection(true)
+        // PHA-4176: Automatic = the most the share can carry on Wi-Fi, a lighter
+        // profile on metered data; anything picked in Settings wins.
+        val metered = runCatching { connectivityManager.isActiveNetworkMetered }.getOrDefault(false)
+        val quality = com.plnt.client.stream.StreamQualityPolicy.resolve(
+            settings.streamResolution, settings.streamFps, settings.streamBitrateKbps, metered,
+        )
         val dm = resources.displayMetrics
-        // Long edge capped at 1280: TS desktop streams default to 720p and a
-        // phone's native resolution would just cost bitrate.
-        val scale = minOf(1f, 1280f / maxOf(dm.widthPixels, dm.heightPixels))
-        val w = ((dm.widthPixels * scale).toInt() / 2) * 2
-        val h = ((dm.heightPixels * scale).toInt() / 2) * 2
+        val (w, h) = com.plnt.client.stream.StreamQualityPolicy.frameSize(quality.longEdge, dm.widthPixels, dm.heightPixels)
+        Diag.add("share: quality ${w}x$h ${quality.fps}fps ${quality.bitrateKbps}kbps metered=$metered")
         val session = StreamSenderSession(
             context = applicationContext,
             eglBase = eglBase,
             permissionData = permissionData,
-            withAudio = withAudio,
+            withAudio = settings.shareAudio,
             ownClientId = { ownClientId },
             sendRaw = { name, args -> sendRawCommand(name, args) },
             onState = { st ->
@@ -613,7 +618,7 @@ class VoiceService : Service() {
                             // session has not done that on its own. Idempotent.
                             runCatching { s.stop() }
                             sendSession = null
-                            if (s.awaitingStreamId) orphanedSend = s
+                            if (s.awaitingStreamId) orphanedSends.addLast(s)
                             promoteForProjection(false)
                         }
                     }
@@ -621,7 +626,7 @@ class VoiceService : Service() {
             },
         )
         sendSession = session
-        session.start(title, w, h)
+        session.start(title, w, h, quality.fps, quality.bitrateKbps)
     }
 
     fun stopScreenShare() {
@@ -630,9 +635,27 @@ class VoiceService : Service() {
         runCatching { s.stop() }
         // Stopped before `notifystreamstarted` arrived: the server will still
         // start it, so keep the session around to send `stopstream` then.
-        if (s.awaitingStreamId) orphanedSend = s
+        if (s.awaitingStreamId) orphanedSends.addLast(s)
         promoteForProjection(false)
         sendStateListener?.invoke(StreamSendState())
+    }
+
+    /**
+     * PHA-4176: at most one share of ours is ever live. A `notifystreamstarted`
+     * naming us that no session is waiting for (the live share already has
+     * its id, or nothing is sharing) is a stray — B-mech's test showed 2-3 of
+     * them at once — so it is stopped on the spot. Returns whether [ev] was one.
+     */
+    private fun stopStrayOwnStream(ev: CoreEvent.RawCommand): Boolean {
+        if (ev.name != "notifystreamstarted") return false
+        val own = ownClientId ?: return false
+        if (ev.args["clid"] != own.toString()) return false
+        val id = ev.args["id"] ?: return false
+        val live = sendSession
+        if (live != null && (live.awaitingStreamId || live.current.streamId == id)) return false
+        Diag.add("share: stopping stray stream $id (live=${live?.current?.streamId})")
+        sendRawCommand("stopstream", mapOf("id" to id))
+        return true
     }
 
     /** Adds or drops the `mediaProjection` foreground type on top of the voice types. */
@@ -1132,10 +1155,9 @@ class VoiceService : Service() {
                 // An orphaned setup is older than any live one, so the first
                 // `notifystreamstarted` for us is its; it must not reach the
                 // new session as well.
-                val orphan = orphanedSend
-                val consumed = orphan != null && orphan.onLateRaw(ev)
-                if (orphan != null && !orphan.awaitingStreamId) orphanedSend = null
-                if (!consumed) sendSession?.onRaw(ev)
+                val consumed = orphanedSends.any { it.onLateRaw(ev) }
+                orphanedSends.removeAll { !it.awaitingStreamId }
+                if (!consumed && !stopStrayOwnStream(ev)) sendSession?.onRaw(ev)
                 emitEvent(ev)
             }
             is CoreEvent.Disconnected -> {
@@ -1244,7 +1266,7 @@ class VoiceService : Service() {
         stopScreenShare()
         // Its late `notifystreamstarted` can only come over this connection,
         // and the server ends our streams with it anyway.
-        orphanedSend = null
+        orphanedSends.clear()
         val old = client ?: return
         client = null
         runCatching { old.disconnect() }

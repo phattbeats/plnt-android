@@ -90,6 +90,9 @@ class StreamSenderSession(
     private var audioSource: org.webrtc.AudioSource? = null
     private var audioTrack: org.webrtc.AudioTrack? = null
     @Volatile private var audioCapture: ShareAudioCapture? = null
+    // PHA-4176: the encoder ceiling per viewer, from the share's quality settings.
+    private var maxFps = 30
+    private var maxBitrateKbps = 4608
     private val viewers = HashMap<Long, PeerConnection>()
     private var sid: String = ""
     private var nextReturnCode = 85000
@@ -159,8 +162,10 @@ class StreamSenderSession(
     val awaitingStreamId: Boolean get() = setupReturnCode != null && sid.isEmpty() && !setupRefused
 
     /** Start capturing and announce the share as [title]. */
-    fun start(title: String, width: Int, height: Int, fps: Int = 30) {
+    fun start(title: String, width: Int, height: Int, fps: Int = 30, bitrateKbps: Int = 4608) {
         check(capturer == null) { "already sharing" }
+        maxFps = fps
+        maxBitrateKbps = bitrateKbps
         update(StreamSendState(phase = StreamSendPhase.STARTING, title = title))
         val helper = SurfaceTextureHelper.create("ScreenShare", eglBase.eglBaseContext)
         val src = factory.createVideoSource(/* isScreencast = */ true)
@@ -200,7 +205,7 @@ class StreamSenderSession(
         capturer = cap
         track = factory.createVideoTrack("outgoing_video_track", src)
         startAudio(cap)
-        trace("setupstream ${width}x$height audio=${audioTrack != null}")
+        trace("setupstream ${width}x$height ${fps}fps ${bitrateKbps}kbps audio=${audioTrack != null}")
         setupReturnCode = sendCommand(
             "setupstream",
             mapOf(
@@ -208,7 +213,7 @@ class StreamSenderSession(
                 "type" to "3",
                 "accessibility" to "1",
                 "mode" to "1",
-                "bitrate" to "4608",
+                "bitrate" to bitrateKbps.toString(),
                 "viewer_limit" to "0",
                 "audio" to if (audioTrack != null) "1" else "0",
             ),
@@ -393,10 +398,11 @@ class StreamSenderSession(
         }
         val peer = factory.createPeerConnection(config, observerFor(clid)) ?: return
         viewers[clid] = peer
-        peer.addTransceiver(
+        val video = peer.addTransceiver(
             t,
             RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY, listOf("outgoing_video")),
         )
+        capVideo(clid, video.sender)
         val audio = audioTrack
         if (audio != null) {
             peer.addTransceiver(
@@ -449,6 +455,22 @@ class StreamSenderSession(
             },
             MediaConstraints(),
         )
+    }
+
+    /**
+     * Holds the encoder to the share's bitrate and frame rate. Without this
+     * libwebrtc picks its own ceiling, which is what made the Settings choice
+     * (and Automatic's "max on Wi-Fi") meaningless.
+     */
+    private fun capVideo(clid: Long, sender: org.webrtc.RtpSender) {
+        runCatching {
+            val p = sender.parameters
+            p.encodings.forEach {
+                it.maxBitrateBps = maxBitrateKbps * 1000
+                it.maxFramerate = maxFps
+            }
+            check(sender.setParameters(p)) { "setParameters refused" }
+        }.onFailure { trace("video limits for viewer $clid not applied: $it") }
     }
 
     /** Drops [clid]'s peer — only if it is still [expected], when given. */
