@@ -100,4 +100,29 @@ class TsOfferShapeTest {
         assertFalse(out.contains("a=candidate:"))
         assertNotNull(out)
     }
+
+    @Test
+    fun stereoOpusIsRequestedOnlyOnOpusFmtp() {
+        val sdp = listOf(
+            "m=video 9 UDP/TLS/RTP/SAVPF 96",
+            "a=fmtp:96 x-google-start-bitrate=800",
+            "m=audio 9 UDP/TLS/RTP/SAVPF 111 63",
+            "a=rtpmap:111 opus/48000/2",
+            "a=fmtp:111 minptime=10;useinbandfec=1",
+            "a=rtpmap:63 red/48000/2",
+            "a=fmtp:63 111/111",
+            "",
+        ).joinToString("\r\n")
+        val out = TsOfferShape.withStereoOpus(sdp).split("\r\n")
+        assertTrue(out.contains("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1"))
+        assertTrue(out.contains("a=fmtp:96 x-google-start-bitrate=800"))
+        assertTrue(out.contains("a=fmtp:63 111/111"))
+        // Idempotent: a second pass does not stack the parameters.
+        assertEquals(TsOfferShape.withStereoOpus(sdp), TsOfferShape.withStereoOpus(TsOfferShape.withStereoOpus(sdp)))
+    }
+
+    @Test
+    fun stereoOpusLeavesAnOfferWithoutOpusAlone() {
+        assertEquals(offer.replace("opus", "PCMU"), TsOfferShape.withStereoOpus(offer.replace("opus", "PCMU")))
+    }
 }

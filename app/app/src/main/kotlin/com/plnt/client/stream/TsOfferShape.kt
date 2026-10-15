@@ -50,6 +50,22 @@ object TsOfferShape {
             .joinToString(nl)
     }
 
+    /**
+     * PHA-4176: the share's audio is the phone's playback, so ask for stereo
+     * Opus the way a desktop streamer's offer does. libwebrtc's default fmtp
+     * (`minptime=10;useinbandfec=1`) is mono-only on the wire.
+     */
+    fun withStereoOpus(sdp: String): String {
+        val nl = if (sdp.contains("\r\n")) "\r\n" else "\n"
+        val lines = sdp.split(nl)
+        val opus = lines.mapNotNull { Regex("^a=rtpmap:(\\d+) opus/48000").find(it)?.groupValues?.get(1) }.toSet()
+        if (opus.isEmpty()) return sdp
+        return lines.joinToString(nl) { l ->
+            val pt = Regex("^a=fmtp:(\\d+) ").find(l)?.groupValues?.get(1)
+            if (pt == null || pt !in opus || l.contains("stereo=")) l else "$l;stereo=1;sprop-stereo=1"
+        }
+    }
+
     private fun shapeVideo(sec: List<String>): List<String>? {
         val rtpmap = HashMap<String, String>() // pt -> "H264/90000"
         val fmtp = HashMap<String, String>()   // pt -> params

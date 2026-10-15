@@ -136,6 +136,7 @@ class MainActivity : ComponentActivity() {
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
                             onInputDeviceChange = viewModel::setPreferredInputDevice,
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
+                            onShareAudioChange = viewModel::setShareAudio,
                             onImportIdentity = viewModel::importIdentity,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },

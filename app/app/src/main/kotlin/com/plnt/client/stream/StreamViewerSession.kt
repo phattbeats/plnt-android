@@ -314,6 +314,10 @@ class StreamViewerSession(
     }
 
     private fun update(s: StreamViewState) {
+        // PHA-4176: phase changes only (not every resize) go into the uploaded trace.
+        if (s.phase != state.phase) {
+            com.plnt.client.service.Diag.add("watch: ${s.phase} ${s.detail ?: ""}".trimEnd())
+        }
         state = s
         onState(s)
     }

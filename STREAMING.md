@@ -50,7 +50,8 @@ construction.
   reach the streamer directly fails with "could not reach the streamer". The
   planned fix is a user-supplied TURN server in Settings, never one we host.
 - **One stream at a time** each way: one stream watched, one share sent.
-  Sending is implemented (see "Sending" below); it is video only (`audio=0`).
+  Sending is implemented (see "Sending" below), with the phone's own audio
+  (see "Share audio").
 - **Audio routing.** The share's audio plays through libwebrtc's own audio
   device module, alongside the voice `AudioEngine`. Both target the
   communication stream, so it works, but volume keys act on both together.
@@ -64,7 +65,8 @@ construction.
 Proven against a live TS6 6.0 server and desktop viewer with the RAID sender
 probe (PHA-3289). Implemented in `stream/StreamSenderSession.kt`.
 
-1. `setupstream name=<title> type=3 accessibility=1 mode=1 bitrate=4608 viewer_limit=0 audio=0`.
+1. `setupstream name=<title> type=3 accessibility=1 mode=1 bitrate=4608 viewer_limit=0 audio=1`
+   (`audio=0` when the share goes out picture-only; see "Share audio").
    The server **requires `accessibility`** (error 1542 without it) and echoes it
    back as `access` in `notifystreamstarted clid=<us> id=<sid>`.
 2. A viewer clicking "watch" arrives as `notifyjoinstreamrequest clid=<viewer> id=<sid> is_remove=0`.
@@ -90,3 +92,25 @@ candidates (they are trickled).
 Android 14+ refuses MediaProjection unless the service is already foreground
 with type `mediaProjection`; `VoiceService.startScreenShare` adds that type for
 the duration of the share and drops it afterwards.
+
+### Share audio (PHA-4176)
+
+A share carries what the phone is playing, on by default (Settings → Screen
+sharing → "Share phone audio"). `stream/ShareAudioCapture.kt` records it
+with Android's playback capture (API 29+) on the share's own MediaProjection,
+matching `USAGE_MEDIA`, `USAGE_GAME` and `USAGE_UNKNOWN`. libwebrtc's Java
+audio module can only record a microphone, so the capture goes in through
+its `AudioBufferCallback`: every 10 ms buffer the module records is
+overwritten with playback, or zeroed, before encoding. Mic audio never
+reaches the share, and the voice call's own playback
+(`USAGE_VOICE_COMMUNICATION`) cannot be captured, so voices do not echo into
+it. The audio m-line is then `sendonly` stereo Opus on stream id
+`outgoing_video`, and `setupstream` says `audio=1`, which is what makes the
+desktop viewer show its audio control.
+
+Below API 29, without the mic permission, or with the switch off, the share
+is picture-only and says `audio=0`. Apps that opt out of capture (most DRM
+video) come through as silence.
+
+Every step of a share and of watching one goes into the diagnostic trace as
+`share: …` / `watch: …` lines.
