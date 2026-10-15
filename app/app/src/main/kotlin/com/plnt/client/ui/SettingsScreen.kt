@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
+import com.plnt.client.stream.StreamQualityPolicy
 import com.plnt.client.ui.theme.Bg
 import com.plnt.client.ui.theme.OnBrand
 import com.plnt.client.ui.theme.TextNormal
@@ -83,6 +84,7 @@ fun SettingsScreen(
     onInputDeviceChange: (String?) -> Unit,
     onOutputDeviceChange: (String?) -> Unit,
     onShareAudioChange: (Boolean) -> Unit,
+    onStreamQualityChange: (resolution: Int, fps: Int, bitrateKbps: Int) -> Unit,
     onImportIdentity: (String) -> Boolean,
     onCreateIdentity: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -91,6 +93,7 @@ fun SettingsScreen(
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
+    var qualityPicker by remember { mutableStateOf<QualityKnob?>(null) }
 
     Scaffold(
         containerColor = Bg,
@@ -142,7 +145,15 @@ fun SettingsScreen(
 
             Section("Screen sharing", Icons.Outlined.Headset) {
                 SwitchRow("Share phone audio", "Viewers hear what the phone plays", settings.shareAudio, onShareAudioChange)
-                Footnote("Your voice still goes through the call. Apps that block recording, like most paid video apps, share silence.")
+                QualityKnob.entries.forEach { knob ->
+                    RowDivider()
+                    NavRow(knob.title, knob.label(knob.read(settings))) { qualityPicker = knob }
+                }
+                Footnote(
+                    "Automatic shares at full quality (1080p, 60 fps, 8 Mbps) on Wi-Fi and at 720p, 30 fps, 2.5 Mbps on mobile data. " +
+                        "Changes apply to the next share. Your voice still goes through the call. " +
+                        "Apps that block recording, like most paid video apps, share silence.",
+                )
             }
 
             Section("Background", Icons.Outlined.BatteryChargingFull) {
@@ -191,6 +202,20 @@ fun SettingsScreen(
                 clipboard.setText(AnnotatedString(identityExport))
                 showExport = false
             })
+        }
+    }
+
+    qualityPicker?.let { knob ->
+        SettingsSheet(title = knob.title, onDismiss = { qualityPicker = null }) {
+            val current = knob.read(settings)
+            (listOf(StreamQualityPolicy.AUTO) + knob.options).forEachIndexed { i, value ->
+                if (i > 0) RowDivider()
+                ChoiceRow(knob.label(value), null, selected = value == current) {
+                    val next = knob.write(settings, value)
+                    onStreamQualityChange(next.streamResolution, next.streamFps, next.streamBitrateKbps)
+                    qualityPicker = null
+                }
+            }
         }
     }
 
@@ -395,5 +420,31 @@ private fun SettingsSheet(title: String, onDismiss: () -> Unit, content: @Compos
             Spacer(modifier = Modifier.height(16.dp))
             content()
         }
+    }
+}
+
+/** PHA-4176: the three screen-share video settings, each 0 (Automatic) or a value from StreamQualityPolicy. */
+private enum class QualityKnob(val title: String, val options: List<Int>) {
+    RESOLUTION("Video resolution", StreamQualityPolicy.RESOLUTIONS),
+    FRAME_RATE("Frame rate", StreamQualityPolicy.FRAME_RATES),
+    BITRATE("Video bitrate", StreamQualityPolicy.BITRATES_KBPS);
+
+    fun read(s: Settings): Int = when (this) {
+        RESOLUTION -> s.streamResolution
+        FRAME_RATE -> s.streamFps
+        BITRATE -> s.streamBitrateKbps
+    }
+
+    fun write(s: Settings, value: Int): Settings = when (this) {
+        RESOLUTION -> s.copy(streamResolution = value)
+        FRAME_RATE -> s.copy(streamFps = value)
+        BITRATE -> s.copy(streamBitrateKbps = value)
+    }
+
+    fun label(value: Int): String = when {
+        value == StreamQualityPolicy.AUTO -> "Automatic"
+        this == RESOLUTION -> StreamQualityPolicy.resolutionLabel(value)
+        this == FRAME_RATE -> "$value fps"
+        else -> StreamQualityPolicy.bitrateLabel(value)
     }
 }
