@@ -469,6 +469,12 @@ private val bluetoothDeviceTypes = setOf(
     AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
 )
 
+private val wiredHeadsetTypes = setOf(
+    AudioDeviceInfo.TYPE_WIRED_HEADSET,
+    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+    AudioDeviceInfo.TYPE_USB_HEADSET,
+)
+
 private val builtInDeviceTypes = setOf(
     AudioDeviceInfo.TYPE_BUILTIN_MIC,
     AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
@@ -587,9 +593,17 @@ internal class BluetoothScoRouter(
             return
         }
 
-        val hasScoDevice = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            .any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
-        if (!hasScoDevice && !audioManager.isBluetoothScoAvailableOffCall) return
+        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val hasScoDevice = outputs.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+        if (!hasScoDevice && !audioManager.isBluetoothScoAvailableOffCall) {
+            // Same default as the API 31+ chain: no headset means loudspeaker,
+            // not the earpiece MODE_IN_COMMUNICATION picks on its own.
+            if (pinnedType == null) {
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = outputs.none { it.type in wiredHeadsetTypes }
+            }
+            return
+        }
 
         if (!scoReceiverRegistered) {
             context.registerReceiver(scoStateReceiver, IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED))
@@ -632,6 +646,11 @@ internal class BluetoothScoRouter(
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
+            // No headset: the loudspeaker, like Discord. The earpiece made other
+            // people inaudible unless the phone was held to the ear (PHA-4176).
+            // AEC on the VOICE_COMMUNICATION source keeps it from echoing; the
+            // earpiece is still one tap away in Settings → Speaker.
+            ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
         if (preferred != null) {
             val ok = audioManager.setCommunicationDevice(preferred)
