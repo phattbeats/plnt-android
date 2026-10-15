@@ -30,6 +30,7 @@ class PlntDataStore(private val context: Context) {
         val PTT_HEADSET_BUTTON = booleanPreferencesKey("ptt_headset_button")
         val PREFERRED_INPUT_DEVICE = stringPreferencesKey("preferred_input_device")
         val PREFERRED_OUTPUT_DEVICE = stringPreferencesKey("preferred_output_device")
+        val SHARE_AUDIO = booleanPreferencesKey("share_audio")
 
         /**
          * The battery-optimisation exemption is asked for once, at the first
@@ -105,6 +106,7 @@ class PlntDataStore(private val context: Context) {
             // Absent key = Automatic, which is also the data class default.
             preferredInputDeviceKey = prefs[Keys.PREFERRED_INPUT_DEVICE],
             preferredOutputDeviceKey = prefs[Keys.PREFERRED_OUTPUT_DEVICE],
+            shareAudio = prefs[Keys.SHARE_AUDIO] ?: true,
         )
     }
 
@@ -120,6 +122,7 @@ class PlntDataStore(private val context: Context) {
             it[Keys.PTT_MODE] = settings.pttMode.name
             it[Keys.PTT_VOLUME_BUTTON] = settings.pttOnVolumeButton
             it[Keys.PTT_HEADSET_BUTTON] = settings.pttOnHeadsetButton
+            it[Keys.SHARE_AUDIO] = settings.shareAudio
             it.remove(Keys.LEGACY_PTT_SOURCE)
             it.remove(Keys.LEGACY_INPUT_ROUTE)
             // Automatic is stored as the absence of the key, matching how loadSettings

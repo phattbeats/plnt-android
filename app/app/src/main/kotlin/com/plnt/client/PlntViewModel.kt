@@ -415,7 +415,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnect() {
         cancelInitialRetry()
         userDisconnected = true
-        runOnService { it.disconnect() }
+        runOnService { it.disconnect("app button") }
         _state.update {
             it.copy(
                 connectionStatus = it.connectionStatus.disconnected(),
@@ -460,7 +460,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun startScreenShare(permissionData: android.content.Intent) {
         val nick = _state.value.bookmarks.firstOrNull { it.id == _state.value.connectionStatus.activeBookmarkId }?.nickname
         val title = if (nick.isNullOrBlank()) "Phone screen" else "$nick's phone"
-        runOnService { it.startScreenShare(permissionData, title) }
+        val withAudio = _state.value.settings.shareAudio
+        runOnService { it.startScreenShare(permissionData, title, withAudio) }
     }
 
     fun stopScreenShare() {
@@ -569,6 +570,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(settings = it.settings.copy(preferredOutputDeviceKey = key)) }
         viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
         runOnService { it.setPreferredOutputDevice(key) }
+    }
+
+    /** PHA-4176: include the phone's playback in the next screen share. */
+    fun setShareAudio(enabled: Boolean) {
+        _state.update { it.copy(settings = it.settings.copy(shareAudio = enabled)) }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
     }
 
     /** Enumerates without going through the service — works before the first connect. */

@@ -82,6 +82,7 @@ fun SettingsScreen(
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
     onInputDeviceChange: (String?) -> Unit,
     onOutputDeviceChange: (String?) -> Unit,
+    onShareAudioChange: (Boolean) -> Unit,
     onImportIdentity: (String) -> Boolean,
     onCreateIdentity: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -137,6 +138,11 @@ fun SettingsScreen(
 
             Section("Speaker", Icons.Outlined.Headset) {
                 DevicePicker(availableOutputDevices, settings.preferredOutputDeviceKey, onOutputDeviceChange)
+            }
+
+            Section("Screen sharing", Icons.Outlined.Headset) {
+                SwitchRow("Share phone audio", "Viewers hear what the phone plays", settings.shareAudio, onShareAudioChange)
+                Footnote("Your voice still goes through the call. Apps that block recording, like most paid video apps, share silence.")
             }
 
             Section("Background", Icons.Outlined.BatteryChargingFull) {

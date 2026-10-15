@@ -1,12 +1,17 @@
 package com.plnt.client.stream
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.plnt.client.core.CoreEvent
+import com.plnt.client.service.Diag
 import org.json.JSONObject
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
@@ -52,7 +57,9 @@ import org.webrtc.audio.JavaAudioDeviceModule
  *    H264 High and VP8, the formats TS streamers themselves send, are offered.
  *  - The track's stream id is `outgoing_video`, as TS streamers label theirs.
  *  - No candidates inline; they are trickled, the way TS streamers send them.
- *  - An inactive audio m-line follows video, matching the desktop offer shape.
+ *  - An audio m-line follows video, matching the desktop offer shape: stereo
+ *    Opus carrying the phone's own playback when the share has sound
+ *    (PHA-4176, [ShareAudioCapture]), inactive otherwise.
  *
  * Capture needs a MediaProjection grant ([permissionData], from the system
  * "Start recording or casting?" prompt) and, on Android 14+, a running
@@ -67,6 +74,8 @@ class StreamSenderSession(
     private val context: Context,
     private val eglBase: EglBase,
     private val permissionData: Intent,
+    /** Share the phone's playback audio too (Settings, on by default). */
+    private val withAudio: Boolean,
     private val ownClientId: () -> Long?,
     private val sendRaw: (name: String, args: Map<String, String>) -> Unit,
     private val onState: (StreamSendState) -> Unit,
@@ -78,6 +87,9 @@ class StreamSenderSession(
     private var textureHelper: SurfaceTextureHelper? = null
     private var source: VideoSource? = null
     private var track: VideoTrack? = null
+    private var audioSource: org.webrtc.AudioSource? = null
+    private var audioTrack: org.webrtc.AudioTrack? = null
+    @Volatile private var audioCapture: ShareAudioCapture? = null
     private val viewers = HashMap<Long, PeerConnection>()
     private var sid: String = ""
     private var nextReturnCode = 85000
@@ -96,9 +108,36 @@ class StreamSenderSession(
                 .createInitializationOptions(),
         )
         val adm = JavaAudioDeviceModule.builder(context.applicationContext)
-            // Video-only share; the voice call keeps the mic through AudioEngine.
+            // The module's own recording is only a 10 ms clock and a buffer:
+            // [ShareAudioCapture] overwrites every buffer with the phone's
+            // playback (or silence), so no mic audio ever reaches the share.
+            // The voice call keeps the mic through AudioEngine.
             .setUseHardwareAcousticEchoCanceler(false)
             .setUseHardwareNoiseSuppressor(false)
+            .setAudioSource(MediaRecorder.AudioSource.MIC)
+            .setUseStereoInput(true)
+            .setAudioBufferCallback { buffer, format, channels, rate, bytes, captureTimeNs ->
+                try {
+                    val cap = audioCapture
+                    if (cap != null) {
+                        cap.fill(buffer, format, channels, rate, bytes)
+                    } else {
+                        val dst = buffer.duplicate()
+                        dst.clear()
+                        dst.put(ByteArray(minOf(bytes, dst.capacity())))
+                    }
+                } catch (t: Throwable) {
+                    // WebRTC's record thread: a throw here would take the app down.
+                    Log.w(tag, "share audio buffer failed", t)
+                }
+                captureTimeNs
+            }
+            .setAudioRecordErrorCallback(object : JavaAudioDeviceModule.AudioRecordErrorCallback {
+                override fun onWebRtcAudioRecordInitError(msg: String?) = trace("audio module init error: $msg")
+                override fun onWebRtcAudioRecordStartError(code: JavaAudioDeviceModule.AudioRecordStartErrorCode?, msg: String?) =
+                    trace("audio module start error $code: $msg")
+                override fun onWebRtcAudioRecordError(msg: String?) = trace("audio module error: $msg")
+            })
             .createAudioDeviceModule()
         factory = PeerConnectionFactory.builder()
             .setAudioDeviceModule(adm)
@@ -160,6 +199,8 @@ class StreamSenderSession(
         source = src
         capturer = cap
         track = factory.createVideoTrack("outgoing_video_track", src)
+        startAudio(cap)
+        trace("setupstream ${width}x$height audio=${audioTrack != null}")
         setupReturnCode = sendCommand(
             "setupstream",
             mapOf(
@@ -169,15 +210,62 @@ class StreamSenderSession(
                 "mode" to "1",
                 "bitrate" to "4608",
                 "viewer_limit" to "0",
-                "audio" to "0",
+                "audio" to if (audioTrack != null) "1" else "0",
             ),
         )
+    }
+
+    /**
+     * Adds the phone's playback to the share. Needs Android 10 (playback
+     * capture) and the mic permission (Android gates playback capture on
+     * RECORD_AUDIO); without either the share goes out picture-only, which is
+     * what the server is then told, so the desktop shows no audio control.
+     */
+    private fun startAudio(cap: ScreenCapturerAndroid) {
+        if (!withAudio) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            trace("no share audio: Android ${Build.VERSION.SDK_INT} has no playback capture")
+            return
+        }
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            trace("no share audio: microphone permission not granted")
+            return
+        }
+        val projection = cap.mediaProjection ?: run {
+            trace("no share audio: capturer has no MediaProjection")
+            return
+        }
+        runCatching {
+            audioCapture = ShareAudioCapture(projection) { trace(it) }
+            // No voice processing: this is music and game audio, and echo
+            // cancellation / noise suppression / AGC would chew it up.
+            val constraints = MediaConstraints().apply {
+                listOf("googEchoCancellation", "googAutoGainControl", "googNoiseSuppression", "googHighpassFilter")
+                    .forEach { mandatory.add(MediaConstraints.KeyValuePair(it, "false")) }
+            }
+            val asrc = factory.createAudioSource(constraints)
+            audioSource = asrc
+            audioTrack = factory.createAudioTrack("outgoing_audio_track", asrc)
+        }.onFailure {
+            trace("no share audio: $it")
+            releaseAudio()
+        }
+    }
+
+    private fun releaseAudio() {
+        runCatching { audioTrack?.dispose() }
+        audioTrack = null
+        runCatching { audioSource?.dispose() }
+        audioSource = null
+        audioCapture?.release()
+        audioCapture = null
     }
 
     /** End the share and release everything. Idempotent. */
     fun stop(reason: String = "stopped") {
         if (closed) return
         closed = true
+        trace("stop: $reason (viewers=${viewers.size})")
         if (sid.isNotEmpty()) runCatching { sendCommand("stopstream", mapOf("id" to sid)) }
         // close() then dispose(): close alone leaves the native peer (and its
         // threads) alive until the factory goes, and disposing the factory
@@ -189,6 +277,7 @@ class StreamSenderSession(
         capturer = null
         runCatching { track?.dispose() }
         track = null
+        releaseAudio()
         runCatching { source?.dispose() }
         source = null
         runCatching { textureHelper?.dispose() }
@@ -208,24 +297,33 @@ class StreamSenderSession(
                 val own = ownClientId() ?: return
                 if (a["clid"] != own.toString() || sid.isNotEmpty()) return
                 sid = a["id"] ?: return
+                trace("live id=$sid")
                 update(state.copy(phase = StreamSendPhase.LIVE, streamId = sid))
             }
             "notifyjoinstreamrequest" -> {
                 if (sid.isEmpty() || a["id"] != sid) return
                 val clid = a["clid"]?.toLongOrNull() ?: return
+                trace("viewer $clid ${if (a["is_remove"] == "1") "leaves" else "asks to join"}")
                 if (a["is_remove"] == "1") dropViewer(clid) else admitViewer(clid)
             }
             "notifystreamclientleft", "notifyremovedfromstream" -> {
-                if (a["id"] == sid) a["clid"]?.toLongOrNull()?.let(::dropViewer)
+                if (a["id"] == sid) a["clid"]?.toLongOrNull()?.let {
+                    trace("${ev.name} viewer $it")
+                    dropViewer(it)
+                }
             }
             "notifystreamsignaling" -> {
                 if (a["id"] != sid) return
                 val clid = a["clid"]?.toLongOrNull() ?: return
-                val peer = viewers[clid] ?: return
                 val json = runCatching { JSONObject(a["json"] ?: return) }.getOrNull() ?: return
+                val peer = viewers[clid] ?: run {
+                    trace("signalling ${json.optString("cmd")} from $clid, who has no peer here")
+                    return
+                }
                 val args = json.optJSONObject("args") ?: JSONObject()
                 when (json.optString("cmd")) {
                     "answer" -> {
+                        trace("answer from viewer $clid")
                         val sdp = args.optString("answer").ifEmpty { args.optString("sdp") }
                         peer.setRemoteDescription(
                             sdpObserver("setRemote(answer) clid=$clid") {},
@@ -234,12 +332,13 @@ class StreamSenderSession(
                     }
                     "iceCandidate" ->
                         peer.addIceCandidate(IceCandidate(args.optString("mid"), args.optInt("mLine", 0), args.optString("sdp")))
-                    else -> Log.i(tag, "unhandled signalling cmd=${json.optString("cmd")} from $clid")
+                    else -> trace("unhandled signalling cmd=${json.optString("cmd")} from $clid")
                 }
             }
             "error" -> {
                 val rc = a["return_code"] ?: return
                 if (!ourReturnCodes.remove(rc)) return
+                if (a["id"] != "0") trace("server error ${a["id"]} ${a["msg"]} (rc=$rc)")
                 if (rc == setupReturnCode && a["id"] != "0") setupRefused = true
                 if (a["id"] != "0" && sid.isEmpty()) {
                     // setupstream itself was refused (permissions, server without streaming).
@@ -298,10 +397,18 @@ class StreamSenderSession(
             t,
             RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY, listOf("outgoing_video")),
         )
-        peer.addTransceiver(
-            MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.INACTIVE),
-        )
+        val audio = audioTrack
+        if (audio != null) {
+            peer.addTransceiver(
+                audio,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY, listOf("outgoing_video")),
+            )
+        } else {
+            peer.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.INACTIVE),
+            )
+        }
         update(state.copy(viewers = viewers.size))
         peer.createOffer(
             object : SdpObserver by noopSdp {
@@ -309,6 +416,7 @@ class StreamSenderSession(
                     // Dropped (and disposed) while the offer was being made.
                     if (viewers[clid] !== peer) return@onMain
                     val shaped = TsOfferShape.apply(desc.description)
+                        ?.let { if (audio != null) TsOfferShape.withStereoOpus(it) else it }
                     if (shaped == null) {
                         Log.w(tag, "no TeamSpeak-safe video codec on this device")
                         update(state.copy(phase = StreamSendPhase.FAILED, detail = "this phone has no video encoder TeamSpeak can play"))
@@ -319,6 +427,7 @@ class StreamSenderSession(
                     peer.setLocalDescription(
                         sdpObserver("setLocal(offer) clid=$clid") {
                             if (viewers[clid] !== peer) return@sdpObserver
+                            trace("offer to viewer $clid")
                             sendCommand(
                                 "respondjoinstreamrequest",
                                 mapOf(
@@ -334,7 +443,7 @@ class StreamSenderSession(
                     )
                 }
                 override fun onCreateFailure(error: String?) = onMain {
-                    Log.w(tag, "createOffer for $clid failed: $error")
+                    trace("createOffer for $clid failed: $error")
                     dropViewer(clid, peer)
                 }
             },
@@ -366,7 +475,7 @@ class StreamSenderSession(
             )
         }
         override fun onIceConnectionChange(s: PeerConnection.IceConnectionState?) {
-            Log.i(tag, "viewer $clid ice=$s")
+            trace("viewer $clid ice=$s")
             if (s == PeerConnection.IceConnectionState.FAILED) onMain { dropViewer(clid) }
         }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
@@ -378,6 +487,17 @@ class StreamSenderSession(
         override fun onDataChannel(dc: org.webrtc.DataChannel?) {}
         override fun onRenegotiationNeeded() {}
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+    }
+
+    /**
+     * PHA-4176: every step of a share goes into the uploaded diagnostic trace.
+     * "Waiting to be let in…" on a desktop has to be placed on one step —
+     * join request never seen, offer never sent, answer never back, ICE —
+     * without anyone attaching logcat.
+     */
+    private fun trace(line: String) {
+        Log.i(tag, line)
+        Diag.add("share: $line")
     }
 
     /** Sends [name] tagged with a fresh return code, which it returns. */
@@ -408,7 +528,7 @@ class StreamSenderSession(
     private fun sdpObserver(what: String, onSet: () -> Unit) = object : SdpObserver by noopSdp {
         override fun onSetSuccess() = onMain(onSet)
         override fun onSetFailure(error: String?) {
-            Log.w(tag, "$what failed: $error")
+            trace("$what failed: $error")
         }
     }
 }

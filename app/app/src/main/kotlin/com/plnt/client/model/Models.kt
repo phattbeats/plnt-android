@@ -98,6 +98,9 @@ data class Settings(
     // as it did before #3282 (so #3077/#3080's SCO behaviour is intact).
     val preferredInputDeviceKey: String? = null,
     val preferredOutputDeviceKey: String? = null,
+    // PHA-4176: a screen share carries what the phone is playing unless this
+    // is switched off. On by default — a share without sound was the bug.
+    val shareAudio: Boolean = true,
 )
 
 sealed class Screen {

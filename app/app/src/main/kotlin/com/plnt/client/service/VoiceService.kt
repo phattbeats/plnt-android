@@ -72,6 +72,9 @@ private const val MAX_BACKOFF_MS = 30_000L
 // Identical-prefix core errors ("send_audio: …" at frame rate) reach the
 // log/Diag/UI at most once per this window.
 private const val ERROR_REPEAT_WINDOW_MS = 5_000L
+// How long a torn-down core client is kept alive so its leave packet reaches
+// the server; the core itself gives up waiting for the ack after 2 s.
+private const val CLEAN_LEAVE_MS = 3_000L
 // There is deliberately no MAX_RECONNECT_ATTEMPTS. It used to be 10, which with
 // the 1→2→4→8→16→30s backoff ended a live session after roughly three minutes
 // offline — a ceiling the user never asked for and could only recover from by
@@ -308,7 +311,7 @@ class VoiceService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE_MUTE -> setInputMuted(!inputMuted)
             ACTION_TOGGLE_TALK -> setPushToTalk(!transmitting)
-            ACTION_DISCONNECT -> disconnect()
+            ACTION_DISCONNECT -> disconnect("notification")
         }
         if (intent == null) restorePersistedSession()
         return START_STICKY
@@ -581,7 +584,7 @@ class VoiceService : Service() {
      * the foreground with type `mediaProjection`, so the type is added before
      * capture starts and dropped again in [stopScreenShare].
      */
-    fun startScreenShare(permissionData: Intent, title: String) {
+    fun startScreenShare(permissionData: Intent, title: String, withAudio: Boolean) {
         stopScreenShare()
         if (client == null) return
         promoteForProjection(true)
@@ -595,6 +598,7 @@ class VoiceService : Service() {
             context = applicationContext,
             eglBase = eglBase,
             permissionData = permissionData,
+            withAudio = withAudio,
             ownClientId = { ownClientId },
             sendRaw = { name, args -> sendRawCommand(name, args) },
             onState = { st ->
@@ -698,7 +702,10 @@ class VoiceService : Service() {
      * button, and nothing else. [onDestroy] deliberately does not route
      * through here; see the note there.
      */
-    fun disconnect() {
+    fun disconnect(source: String) {
+        // PHA-4176: the trace only said cause=USER, which cannot tell the
+        // in-app button from the notification's action.
+        Diag.add("hang-up from $source")
         shutdown(DisconnectCause.USER, "disconnected by user")
     }
 
@@ -1238,9 +1245,19 @@ class VoiceService : Service() {
         // Its late `notifystreamstarted` can only come over this connection,
         // and the server ends our streams with it anyway.
         orphanedSend = null
-        runCatching { client?.disconnect() }
-        runCatching { client?.close() }
+        val old = client ?: return
         client = null
+        runCatching { old.disconnect() }
+        // PHA-4176: not close() right away. close() frees the native client and
+        // with it the tokio runtime, which cancels the connection task before
+        // it has sent the leave packet (the core waits up to 2 s for that). The
+        // server then kept a ghost of us until its ping timeout ~20 s later:
+        // the "Brandolorian" + "Brandolorian1" pair, and a quick rejoin
+        // refused with ClientTooManyClonesConnected.
+        Thread({
+            SystemClock.sleep(CLEAN_LEAVE_MS)
+            runCatching { old.close() }
+        }, "plnt-client-retire").start()
     }
 
     // ---- wake lock ------------------------------------------------------
