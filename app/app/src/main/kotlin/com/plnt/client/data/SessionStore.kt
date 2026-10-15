@@ -36,18 +36,7 @@ data class PersistedSession(val bookmark: Bookmark, val lastChannelId: Long?)
  * off the main thread.
  */
 class SessionStore(context: Context) {
-    private val prefs: SharedPreferences by lazy {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            context,
-            "plnt_session",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+    private val prefs: SharedPreferences by lazy { openEncryptedPrefs(context, PREFS_NAME, TAG) }
 
     /** Records (or re-records) the session a restart should reconnect to. */
     fun save(bookmark: Bookmark, lastChannelId: Long?) {
@@ -58,7 +47,9 @@ class SessionStore(context: Context) {
             .put("port", bookmark.port)
             .put("nickname", bookmark.nickname)
             .put("password", bookmark.serverPassword ?: "")
-        val editor = prefs.edit().putString(KEY_BOOKMARK, json.toString())
+        val editor = prefs.edit()
+            .putString(KEY_BOOKMARK, json.toString())
+            .putString(KEY_LAST_BOOKMARK_ID, bookmark.id)
         if (lastChannelId != null) {
             editor.putLong(KEY_LAST_CHANNEL, lastChannelId)
         } else {
@@ -91,16 +82,55 @@ class SessionStore(context: Context) {
     }
 
     /**
+     * Id of the bookmark most recently connected to. Unlike [load] this
+     * survives [clear], so the diagnostic auto-join on open can prefer the
+     * server the user last used over simply the first bookmark.
+     */
+    fun lastBookmarkId(): String? = prefs.getString(KEY_LAST_BOOKMARK_ID, null)
+
+    /**
      * The session is over by the user's own decision. Called from
      * `VoiceService.shutdown()` and nowhere near `onDestroy()`: a kill must
      * leave this intact, which is the entire point.
      */
     fun clear() {
-        prefs.edit().clear().commit()
+        prefs.edit().remove(KEY_BOOKMARK).remove(KEY_LAST_CHANNEL).commit()
     }
 
     private companion object {
+        const val PREFS_NAME = "plnt_session"
         const val KEY_BOOKMARK = "session_bookmark"
         const val KEY_LAST_CHANNEL = "session_last_channel"
+        const val KEY_LAST_BOOKMARK_ID = "last_bookmark_id"
+    }
+}
+
+/**
+ * EncryptedSharedPreferences, recreated empty if the existing file cannot be
+ * opened. That happens when the Keystore master key no longer matches the
+ * file — a restore onto another device, a Keystore reset — and the library
+ * then throws from create(), which used to crash the app at launch. Losing
+ * what was stored is the lesser evil; it is logged.
+ */
+internal fun openEncryptedPrefs(context: Context, name: String, tag: String): SharedPreferences {
+    fun create(): SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            name,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
+    return try {
+        create()
+    } catch (t: Throwable) {
+        Log.e(tag, "encrypted prefs '$name' unreadable — deleting and starting empty", t)
+        // The file holds its own Tink keyset too, so deleting it is a full reset.
+        context.deleteSharedPreferences(name)
+        create()
     }
 }

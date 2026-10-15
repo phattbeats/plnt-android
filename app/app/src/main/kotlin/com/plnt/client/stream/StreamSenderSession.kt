@@ -3,6 +3,8 @@ package com.plnt.client.stream
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.plnt.client.core.CoreEvent
 import org.json.JSONObject
@@ -56,6 +58,10 @@ import org.webrtc.audio.JavaAudioDeviceModule
  * "Start recording or casting?" prompt) and, on Android 14+, a running
  * foreground service of type `mediaProjection` *before* capture starts. The
  * owning service handles that.
+ *
+ * Threading: the owner calls in on the main thread, and every WebRTC /
+ * MediaProjection callback is posted back onto it ([onMain]), so the viewer
+ * map, stream id and return codes are only ever touched from main.
  */
 class StreamSenderSession(
     private val context: Context,
@@ -66,6 +72,7 @@ class StreamSenderSession(
     private val onState: (StreamSendState) -> Unit,
 ) {
     private val tag = "StreamSender"
+    private val main = Handler(Looper.getMainLooper())
     private val factory: PeerConnectionFactory
     private var capturer: ScreenCapturerAndroid? = null
     private var textureHelper: SurfaceTextureHelper? = null
@@ -75,6 +82,10 @@ class StreamSenderSession(
     private var sid: String = ""
     private var nextReturnCode = 85000
     private val ourReturnCodes = HashSet<String>()
+    // The `setupstream` return code, and whether the server refused it. Both
+    // matter after stop(): see [awaitingStreamId].
+    private var setupReturnCode: String? = null
+    private var setupRefused = false
     @Volatile private var state = StreamSendState()
     @Volatile private var closed = false
 
@@ -100,6 +111,14 @@ class StreamSenderSession(
 
     val current: StreamSendState get() = state
 
+    /**
+     * `setupstream` went out and the server has neither named the stream nor
+     * refused it. If that is still true after [stop], the server will start a
+     * stream nobody is sending; the owner keeps feeding [onLateRaw] until it
+     * arrives so it can be stopped at once.
+     */
+    val awaitingStreamId: Boolean get() = setupReturnCode != null && sid.isEmpty() && !setupRefused
+
     /** Start capturing and announce the share as [title]. */
     fun start(title: String, width: Int, height: Int, fps: Int = 30) {
         check(capturer == null) { "already sharing" }
@@ -111,7 +130,15 @@ class StreamSenderSession(
             object : MediaProjection.Callback() {
                 override fun onStop() {
                     // The user revoked it from the system UI / status bar chip.
-                    stop("screen capture stopped")
+                    // Arrives on the capturer's thread, whose helper stop()
+                    // disposes; hop to main, and never let it throw there.
+                    main.post {
+                        try {
+                            stop("screen capture stopped")
+                        } catch (t: Throwable) {
+                            Log.w(tag, "stop after projection end failed", t)
+                        }
+                    }
                 }
             },
         )
@@ -124,13 +151,16 @@ class StreamSenderSession(
             runCatching { cap.dispose() }
             src.dispose()
             helper.dispose()
+            // Nothing else holds the factory now; a later stop() is a no-op.
+            closed = true
+            runCatching { factory.dispose() }
             return
         }
         textureHelper = helper
         source = src
         capturer = cap
         track = factory.createVideoTrack("outgoing_video_track", src)
-        sendCommand(
+        setupReturnCode = sendCommand(
             "setupstream",
             mapOf(
                 "name" to title,
@@ -149,7 +179,10 @@ class StreamSenderSession(
         if (closed) return
         closed = true
         if (sid.isNotEmpty()) runCatching { sendCommand("stopstream", mapOf("id" to sid)) }
-        viewers.values.forEach { runCatching { it.close() } }
+        // close() then dispose(): close alone leaves the native peer (and its
+        // threads) alive until the factory goes, and disposing the factory
+        // under a live peer is undefined.
+        viewers.values.forEach { runCatching { it.close() }; runCatching { it.dispose() } }
         viewers.clear()
         runCatching { capturer?.stopCapture() }
         runCatching { capturer?.dispose() }
@@ -207,12 +240,40 @@ class StreamSenderSession(
             "error" -> {
                 val rc = a["return_code"] ?: return
                 if (!ourReturnCodes.remove(rc)) return
+                if (rc == setupReturnCode && a["id"] != "0") setupRefused = true
                 if (a["id"] != "0" && sid.isEmpty()) {
                     // setupstream itself was refused (permissions, server without streaming).
                     update(state.copy(phase = StreamSendPhase.FAILED, detail = a["msg"] ?: "error ${a["id"]}"))
                 }
             }
         }
+    }
+
+    /**
+     * Only after [stop], while [awaitingStreamId]: the server's late answer to
+     * our `setupstream`. A `notifystreamstarted` for us gets an immediate
+     * `stopstream`; a refusal settles it. Returns whether [ev] was ours, in
+     * which case it must not also go to a newer session.
+     */
+    fun onLateRaw(ev: CoreEvent.RawCommand): Boolean {
+        if (!closed || !awaitingStreamId) return false
+        val a = ev.args
+        when (ev.name) {
+            "notifystreamstarted" -> {
+                val own = ownClientId() ?: return false
+                if (a["clid"] != own.toString()) return false
+                sid = a["id"] ?: return false
+                Log.i(tag, "late notifystreamstarted for a stopped share — stopping stream $sid")
+                runCatching { sendCommand("stopstream", mapOf("id" to sid)) }
+                return true
+            }
+            "error" -> {
+                if (a["return_code"] != setupReturnCode) return false
+                if (a["id"] != "0") setupRefused = true
+                return true
+            }
+        }
+        return false
     }
 
     // ---- per-viewer WebRTC ----------------------------------------------
@@ -244,17 +305,20 @@ class StreamSenderSession(
         update(state.copy(viewers = viewers.size))
         peer.createOffer(
             object : SdpObserver by noopSdp {
-                override fun onCreateSuccess(desc: SessionDescription) {
+                override fun onCreateSuccess(desc: SessionDescription) = onMain {
+                    // Dropped (and disposed) while the offer was being made.
+                    if (viewers[clid] !== peer) return@onMain
                     val shaped = TsOfferShape.apply(desc.description)
                     if (shaped == null) {
                         Log.w(tag, "no TeamSpeak-safe video codec on this device")
                         update(state.copy(phase = StreamSendPhase.FAILED, detail = "this phone has no video encoder TeamSpeak can play"))
-                        dropViewer(clid)
-                        return
+                        dropViewer(clid, peer)
+                        return@onMain
                     }
                     val local = SessionDescription(SessionDescription.Type.OFFER, shaped)
                     peer.setLocalDescription(
                         sdpObserver("setLocal(offer) clid=$clid") {
+                            if (viewers[clid] !== peer) return@sdpObserver
                             sendCommand(
                                 "respondjoinstreamrequest",
                                 mapOf(
@@ -269,23 +333,26 @@ class StreamSenderSession(
                         local,
                     )
                 }
-                override fun onCreateFailure(error: String?) {
+                override fun onCreateFailure(error: String?) = onMain {
                     Log.w(tag, "createOffer for $clid failed: $error")
-                    dropViewer(clid)
+                    dropViewer(clid, peer)
                 }
             },
             MediaConstraints(),
         )
     }
 
-    private fun dropViewer(clid: Long) {
-        viewers.remove(clid)?.let { runCatching { it.close() } }
+    /** Drops [clid]'s peer — only if it is still [expected], when given. */
+    private fun dropViewer(clid: Long, expected: PeerConnection? = null) {
+        if (expected != null && viewers[clid] !== expected) return
+        viewers.remove(clid)?.let { runCatching { it.close() }; runCatching { it.dispose() } }
         update(state.copy(viewers = viewers.size))
     }
 
+    // WebRTC calls these on its signalling thread; each hops to main.
     private fun observerFor(clid: Long) = object : PeerConnection.Observer {
-        override fun onIceCandidate(c: IceCandidate) {
-            if (!viewers.containsKey(clid)) return
+        override fun onIceCandidate(c: IceCandidate) = onMain {
+            if (!viewers.containsKey(clid)) return@onMain
             sendCommand(
                 "streamsignaling",
                 mapOf(
@@ -300,7 +367,7 @@ class StreamSenderSession(
         }
         override fun onIceConnectionChange(s: PeerConnection.IceConnectionState?) {
             Log.i(tag, "viewer $clid ice=$s")
-            if (s == PeerConnection.IceConnectionState.FAILED) dropViewer(clid)
+            if (s == PeerConnection.IceConnectionState.FAILED) onMain { dropViewer(clid) }
         }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
         override fun onSignalingChange(s: PeerConnection.SignalingState?) {}
@@ -313,10 +380,17 @@ class StreamSenderSession(
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
     }
 
-    private fun sendCommand(name: String, args: Map<String, String>) {
+    /** Sends [name] tagged with a fresh return code, which it returns. */
+    private fun sendCommand(name: String, args: Map<String, String>): String {
         val rc = (nextReturnCode++).toString()
         ourReturnCodes.add(rc)
         sendRaw(name, args + ("return_code" to rc))
+        return rc
+    }
+
+    /** Runs [block] on the main thread, unless the session has been stopped by then. */
+    private fun onMain(block: () -> Unit) {
+        main.post { if (!closed) block() }
     }
 
     private fun update(s: StreamSendState) {
@@ -332,7 +406,7 @@ class StreamSenderSession(
     }
 
     private fun sdpObserver(what: String, onSet: () -> Unit) = object : SdpObserver by noopSdp {
-        override fun onSetSuccess() = onSet()
+        override fun onSetSuccess() = onMain(onSet)
         override fun onSetFailure(error: String?) {
             Log.w(tag, "$what failed: $error")
         }

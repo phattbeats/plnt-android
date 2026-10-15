@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    API 31+. The encrypted prefs are keyed to this device's Android Keystore
+    master key, which is never backed up or transferred: restored elsewhere
+    they cannot be decrypted (and plnt_identity is a private key that should
+    not leave the phone anyway). Bookmarks and settings still go along.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="plnt_identity.xml" />
+        <exclude domain="sharedpref" path="plnt_session.xml" />
+        <exclude domain="file" path="plnt-diag.log" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="plnt_identity.xml" />
+        <exclude domain="sharedpref" path="plnt_session.xml" />
+        <exclude domain="file" path="plnt-diag.log" />
+    </device-transfer>
+</data-extraction-rules>

@@ -57,6 +57,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // Diag.ENABLED keys off BuildConfig.DEBUG (PHA-4176).
+        buildConfig = true
     }
     packaging {
         // The .so files cargo-ndk produces are placed here by build.sh —

@@ -81,7 +81,9 @@ class AudioEngine(
     @Volatile private var preferredOutputKey: String? = null
 
     private var captureThread: Thread? = null
-    private var record: AudioRecord? = null
+    // Volatile: each capture thread compares it against its own recorder to
+    // notice it has been superseded (see openCaptureAndStartThread).
+    @Volatile private var record: AudioRecord? = null
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
 
@@ -238,20 +240,29 @@ class AudioEngine(
 
     /** Returns whether capture came up. A failure is reported, never thrown — see [onAudioError]. */
     private fun openCaptureAndStartThread(): Boolean {
+        var opened: AudioRecord? = null
         val rec = try {
-            buildAudioRecord()
+            val r = buildAudioRecord()
+            opened = r
+            // Inside the try: startRecording() can throw, and a mic held by
+            // another app leaves it not recording without throwing.
+            r.startRecording()
+            check(r.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord did not start recording" }
+            r
         } catch (t: Throwable) {
             // Before #3290 item 8 this threw straight out of start(), which
             // a reconnect ran on every attempt and nothing caught: the call
             // carried on looking connected with a dead mic.
             capturing.set(false)
+            echoCanceler?.release(); echoCanceler = null
+            noiseSuppressor?.release(); noiseSuppressor = null
+            opened?.let { runCatching { it.release() } }
             Log.e(TAG, "capture unavailable", t)
             onAudioError("capture", t)
             return false
         }
         record = rec
         capturing.set(true)
-        rec.startRecording()
 
         val nativeRate = rec.sampleRate
         val resampler = Resampler(fromHz = nativeRate, toHz = CORE_SAMPLE_RATE_HZ)
@@ -263,9 +274,12 @@ class AudioEngine(
         val frameAccumulator = FloatFrameAccumulator(CORE_FRAME_SAMPLES)
 
         captureThread = thread(name = "plnt-audio-capture", isDaemon = true) {
-            while (running.get() && capturing.get()) {
-                val currentRecord = record ?: break
-                val n = currentRecord.read(nativeBuf, 0, nativeBuf.size, AudioRecord.READ_BLOCKING)
+            // Bound to the recorder it was started for. An old thread that
+            // outlived reopenCapture()'s join timeout sees `record` has moved
+            // on and exits instead of reading the new recorder alongside the
+            // new thread (two readers interleaving one mic stream).
+            while (running.get() && capturing.get() && record === rec) {
+                val n = rec.read(nativeBuf, 0, nativeBuf.size, AudioRecord.READ_BLOCKING)
                 if (n <= 0) continue
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->

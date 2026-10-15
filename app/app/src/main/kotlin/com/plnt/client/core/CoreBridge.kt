@@ -104,8 +104,9 @@ sealed class CoreEvent {
      * the TS6 screen-share family (`notifystream*`, `notifyjoinstreamrequest`,
      * `notifyrespondjoinstreamrequest`) and `error` replies carrying a
      * `return_code`. Values are already unescaped. Consumed by
-     * [com.plnt.client.stream.StreamDirectory] and
-     * [com.plnt.client.stream.StreamViewerSession]; nothing else should need it.
+     * [com.plnt.client.stream.StreamDirectory],
+     * [com.plnt.client.stream.StreamViewerSession] and
+     * [com.plnt.client.stream.StreamSenderSession]; nothing else should need it.
      */
     data class RawCommand(val name: String, val args: Map<String, String>) : CoreEvent()
 }
@@ -174,10 +175,16 @@ object CoreBridge {
     ): CoreClient {
         val sink = object : uniffi.plnt_core.EventSink {
             override fun onEvent(ev: uniffi.plnt_core.ConnEvent) {
-                if (ev is uniffi.plnt_core.ConnEvent.PcmFrame) {
-                    onPcmFrame(ev.clientId.toLong(), ev.samples.toFloatArray())
-                } else {
-                    onEvent(translate(ev))
+                // PHA-4176: a throw here comes back to Rust as a panic, which
+                // silently kills the whole connection task. Never let one out.
+                try {
+                    if (ev is uniffi.plnt_core.ConnEvent.PcmFrame) {
+                        onPcmFrame(ev.clientId.toLong(), ev.samples.toFloatArray())
+                    } else {
+                        onEvent(translate(ev))
+                    }
+                } catch (t: Throwable) {
+                    com.plnt.client.service.Diag.callbackThrew(ev::class.simpleName ?: "?", t)
                 }
             }
         }
