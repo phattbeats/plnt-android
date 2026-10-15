@@ -107,6 +107,9 @@ class MainActivity : ComponentActivity() {
                             shareState = state.streamSend,
                             onShareScreen = ::launchScreenCapture,
                             onStopShare = viewModel::stopScreenShare,
+                            outputDevices = state.availableOutputDevices,
+                            outputDeviceKey = state.settings.preferredOutputDeviceKey,
+                            onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                         )
                         Screen.StreamViewer -> StreamViewerScreen(
                             view = state.streamView,

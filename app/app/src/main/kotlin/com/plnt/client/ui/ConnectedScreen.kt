@@ -27,7 +27,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.StopScreenShare
 import androidx.compose.material.icons.filled.ExpandMore
@@ -43,6 +47,8 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +59,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +73,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.media.AudioDeviceInfo
+import com.plnt.client.audio.keyDeviceType
+import com.plnt.client.model.AudioDeviceOption
 import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.ConnectionPhase
@@ -110,6 +121,10 @@ fun ConnectedScreen(
     shareState: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
     onShareScreen: () -> Unit = {},
     onStopShare: () -> Unit = {},
+    /** Where other people's voices play: the in-call output switcher. */
+    outputDevices: List<AudioDeviceOption> = emptyList(),
+    outputDeviceKey: String? = null,
+    onOutputDeviceChange: (String?) -> Unit = {},
 ) {
     // Collapse state is per-channel and sticky; channels with nothing in them
     // start collapsed, everything else starts open.
@@ -216,6 +231,9 @@ fun ConnectedScreen(
                 shareState = shareState,
                 onShareScreen = onShareScreen,
                 onStopShare = onStopShare,
+                outputDevices = outputDevices,
+                outputDeviceKey = outputDeviceKey,
+                onOutputDeviceChange = onOutputDeviceChange,
             )
         }
     }
@@ -415,6 +433,9 @@ private fun ControlBar(
     shareState: com.plnt.client.stream.StreamSendState,
     onShareScreen: () -> Unit,
     onStopShare: () -> Unit,
+    outputDevices: List<AudioDeviceOption>,
+    outputDeviceKey: String?,
+    onOutputDeviceChange: (String?) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     val sharing = shareState.phase == com.plnt.client.stream.StreamSendPhase.STARTING ||
@@ -534,6 +555,7 @@ private fun ControlBar(
                 active = outputDeafened,
                 onClick = onToggleDeafen,
             )
+            AudioOutputButton(outputDevices, outputDeviceKey, onOutputDeviceChange)
             PanelButton(
                 icon = if (sharing) Icons.Filled.StopScreenShare else Icons.Filled.ScreenShare,
                 description = if (sharing) "Stop sharing" else "Share screen",
@@ -580,5 +602,72 @@ private fun PanelButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = description, tint = if (active) Danger else TextNormal, modifier = Modifier.size(24.dp))
+    }
+}
+
+/** Output types worth offering mid-call; the rest (HDMI, telephony, ...) are noise. */
+private val pickableOutputTypes = listOf(
+    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+    AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+    AudioDeviceInfo.TYPE_WIRED_HEADSET,
+    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+    AudioDeviceInfo.TYPE_USB_HEADSET,
+)
+
+private fun outputIcon(type: Int?): androidx.compose.ui.graphics.vector.ImageVector = when (type) {
+    AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> Icons.Filled.PhoneInTalk
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> Icons.Filled.Bluetooth
+    AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+    AudioDeviceInfo.TYPE_USB_HEADSET -> Icons.Filled.Headphones
+    else -> Icons.Filled.VolumeUp
+}
+
+/**
+ * The phone-call style output switcher: one tap opens Automatic / Speaker /
+ * Earpiece / Bluetooth / headset. The glyph shows where sound goes right now;
+ * on Automatic that's the same headset > speaker order the engine routes by.
+ * Changing it re-routes the live call, and the choice is remembered like the
+ * Settings → Speaker one (it is the same setting).
+ */
+@Composable
+private fun AudioOutputButton(
+    devices: List<AudioDeviceOption>,
+    selectedKey: String?,
+    onSelect: (String?) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    // -1 for a malformed key: never pickable, and keeps the lookups non-null.
+    fun typeOf(option: AudioDeviceOption): Int = keyDeviceType(option.key) ?: -1
+    val options = devices
+        .filter { typeOf(it) in pickableOutputTypes }
+        .sortedBy { pickableOutputTypes.indexOf(typeOf(it)) }
+    val selected = options.firstOrNull { it.key == selectedKey }
+    val activeType = selected?.let { typeOf(it) }
+        ?: pickableOutputTypes.drop(2).firstOrNull { t -> options.any { typeOf(it) == t } }
+        ?: AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+    Box {
+        PanelButton(
+            icon = outputIcon(activeType),
+            description = "Audio output: ${selected?.label ?: "Automatic"}",
+            active = false,
+            onClick = { open = true },
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Automatic") },
+                leadingIcon = { Icon(Icons.Filled.VolumeUp, contentDescription = null) },
+                trailingIcon = { if (selected == null) Icon(Icons.Filled.Check, contentDescription = "Selected") },
+                onClick = { open = false; onSelect(null) },
+            )
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    leadingIcon = { Icon(outputIcon(typeOf(option)), contentDescription = null) },
+                    trailingIcon = { if (option.key == selected?.key) Icon(Icons.Filled.Check, contentDescription = "Selected") },
+                    onClick = { open = false; onSelect(option.key) },
+                )
+            }
+        }
     }
 }
