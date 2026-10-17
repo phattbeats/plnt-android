@@ -1,5 +1,8 @@
 package com.plnt.client.service
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Base64
 import android.util.Log
@@ -113,6 +116,24 @@ object Diag {
         return buf
     }
 
+    /**
+     * The phone's default network as Android sees it, for the trace: which
+     * transport, and whether Android validated it actually reaches the internet.
+     */
+    fun networkSummary(ctx: Context): String = runCatching {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        val net = cm.activeNetwork ?: return "none"
+        val caps = cm.getNetworkCapabilities(net) ?: return "no-caps"
+        val transport = listOfNotNull(
+            "wifi".takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) },
+            "cell".takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) },
+            "vpn".takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) },
+            "eth".takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) },
+        ).joinToString("+").ifEmpty { "other" }
+        val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        "$transport validated=$validated restrictBg=${cm.restrictBackgroundStatus}"
+    }.getOrElse { "error: $it" }
+
     private fun upload(why: String) {
         if (!ENABLED) return
         val f = file ?: return
@@ -132,7 +153,24 @@ object Diag {
             val code = conn.responseCode
             conn.disconnect()
             Log.w(TAG, "upload $why -> HTTP $code (${bytes.size} bytes)")
-        }.onFailure { Log.w(TAG, "upload $why failed: $it") }
+            if (code !in 200..299) markUnsent()
+        }.onFailure {
+            Log.w(TAG, "upload $why failed: $it")
+            markUnsent()
+        }
+    }
+
+    /**
+     * PHA-4176: an upload that never landed (phone offline, server down) is
+     * owed. Re-arm the tick so the trace goes up once the phone can reach the
+     * drop again, instead of waiting for the next notable line.
+     */
+    @Synchronized
+    private fun markUnsent() {
+        dirty = true
+        notable = true
+        // Next try on the 15 s burst cadence, timed from this failed attempt.
+        burstUntil = maxOf(burstUntil, System.currentTimeMillis() + BURST_TICK_MS + 5_000)
     }
 
     @Synchronized
