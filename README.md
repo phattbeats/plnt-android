@@ -23,6 +23,17 @@ TS6-only features.
 | #3077 Android audio engine | **CODE WRITTEN, UNVERIFIED** — `AudioEngine` (VOICE_COMMUNICATION capture/playback, AEC/NS, Bluetooth SCO routing, `AudioDeviceCallback` rehoming, PTT gates send not capture) + `VoiceService` (foreground service owning it). See `AUDIO_ENGINE.md` for exactly what's verified vs. blocked on a real toolchain, and `MANUAL_TEST_CHECKLIST.md` for the device round. |
 | #3078 foreground service wiring, reconnect, identity/bookmark storage | **CODE WRITTEN, UNVERIFIED** — `VoiceService` is now actually wired to `PlntViewModel` (previously dead code; the ViewModel bypassed it entirely, so no captured audio ever reached plnt-core). Adds `ConnectivityManager`-driven reconnect with exponential backoff (capped 30 s) that rejoins the last channel, notification mute/talk/disconnect actions, a partial wake lock while connected, `MediaSessionCompat` headset-button PTT, `EncryptedSharedPreferences` identity, and DataStore bookmarks/settings. See `FOREGROUND_SERVICE.md` for exactly what's verified vs. blocked, and the new "Network handoff / reconnect" section of `MANUAL_TEST_CHECKLIST.md`. |
 
+## Installing (friends)
+
+1. On your phone, turn on install-from-unknown-sources for your browser
+   (Settings -> Apps -> your browser -> Install unknown apps).
+2. Download `app-debug.apk` from the `v0.1-invite-links` release page.
+3. Tap the downloaded file and confirm "Install". Open plnt, add your server,
+   tap the invite link, and hold the mic button to talk.
+
+It is a debug-signed build — sideloading works, Play Store distribution does
+not. See `CHANGELOG.md` for what is in it.
+
 ## Layout
 
 ```
