@@ -81,7 +81,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private var batteryPromptShown = false
 
     // A first connect that never got in is retried here — same bookmark,
-    // INITIAL_RETRY_DELAYS_MS apart. Drops after that are the service's job
+    // INITIAL_RETRY_DELAYS_MS apart, and every UNREACHABLE_RETRY_MS after that
+    // for as long as the server is just unreachable. Drops after that are the service's job
     // (it reconnects mid-session on its own). Any user connect/disconnect
     // cancels the pending retry.
     private var initialConnect: Bookmark? = null
@@ -684,10 +685,24 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 // passes through disconnect() above.
                 if (ev.cause == DisconnectCause.USER) userDisconnected = true
                 val retry = initialConnect
-                if (retry != null && ev.cause != DisconnectCause.USER && ev.cause != DisconnectCause.APP_REQUESTED &&
-                    initialRetries < INITIAL_RETRY_DELAYS_MS.size
-                ) {
-                    val wait = INITIAL_RETRY_DELAYS_MS[initialRetries++]
+                // PHA-4176: a first connect that timed out (phone off the
+                // network, server busy) keeps retrying for as long as the app
+                // is open; only other errors give up after the listed delays.
+                val unreachable = isUnreachable(ev.reason)
+                val willRetry = retry != null && ev.cause != DisconnectCause.USER &&
+                    ev.cause != DisconnectCause.APP_REQUESTED &&
+                    (unreachable || initialRetries < INITIAL_RETRY_DELAYS_MS.size)
+                var retryMessage: String? = null
+                if (unreachable) {
+                    Diag.add("net ${Diag.networkSummary(getApplication<Application>())}")
+                }
+                if (willRetry && retry != null) {
+                    val wait = INITIAL_RETRY_DELAYS_MS.getOrElse(initialRetries) { UNREACHABLE_RETRY_MS }
+                    initialRetries++
+                    if (unreachable) {
+                        retryMessage = "Can't reach the server yet. Check the phone's internet — " +
+                            "trying again in ${wait / 1000}s (attempt ${initialRetries + 1})."
+                    }
                     initialRetryJob?.cancel()
                     initialRetryJob = viewModelScope.launch {
                         delay(wait)
@@ -705,7 +720,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                         connectionStatus = it.connectionStatus.disconnected(),
                         ownClientId = null,
                         channelTree = emptyList(),
-                        lastError = disconnectMessage(ev),
+                        lastError = retryMessage ?: disconnectMessage(ev),
                         screen = Screen.Bookmarks,
                         streamView = com.plnt.client.stream.StreamViewState(),
                     )
@@ -837,6 +852,16 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         val INITIAL_RETRY_DELAYS_MS = longArrayOf(5_000L, 10_000L, 20_000L)
+        /** Retry spacing for an unreachable server once the delays above are used up. */
+        const val UNREACHABLE_RETRY_MS = 30_000L
+
+        private val UNREACHABLE = Regex(
+            "InitserverTimeout|not acked|Timeout|timed out|resolve|unreachable|No route|Network is",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** The server never answered: no network, a dead route or a busy server. Worth retrying. */
+        fun isUnreachable(reason: String?): Boolean = reason != null && UNREACHABLE.containsMatchIn(reason)
 
         /**
          * The user hung up at some point in this process. Process-wide rather
