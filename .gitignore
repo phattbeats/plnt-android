@@ -50,3 +50,12 @@ app/app/.cxx/
 # Local environment / Gradle wrapper
 .gradle/
 *.log
+
+# Signing material — see SIGNING.md. These must never be committed.
+# Losing the keystore forces every user to uninstall before upgrading,
+# so a staged keystore is an incident, not a slipped gitignore rule.
+*.p12
+*.jks
+*.keystore
+keystore.properties
+plnt-release-credentials.txt
