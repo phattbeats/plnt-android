@@ -1,6 +1,6 @@
 # Screen sharing over TS6 (PHA-3289)
 
-PLNT can watch a TeamSpeak 6 screen share started from a desktop TS6 client,
+Relay for Teamspeak (by PHATT TECH) can watch a TeamSpeak 6 screen share started from a desktop TS6 client,
 and share the phone's own screen to desktop viewers (see "Sending" below).
 Nothing here depends on any particular server: the signalling rides the same
 TS3-style command channel the voice client already uses, and the media is a
@@ -57,7 +57,7 @@ construction.
   communication stream, so it works, but volume keys act on both together.
 - Tested against TS6 server 6.0 beta with WebRTC transport off (stream commands
   over the text channel). A server that moves these commands onto its WebRTC
-  data channel would need the TS6 command layer PLNT does not have; the app
+  data channel would need the TS6 command layer Relay does not have; the app
   reports "no stream found" there rather than failing silently.
 
 ## Sending (phone → desktop)
@@ -129,3 +129,15 @@ network and 720p, 30 fps, 2.5 Mbps on metered data
 (`stream/StreamQuality.kt`). The bitrate goes to the server in `setupstream`
 and, with the frame rate, is set as the encoder ceiling on every viewer's
 video sender. Changes apply to the next share.
+
+### Rotation (PHA-3289)
+
+The share follows the phone. While sharing, `VoiceService` listens for
+default-display changes; on a rotation it recomputes the frame size from the
+full display size (status and navigation bars included, as MediaProjection
+captures them) and the share's picked long edge, then calls
+`StreamSenderSession.resize()`. That goes to
+`ScreenCapturerAndroid.changeCaptureFormat`, which in webrtc-sdk 125 resizes
+the virtual display in place: Android 14+ allows one virtual display per
+projection, so it must not be recreated. There is no renegotiation; the
+encoder carries the new resolution to every viewer.
