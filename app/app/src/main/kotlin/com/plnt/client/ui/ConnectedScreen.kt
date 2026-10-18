@@ -155,7 +155,7 @@ fun ConnectedScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TeamSpeakMark(size = 36.dp)
+                        RelayMark(size = 36.dp)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
