@@ -145,6 +145,8 @@ class MainActivity : ComponentActivity() {
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
                             onImportIdentity = viewModel::importIdentity,
+                            onImportIdentityIni = viewModel::importIdentityFromIni,
+                            onDescribeIdentityIni = viewModel::describeIdentityIni,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },
                             onBack = {
