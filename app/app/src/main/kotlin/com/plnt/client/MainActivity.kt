@@ -142,6 +142,8 @@ class MainActivity : ComponentActivity() {
                             identityLevel = state.identityLevel,
                             identityLevelRaising = state.identityLevelRaising,
                             onRaiseIdentityLevel = viewModel::raiseIdentityLevel,
+                            identityChangeAllowed = state.phase == com.plnt.client.model.ConnectionPhase.DISCONNECTED ||
+                                state.phase == com.plnt.client.model.ConnectionPhase.ERROR,
                             availableInputDevices = state.availableInputDevices,
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,
