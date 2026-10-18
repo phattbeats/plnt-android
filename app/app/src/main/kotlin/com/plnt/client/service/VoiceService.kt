@@ -10,6 +10,8 @@ import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Point
+import android.hardware.display.DisplayManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
@@ -23,6 +25,7 @@ import android.os.SystemClock
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
+import android.view.Display
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import com.plnt.client.audio.AudioEngine
@@ -154,6 +157,36 @@ class VoiceService : Service() {
 
     // PHA-3289 send side: our own screen share. Same lifetime rules as the viewer.
     private var sendSession: StreamSenderSession? = null
+    // The live share's long edge, so a rotation keeps the picked quality.
+    private var shareLongEdge = 0
+    private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
+
+    /**
+     * Rotating the phone mid-share flips the display; without this the share
+     * kept its starting shape and a landscape movie went out as a letterboxed
+     * portrait frame. Registered only while sharing.
+     */
+    private val shareDisplayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId != Display.DEFAULT_DISPLAY) return
+            val session = sendSession ?: return
+            val (dw, dh) = shareDisplaySize()
+            val (w, h) = com.plnt.client.stream.StreamQualityPolicy.frameSize(shareLongEdge, dw, dh)
+            session.resize(w, h)
+        }
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+    }
+
+    /** The full display (status and navigation bars included, as captured), in its current rotation. */
+    @Suppress("DEPRECATION")
+    private fun shareDisplaySize(): Pair<Int, Int> {
+        val p = Point()
+        val display = displayManager.getDisplay(Display.DEFAULT_DISPLAY)
+            ?: return resources.displayMetrics.let { it.widthPixels to it.heightPixels }
+        display.getRealSize(p)
+        return p.x to p.y
+    }
     private var sendStateListener: ((StreamSendState) -> Unit)? = null
     // A share stopped before the server named it; it still owes a `stopstream`.
     // Oldest first. Several can be pending at once (a share restarted twice
@@ -596,8 +629,9 @@ class VoiceService : Service() {
         val quality = com.plnt.client.stream.StreamQualityPolicy.resolve(
             settings.streamResolution, settings.streamFps, settings.streamBitrateKbps, metered,
         )
-        val dm = resources.displayMetrics
-        val (w, h) = com.plnt.client.stream.StreamQualityPolicy.frameSize(quality.longEdge, dm.widthPixels, dm.heightPixels)
+        val (dw, dh) = shareDisplaySize()
+        val (w, h) = com.plnt.client.stream.StreamQualityPolicy.frameSize(quality.longEdge, dw, dh)
+        shareLongEdge = quality.longEdge
         Diag.add("share: quality ${w}x$h ${quality.fps}fps ${quality.bitrateKbps}kbps metered=$metered")
         val session = StreamSenderSession(
             context = applicationContext,
@@ -619,6 +653,7 @@ class VoiceService : Service() {
                             runCatching { s.stop() }
                             sendSession = null
                             if (s.awaitingStreamId) orphanedSends.addLast(s)
+                            runCatching { displayManager.unregisterDisplayListener(shareDisplayListener) }
                             promoteForProjection(false)
                         }
                     }
@@ -627,6 +662,7 @@ class VoiceService : Service() {
         )
         sendSession = session
         session.start(title, w, h, quality.fps, quality.bitrateKbps)
+        displayManager.registerDisplayListener(shareDisplayListener, mainHandler)
     }
 
     fun stopScreenShare() {
@@ -636,6 +672,7 @@ class VoiceService : Service() {
         // Stopped before `notifystreamstarted` arrived: the server will still
         // start it, so keep the session around to send `stopstream` then.
         if (s.awaitingStreamId) orphanedSends.addLast(s)
+        runCatching { displayManager.unregisterDisplayListener(shareDisplayListener) }
         promoteForProjection(false)
         sendStateListener?.invoke(StreamSendState())
     }
@@ -812,6 +849,7 @@ class VoiceService : Service() {
         val wasConnected = connectionParams != null || client != null
         logLifecycle("onDestroy", "wasConnected=$wasConnected sessionSnapshotKept=$wasConnected")
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        runCatching { displayManager.unregisterDisplayListener(shareDisplayListener) }
         teardownForProcessDeath()
         if (wasConnected) {
             // Still reported, and still as SYSTEM_KILL (#3283) — a UI that
