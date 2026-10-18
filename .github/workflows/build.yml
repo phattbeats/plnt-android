@@ -169,6 +169,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: "Test: Android host unit suite"
+        working-directory: app
+        run: ./gradlew --no-daemon testDebugUnitTest
+
       # Deliberately last: a red test must not cost us the APK artifact, which
       # is what on-device verification runs against.
       #
