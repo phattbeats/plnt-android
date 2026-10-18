@@ -1459,7 +1459,7 @@ class VoiceService : Service() {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("TeamSpeak")
             .setContentText(contentText)
-            .setSmallIcon(com.plnt.client.R.drawable.ic_teamspeak)
+            .setSmallIcon(com.plnt.client.R.drawable.relay_notification)
             .setOngoing(connectionParams != null)
             // CATEGORY_CALL + VISIBILITY_PUBLIC put the row (and its actions)
             // on the lock screen with its content intact; setSilent stops the

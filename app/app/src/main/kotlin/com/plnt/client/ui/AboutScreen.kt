@@ -81,48 +81,20 @@ fun AboutScreen(onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(20.dp))
-                    .background(PlntBrand.Soil)
-                    .border(1.dp, PlntBrand.Sage.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+                    .background(com.plnt.client.ui.theme.SurfaceRaised)
+                    .border(1.dp, com.plnt.client.ui.theme.DividerLine, RoundedCornerShape(20.dp))
                     .padding(vertical = 28.dp, horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(112.dp)
-                        .clip(CircleShape)
-                        .border(2.dp, PlntBrand.Gold, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.plnt_mark),
-                        contentDescription = "PLNT plant mark",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(108.dp).clip(CircleShape),
-                    )
-                }
+                RelayMark(size = 96.dp)
                 Spacer(modifier = Modifier.height(18.dp))
-                Text(
-                    "PLNT",
-                    color = PlntBrand.Bone,
-                    fontFamily = FontFamily.Serif,
-                    fontSize = 34.sp,
-                    letterSpacing = 6.sp,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    "A TeamSpeak client for phones: voice, chat, and screen shares.",
-                    color = PlntBrand.Bone.copy(alpha = 0.75f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(modifier = Modifier.height(18.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(PlntBrand.Bone, PlntBrand.Sage, PlntBrand.Mauve, PlntBrand.Oxblood, PlntBrand.Gold).forEach {
-                        Box(modifier = Modifier.size(14.dp).clip(CircleShape).background(it))
-                    }
-                }
-                Spacer(modifier = Modifier.height(18.dp))
-                Text("Made by PHATT TECH", color = PlntBrand.Gold, style = MaterialTheme.typography.labelLarge)
+                Text("Relay for Teamspeak", color = TextNormal, style = MaterialTheme.typography.headlineSmall,
+                    textAlign = TextAlign.Center)
+                Text("by PHATT TECH", color = TextMuted, style = MaterialTheme.typography.labelLarge)
+                Spacer(modifier = Modifier.height(14.dp))
+                Text("A TeamSpeak client for phones: voice, chat, and screen shares.",
+                    color = TextMuted, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+
             }
 
             Spacer(modifier = Modifier.height(24.dp))

@@ -35,8 +35,11 @@ class IdentityStore(context: Context) {
 
     fun import(pem: String): Boolean {
         if (!CoreBridge.importIdentity(pem)) return false
-        prefs.edit().putString(KEY_IDENTITY_PEM, pem).apply()
-        return true
+        val previous = peek()
+        if (prefs.edit().putString(KEY_IDENTITY_PEM, pem).commit()) return true
+        // commit() also updates the in-memory preferences when a disk write fails.
+        prefs.edit().putString(KEY_IDENTITY_PEM, previous).commit()
+        return false
     }
 
     /**

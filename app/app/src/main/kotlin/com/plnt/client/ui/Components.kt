@@ -248,18 +248,18 @@ fun SheetDragHandle() {
     }
 }
 
-/** The TeamSpeak mark on a brand-blue circle — the app's identity in headers. */
+/** The selected Relay companion mark. */
 @Composable
-fun TeamSpeakMark(size: Dp = 32.dp, modifier: Modifier = Modifier) {
+fun RelayMark(size: Dp = 32.dp, modifier: Modifier = Modifier) {
     Box(
-        modifier = modifier.size(size).clip(CircleShape).background(BrandDeep),
+        modifier = modifier.size(size),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painterResource(com.plnt.client.R.drawable.ic_teamspeak),
-            contentDescription = "TeamSpeak",
-            tint = OnBrand,
-            modifier = Modifier.size(size * 0.6f),
+            painterResource(com.plnt.client.R.drawable.relay_mark),
+            contentDescription = "Relay for Teamspeak",
+            tint = androidx.compose.ui.graphics.Color.Unspecified,
+            modifier = Modifier.size(size),
         )
     }
 }

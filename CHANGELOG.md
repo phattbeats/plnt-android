@@ -1,3 +1,10 @@
+# 0.1.1-dev (test candidate)
+
+- Apply Relay for Teamspeak branding with the by PHATT TECH byline.
+- Import an exported TeamSpeak identity file with a preview, bounded background reads, and visible errors.
+- Keep identity replacement unavailable during a call or connection attempt.
+- myTeamSpeak account sign-in and synced bookmark import are still under investigation.
+
 # Changelog
 
 All notable changes to plnt-android. Format follows

@@ -1,3 +1,10 @@
+# Relay for Teamspeak
+
+by PHATT TECH
+
+The test candidate supports importing an exported TeamSpeak identity in Settings → Identity.
+This is offline key-file import. myTeamSpeak account sign-in and synced bookmark import are not implemented yet.
+
 # plnt-android
 
 PLNT Android client: a voice-only TeamSpeak 3/6 client built on
