@@ -93,6 +93,9 @@ class StreamSenderSession(
     // PHA-4176: the encoder ceiling per viewer, from the share's quality settings.
     private var maxFps = 30
     private var maxBitrateKbps = 4608
+    // The capture size in use, so a display change that keeps it is a no-op.
+    private var captureWidth = 0
+    private var captureHeight = 0
     private val viewers = HashMap<Long, PeerConnection>()
     private var sid: String = ""
     private var nextReturnCode = 85000
@@ -203,6 +206,8 @@ class StreamSenderSession(
         textureHelper = helper
         source = src
         capturer = cap
+        captureWidth = width
+        captureHeight = height
         track = factory.createVideoTrack("outgoing_video_track", src)
         startAudio(cap)
         trace("setupstream ${width}x$height ${fps}fps ${bitrateKbps}kbps audio=${audioTrack != null}")
@@ -264,6 +269,24 @@ class StreamSenderSession(
         audioSource = null
         audioCapture?.release()
         audioCapture = null
+    }
+
+    /**
+     * Follow a rotation: re-shape the capture to [width] x [height]. The
+     * capturer resizes its virtual display in place (one MediaProjection can
+     * only ever create one on Android 14+), and the encoder carries the new
+     * size to every viewer on its next frame, so no renegotiation is needed.
+     */
+    fun resize(width: Int, height: Int) {
+        val cap = capturer ?: return
+        if (closed || (width == captureWidth && height == captureHeight)) return
+        runCatching { cap.changeCaptureFormat(width, height, maxFps) }
+            .onSuccess {
+                captureWidth = width
+                captureHeight = height
+                trace("capture resized ${width}x$height")
+            }
+            .onFailure { trace("capture resize to ${width}x$height failed: $it") }
     }
 
     /** End the share and release everything. Idempotent. */
