@@ -1457,7 +1457,7 @@ class VoiceService : Service() {
             servicePendingIntent(ACTION_DISCONNECT, 3),
         )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("TeamSpeak")
+            .setContentTitle("Relay for Teamspeak")
             .setContentText(contentText)
             .setSmallIcon(com.plnt.client.R.drawable.relay_notification)
             .setOngoing(connectionParams != null)

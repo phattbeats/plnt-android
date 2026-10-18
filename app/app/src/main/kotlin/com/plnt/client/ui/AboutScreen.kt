@@ -45,12 +45,7 @@ import com.plnt.client.ui.theme.TextFaint
 import com.plnt.client.ui.theme.TextMuted
 import com.plnt.client.ui.theme.TextNormal
 
-/**
- * The rest of the app wears TeamSpeak's colours; this screen is where the
- * project's own name, plant mark and palette live (Brandon, PHA-3072,
- * 2026-10-10). It deliberately breaks from the blue theme so it reads as a
- * maker's mark rather than part of the product chrome.
- */
+/** Product identity, build version, core version, and third-party credits. */
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
     Scaffold(
@@ -116,7 +111,7 @@ fun AboutScreen(onBack: () -> Unit) {
             // core_version() is the one string only the Rust core can produce,
             // so a broken JNI/UniFFI link is visible here without a debugger.
             Text(
-                remember { CoreBridge.coreVersion() },
+                remember { "App ${com.plnt.client.BuildConfig.VERSION_NAME} · core ${CoreBridge.coreVersion()}" },
                 color = TextFaint,
                 style = MaterialTheme.typography.labelSmall,
                 textAlign = TextAlign.Center,
