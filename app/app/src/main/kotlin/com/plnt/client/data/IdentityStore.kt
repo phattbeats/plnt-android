@@ -35,9 +35,33 @@ class IdentityStore(context: Context) {
 
     fun import(pem: String): Boolean {
         if (!CoreBridge.importIdentity(pem)) return false
-        prefs.edit().putString(KEY_IDENTITY_PEM, pem).apply()
-        return true
+        val previous = peek()
+        if (prefs.edit().putString(KEY_IDENTITY_PEM, pem).commit()) return true
+        // commit() also updates the in-memory preferences when a disk write fails.
+        prefs.edit().putString(KEY_IDENTITY_PEM, previous).commit()
+        return false
     }
+
+    /**
+     * Import from an exported TeamSpeak identity `.ini` file (PHA-4116).
+     *
+     * This is the path a user actually has: the official client writes a `.ini`,
+     * not the bare identity string. Returns the persisted identity string, or
+     * null if the file isn't a readable identity export — in which case the
+     * stored identity is left untouched.
+     */
+    fun importIni(contents: String): String? {
+        val pem = CoreBridge.importIdentityIni(contents) ?: return null
+        if (!import(pem)) return null
+        return pem
+    }
+
+    /**
+     * What a `.ini` holds, without importing it — so the UI can show the user
+     * what they are about to replace their identity with. Public metadata
+     * only (name, nickname, level); safe to display and log.
+     */
+    fun describeIni(contents: String): String? = CoreBridge.describeIdentityIni(contents)
 
     /** Discards the current identity and persists a freshly generated one. */
     fun createNew(): String {

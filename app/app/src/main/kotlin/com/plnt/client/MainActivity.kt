@@ -133,6 +133,8 @@ class MainActivity : ComponentActivity() {
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
+                            identityChangeAllowed = state.phase == com.plnt.client.model.ConnectionPhase.DISCONNECTED ||
+                                state.phase == com.plnt.client.model.ConnectionPhase.ERROR,
                             availableInputDevices = state.availableInputDevices,
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,
@@ -144,7 +146,10 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
+                            onImportAccount = viewModel::importAccountEntries,
                             onImportIdentity = viewModel::importIdentity,
+                            onImportIdentityIni = viewModel::importIdentityFromIni,
+                            onDescribeIdentityIni = viewModel::describeIdentityIni,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },
                             onBack = {

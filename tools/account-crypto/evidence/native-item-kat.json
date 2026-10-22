@@ -1,0 +1,17 @@
+{
+  "envelope": "IV[16] || AES-256-CTR-native(plaintext) || SHA512(plaintext)[64]",
+  "checks": [
+    {
+      "case": "valid",
+      "matched": true,
+      "plaintext_returned": true
+    },
+    {
+      "case": "bad-digest",
+      "matched": true,
+      "plaintext_returned": false
+    }
+  ],
+  "protobuf_mapping": "recovered Item_Data bookmark=16 and identity=17 accepted by native parser",
+  "scope": "synthetic native sync-item decrypt, no account/network"
+}

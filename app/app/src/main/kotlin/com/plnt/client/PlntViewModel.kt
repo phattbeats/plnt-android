@@ -64,6 +64,7 @@ import java.util.UUID
  */
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val identityStore = IdentityStore(app)
+    private val accountStore = com.plnt.client.account.AccountStore(app)
     private val dataStore = PlntDataStore(app)
     private val sessionStore = SessionStore(app)
     private val powerManager = app.getSystemService(PowerManager::class.java)
@@ -71,6 +72,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state
 
+    private var changingIdentity = false
     private var voiceService: VoiceService? = null
     private var bindingStatus = VoiceServiceBindingStatus()
     private var bindingRegistered = false
@@ -324,6 +326,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startConnect(bookmark: Bookmark) {
+        if (changingIdentity) return
         if (bindingStatus.failed) {
             requestVoiceBinding()
             if (bindingStatus.failed) return
@@ -352,7 +355,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         try {
-            val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
+            val (connectionBookmark, identity) = accountStore.resolve(bookmark) {
+                _state.value.identityExport ?: identityStore.loadOrCreate()
+            }
             val app = getApplication<Application>()
             ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
             runOnService { svc ->
@@ -364,7 +369,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     ServerTapAction.IGNORE -> onServiceSnapshot(svc.currentConnectionSnapshot())
                     ServerTapAction.CONNECT -> try {
-                        svc.connect(bookmark, identity)
+                        svc.connect(connectionBookmark, identity)
                     } catch (t: Throwable) {
                         svc.failConnectionStart(t.message ?: t.javaClass.simpleName)
                     }
@@ -598,17 +603,69 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun importIdentity(pem: String): Boolean {
-        if (!identityStore.import(pem)) return false
-        _state.update { it.copy(identityExport = pem) }
-        return true
+    /** Explicit local import only; account data was already verified in the preview. */
+    suspend fun importAccountEntries(entries: List<com.plnt.client.account.AccountEntry>): Boolean {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR) || entries.isEmpty()) return false
+        changingIdentity = true
+        return try {
+            val ids = entries.map { it.bookmark.id }.toSet()
+            val next = _state.value.bookmarks.filterNot { it.id in ids } + entries.map { it.bookmark }
+            withContext(Dispatchers.IO) {
+                accountStore.save(entries)
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { false
+        } finally { changingIdentity = false }
+    }
+
+    suspend fun importIdentity(pem: String): Boolean = replaceIdentity {
+        if (identityStore.import(pem)) pem else null
+    } != null
+
+    private suspend fun replaceIdentity(import: () -> String?): String? {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return null
+        changingIdentity = true
+        return try {
+            val pem = withContext(Dispatchers.IO) { import() } ?: return null
+            _state.update { it.copy(identityExport = pem) }
+            pem
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Provider and keystore exceptions can include sensitive values.
+            null
+        } finally {
+            changingIdentity = false
+        }
     }
 
     /** Replaces the on-device identity with a freshly generated one. */
     fun createNewIdentity() {
-        val pem = identityStore.createNew()
-        _state.update { it.copy(identityExport = pem) }
+        viewModelScope.launch { replaceIdentity { identityStore.createNew() } }
     }
+
+    /**
+     * Import an identity from an exported TeamSpeak `.ini` file (PHA-4116).
+     *
+     * Takes the file's text, not a path: Android hands back a Storage Access
+     * Framework content URI, so the caller reads the stream and gives us the
+     * string. Returns the persisted identity, or null if the file wasn't a
+     * readable export — the stored identity is left alone on failure.
+     */
+    suspend fun importIdentityFromIni(contents: String): String? =
+        replaceIdentity { identityStore.importIni(contents) }
+
+    /**
+     * What an exported `.ini` contains, without importing it — so the UI can
+     * show the user what they are about to replace their identity with before
+     * they commit. Public metadata only; never key material.
+     */
+    fun describeIdentityIni(contents: String): String? = identityStore.describeIni(contents)
 
     /**
      * What to show after a disconnect, or null when there is nothing to

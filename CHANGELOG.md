@@ -1,9 +1,18 @@
 # Changelog
 
-All notable changes to plnt-android. Format follows
+All notable changes to Relay for Teamspeak. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 semantic-ish versioning where `versionCode` is the bump that matters for
 Android installs.
+
+## [0.1.1-dev] - Test candidate
+
+- Apply Relay for Teamspeak branding with the by PHATT TECH byline.
+- Import an exported TeamSpeak identity file with a preview, bounded background reads, and visible errors.
+- Keep identity replacement unavailable during a call or connection attempt.
+- myTeamSpeak account sign-in and synced bookmark import are still under investigation.
+
+- Package only ARM64 and x86_64, matching the native core.
 
 ## [0.1.0] - 2026-10-09
 

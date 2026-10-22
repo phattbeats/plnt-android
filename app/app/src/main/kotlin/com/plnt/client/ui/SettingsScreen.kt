@@ -40,6 +40,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.plnt.client.data.readIdentityFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +57,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.plnt.client.model.AudioDeviceOption
@@ -74,6 +83,7 @@ import com.plnt.client.ui.theme.SurfaceRaised
 fun SettingsScreen(
     settings: Settings,
     identityExport: String?,
+    identityChangeAllowed: Boolean,
     availableInputDevices: List<AudioDeviceOption>,
     availableOutputDevices: List<AudioDeviceOption>,
     batteryOptimizationExempt: Boolean,
@@ -85,15 +95,64 @@ fun SettingsScreen(
     onOutputDeviceChange: (String?) -> Unit,
     onShareAudioChange: (Boolean) -> Unit,
     onStreamQualityChange: (resolution: Int, fps: Int, bitrateKbps: Int) -> Unit,
-    onImportIdentity: (String) -> Boolean,
+    onImportAccount: suspend (List<com.plnt.client.account.AccountEntry>) -> Boolean,
+    onImportIdentity: suspend (String) -> Boolean,
+    onImportIdentityIni: suspend (String) -> String?,
+    onDescribeIdentityIni: (String) -> String?,
     onCreateIdentity: () -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
+    var showAccount by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     var qualityPicker by remember { mutableStateOf<QualityKnob?>(null) }
+    var importPreview by remember { mutableStateOf<String?>(null) }
+    var importDescription by remember { mutableStateOf<String?>(null) }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var importBusy by remember { mutableStateOf(false) }
+    var importSaving by remember { mutableStateOf(false) }
+    var importJob by remember { mutableStateOf<Job?>(null) }
+    val scope = rememberCoroutineScope()
+    val dismissImport = {
+        importJob?.cancel()
+        importPreview = null
+        importDescription = null
+        importError = null
+        importBusy = false
+        showImport = false
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        importPreview = null
+        importDescription = null
+        importError = null
+        if (uri != null && showImport) {
+            importBusy = true
+            importJob = scope.launch {
+                try {
+                    val (contents, description) = withContext(Dispatchers.IO) {
+                        val text = context.contentResolver.openInputStream(uri)?.use(::readIdentityFile)
+                            ?: throw java.io.IOException("No identity file stream")
+                        text to onDescribeIdentityIni(text)
+                    }
+                    if (description == null) {
+                        importError = "That file doesn't contain a readable TeamSpeak identity."
+                    } else {
+                        importPreview = contents
+                        importDescription = description
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    importError = "Couldn't read this file. Choose a UTF-8 identity export smaller than 64 KiB."
+                } finally {
+                    importBusy = false
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Bg,
@@ -164,12 +223,17 @@ fun SettingsScreen(
                 }
             }
 
+            Section("myTeamSpeak", Icons.Outlined.Key) {
+                NavRow("Sign in with myTeamSpeak", "Import your synced servers and identities", enabled = identityChangeAllowed) { showAccount = true }
+            }
+
             Section("Identity", Icons.Outlined.Key) {
                 NavRow("Export identity", "Copy it to move this identity to another device", enabled = identityExport != null) { showExport = true }
                 RowDivider()
-                NavRow("Import identity", "Paste one exported elsewhere") { showImport = true }
+                NavRow("Import identity", "Use an exported file or identity string", enabled = identityChangeAllowed) { showImport = true }
                 RowDivider()
-                NavRow("Create new identity", "Servers will see you as a new user") { showCreate = true }
+                NavRow("Create new identity", "Servers will see you as a new user", enabled = identityChangeAllowed) { showCreate = true }
+                if (!identityChangeAllowed) Footnote("Disconnect before replacing your identity.")
             }
 
             Section("About", Icons.Outlined.Info) {
@@ -177,6 +241,8 @@ fun SettingsScreen(
             }
         }
     }
+
+    if (showAccount) AccountSignInSheet(identityChangeAllowed, onImportAccount, onDismiss = { showAccount = false })
 
     if (showExport && identityExport != null) {
         val clipboard = LocalClipboardManager.current
@@ -242,16 +308,57 @@ fun SettingsScreen(
     if (showImport) {
         var pasted by remember { mutableStateOf("") }
         var failed by remember { mutableStateOf(false) }
-        SettingsSheet(title = "Import identity", onDismiss = { showImport = false }) {
+        SettingsSheet(title = "Import identity", onDismiss = { if (!importSaving) dismissImport() }) {
             Text(
-                "Paste an exported identity. This replaces the one on this device.",
+                "Pick the `.ini` the official client exported, or paste an identity string. " +
+                    "This replaces the identity in Relay for Teamspeak. Export the current identity first. " +
+                    "File import does not sign in to myTeamSpeak or download synced bookmarks.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted,
             )
             Spacer(modifier = Modifier.height(14.dp))
+            SecondaryButton(
+                text = "Choose identity file…",
+                enabled = !importBusy && identityChangeAllowed,
+                onClick = {
+                    // `.ini` and `text/*` so Android's picker surfaces the export
+                    // on Android too, not just a desktop-authored `.ini`.
+                    filePicker.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            importDescription?.let { description ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Found an identity — $description", style = MaterialTheme.typography.bodySmall, color = TextMuted)
+                Spacer(modifier = Modifier.height(10.dp))
+                PrimaryButton("Import from file", enabled = !importBusy && identityChangeAllowed,
+                    modifier = Modifier.fillMaxWidth(), onClick = {
+                        val contents = importPreview
+                        if (contents != null) {
+                            importBusy = true
+                            importSaving = true
+                            importJob = scope.launch {
+                                try {
+                                    if (onImportIdentityIni(contents) != null) { importSaving = false; dismissImport() }
+                                    else importError = "Couldn't save the identity. Disconnect and try again."
+                                } finally { importBusy = false; importSaving = false }
+                            }
+                        }
+                    })
+            }
+            if (importBusy) Text("Reading or saving identity…", color = TextMuted)
+            importError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                "Or paste an identity string",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             BasicTextField(
                 value = pasted,
-                onValueChange = { pasted = it; failed = false },
+                onValueChange = { pasted = it.take(64 * 1024); failed = false },
+                enabled = !importBusy,
                 textStyle = MaterialTheme.typography.bodySmall.copy(color = TextNormal),
                 cursorBrush = SolidColor(Brand),
                 modifier = Modifier
@@ -265,15 +372,23 @@ fun SettingsScreen(
             if (failed) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "That isn't a valid identity.",
+                    "Couldn't import this identity. Check the string and disconnect before trying again.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
             }
             Spacer(modifier = Modifier.height(20.dp))
-            PrimaryButton("Import", enabled = pasted.isNotBlank(), modifier = Modifier.fillMaxWidth(), onClick = {
-                if (onImportIdentity(pasted)) showImport = false else failed = true
-            })
+            PrimaryButton("Import", enabled = pasted.isNotBlank() && !importBusy && identityChangeAllowed,
+                modifier = Modifier.fillMaxWidth(), onClick = {
+                    importBusy = true
+                    importSaving = true
+                    importJob = scope.launch {
+                        try {
+                            if (onImportIdentity(pasted)) { pasted = ""; importSaving = false; dismissImport() }
+                            else failed = true
+                        } finally { importBusy = false; importSaving = false }
+                    }
+                })
         }
     }
 }
