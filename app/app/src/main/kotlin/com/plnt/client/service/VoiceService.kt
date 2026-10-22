@@ -905,8 +905,13 @@ class VoiceService : Service() {
                 val session = runCatching { sessionStore.load() }.getOrNull()
                 // peek(), not loadOrCreate(): an install whose identity is gone
                 // must not silently reconnect as a brand-new stranger.
-                val pem = session?.let { runCatching { identityStore.peek() }.getOrNull() }
-                if (session != null && pem != null) session to pem else null
+                session?.let {
+                    runCatching {
+                        val (bookmark, pem) = com.plnt.client.account.AccountStore(applicationContext)
+                            .resolve(it.bookmark) { identityStore.peek() }
+                        it.copy(bookmark = bookmark) to pem
+                    }.getOrNull()
+                }
             }
             if (!clientGeneration.accepts(restoreGeneration) || connectionParams != null) return@launch
             if (restored == null) {
