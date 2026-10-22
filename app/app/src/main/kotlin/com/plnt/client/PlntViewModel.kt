@@ -64,6 +64,7 @@ import java.util.UUID
  */
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val identityStore = IdentityStore(app)
+    private val accountStore = com.plnt.client.account.AccountStore(app)
     private val dataStore = PlntDataStore(app)
     private val sessionStore = SessionStore(app)
     private val powerManager = app.getSystemService(PowerManager::class.java)
@@ -354,7 +355,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         try {
-            val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
+            val (connectionBookmark, identity) = accountStore.resolve(bookmark) {
+                _state.value.identityExport ?: identityStore.loadOrCreate()
+            }
             val app = getApplication<Application>()
             ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
             runOnService { svc ->
@@ -366,7 +369,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     ServerTapAction.IGNORE -> onServiceSnapshot(svc.currentConnectionSnapshot())
                     ServerTapAction.CONNECT -> try {
-                        svc.connect(bookmark, identity)
+                        svc.connect(connectionBookmark, identity)
                     } catch (t: Throwable) {
                         svc.failConnectionStart(t.message ?: t.javaClass.simpleName)
                     }
@@ -598,6 +601,25 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 availableOutputDevices = AudioDevices.listOutputs(app),
             )
         }
+    }
+
+    /** Explicit local import only; account data was already verified in the preview. */
+    suspend fun importAccountEntries(entries: List<com.plnt.client.account.AccountEntry>): Boolean {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR) || entries.isEmpty()) return false
+        changingIdentity = true
+        return try {
+            val ids = entries.map { it.bookmark.id }.toSet()
+            val next = _state.value.bookmarks.filterNot { it.id in ids } + entries.map { it.bookmark }
+            withContext(Dispatchers.IO) {
+                accountStore.save(entries)
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { false
+        } finally { changingIdentity = false }
     }
 
     suspend fun importIdentity(pem: String): Boolean = replaceIdentity {
