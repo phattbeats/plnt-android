@@ -101,6 +101,7 @@ fun SettingsScreen(
     onOutputDeviceChange: (String?) -> Unit,
     onShareAudioChange: (Boolean) -> Unit,
     onStreamQualityChange: (resolution: Int, fps: Int, bitrateKbps: Int) -> Unit,
+    onImportAccount: suspend (List<com.plnt.client.account.AccountEntry>) -> Boolean,
     onImportIdentity: suspend (String) -> Boolean,
     onImportIdentityIni: suspend (String) -> String?,
     onDescribeIdentityIni: (String) -> String?,
@@ -109,6 +110,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    var showAccount by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
@@ -228,6 +230,10 @@ fun SettingsScreen(
                 }
             }
 
+            Section("myTeamSpeak", Icons.Outlined.Key) {
+                NavRow("Sign in with myTeamSpeak", "Import your synced servers and identities", enabled = identityChangeAllowed) { showAccount = true }
+            }
+
             Section("Identity", Icons.Outlined.Key) {
                 NavRow(
                     "Security level",
@@ -277,6 +283,7 @@ fun SettingsScreen(
             )
         }
     }
+    if (showAccount) AccountSignInSheet(identityChangeAllowed, onImportAccount, onDismiss = { showAccount = false })
 
     if (showExport && identityExport != null) {
         val clipboard = LocalClipboardManager.current

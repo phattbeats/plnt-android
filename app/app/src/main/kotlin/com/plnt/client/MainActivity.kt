@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
+                            onImportAccount = viewModel::importAccountEntries,
                             onImportIdentity = viewModel::importIdentity,
                             onImportIdentityIni = viewModel::importIdentityFromIni,
                             onDescribeIdentityIni = viewModel::describeIdentityIni,
