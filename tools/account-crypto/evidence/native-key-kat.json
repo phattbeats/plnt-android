@@ -1,0 +1,18 @@
+{
+  "source_sha256": "1189672c2c290997a419100b0f29f4da95d0df9d1e744b07a764eba1e8a0944f",
+  "scope": "synthetic native version-specific KDF plus GCM unwrap; dispatch/header checked statically; no RNG constructor, client, or network",
+  "checks": [
+    {
+      "version": 2,
+      "matched": true,
+      "wrap_key": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "blob": "024b896d9d4358a8737731d10b60954cdb000102030405060708090a0b5c535fa44e30edebb4f0c3cd2a7e50330361fb777e04b0063c14c9a1a79cd587"
+    },
+    {
+      "version": 1,
+      "matched": true,
+      "wrap_key": "bc1d2743aec0deab2cbf0a70b868d701a61032f13b0075fad8d6942a53798846",
+      "blob": "014bb017de708b43776390f13a1b6e0d7d000102030405060708090a0bc8f28f86827bd84a77720985937f8451a0d9e0177f8278426c6b9bff9cb458c0"
+    }
+  ]
+}

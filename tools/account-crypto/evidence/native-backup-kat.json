@@ -1,0 +1,6 @@
+{
+  "scope": "synthetic legacy recovery helper with explicit context; no RNG initialization, account or network",
+  "backup_encoding": "standard base64 of 32 bytes",
+  "wrap": "IV[16] || AES-256-CTR-native(master-key)",
+  "matched": true
+}

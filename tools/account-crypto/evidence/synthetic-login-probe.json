@@ -1,0 +1,7 @@
+{
+  "scope": "single synthetic nonexistent .invalid login; no real account, session, official secret or client certificate",
+  "http_status": 200,
+  "content_type": "application/json",
+  "body_bytes": 3,
+  "body_hex": "28ca01"
+}

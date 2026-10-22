@@ -43,6 +43,14 @@ hashes. The six outputs were regenerated and compared byte-for-byte by hash
 with the initial extraction. This validates schema recovery from that artifact,
 not a successful account exchange or decryption.
 
+## Native recovery follow-up
+
+PHA-4350 recovered framing and crypto beyond the original schema extraction.
+See [the native protocol report](docs/MYTEAMSPEAK-PROTOCOL.md) for formulas,
+synthetic verification, the accepted anonymous login frame, and the read-only
+implementation handoff. The schema investigation below records the earlier
+static-only stage; its open trace questions are addressed in that report.
+
 ## Login schema
 
 `LoginService.login` takes `LoginData` and returns `LoginSession`. The binary
