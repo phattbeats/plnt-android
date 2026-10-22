@@ -1,0 +1,35 @@
+{
+  "source_sha256": "1189672c2c290997a419100b0f29f4da95d0df9d1e744b07a764eba1e8a0944f",
+  "scope": "selected native wrapper under Unicorn; synthetic only",
+  "checks": [
+    {
+      "primitive": "AES-256 CTR native BE+1/LE+1/BE-1 update",
+      "iv": "000102030405060708090a0b0c0d0e0f",
+      "bytes": 65,
+      "ciphertext": "5a6f06540cfe7791f8275f360ecea89d1adeb9e64463f941ed0883488cb8ec0fae1b129e3c286df2d3f8a49bf7732273bdec3961afb0a540820fff3cd5c1277c30",
+      "matched": true
+    },
+    {
+      "primitive": "AES-256 CTR native BE+1/LE+1/BE-1 update",
+      "iv": "ff000000000000000000000000000000",
+      "bytes": 65,
+      "ciphertext": "d9a27132cdc7dc939e1e3dfcfb3f25d915c84b3ffbd2955cee8e6c7a5475bf4e5a96fd1ccbbeb6e0781bb8cb0c6a6f88e284302cab39f6af84bee3bd5eab4228ba",
+      "matched": true
+    },
+    {
+      "primitive": "AES-256 CTR native BE+1/LE+1/BE-1 update",
+      "iv": "ffffffffffffffffffffffffffffffff",
+      "bytes": 65,
+      "ciphertext": "e998e61e48a276dd5b8e1b70518259e1843ce0ec51b9c8450bfc3551d60a863021a22bd203cc003320617e883db9b37b996b188c96765a8b906535bbf4d4e0b263",
+      "matched": true
+    }
+  ]
+}
+{
+  "primitive": "AES-256-GCM",
+  "nonce": "000102030405060708090a0b",
+  "aad": "",
+  "ciphertext": "4703d418c1e0c41c85489d80bde4766293c79527e46e496b207eff9e01741ead21318cdf8be434bf5c8d55c6a4aa0617de6852be6ee395ed07ae102224decbd1b0",
+  "tag": "babdb3398eaf1e172385a46cb6abab5f",
+  "matched": true
+}
