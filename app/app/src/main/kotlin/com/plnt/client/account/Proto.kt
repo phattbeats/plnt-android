@@ -20,7 +20,7 @@ internal class Proto(bytes: ByteArray) {
                 result = result or ((b and 127).toLong() shl shift)
                 if (b < 128) return result
             }
-            error("Invalid account response integer.")
+            throw IllegalArgumentException("Invalid account response integer.")
         }
         while (p < bytes.size) {
             require(fields.size < 20000) { "Too many account response fields." }
@@ -33,7 +33,7 @@ internal class Proto(bytes: ByteArray) {
                 1 -> 8
                 2 -> { val length = varint(); require(length in 0..bytes.size.toLong()); length.toInt() }
                 5 -> 4
-                else -> error("Unsupported account wire type.")
+                else -> throw IllegalArgumentException("Unsupported account wire type.")
             }
             require(n <= bytes.size - p) { "Truncated account response field." }
             fields += Field((tag ushr 3).toInt(), wire, v, bytes.copyOfRange(p, p + n))
