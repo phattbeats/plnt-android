@@ -248,16 +248,16 @@ fun SheetDragHandle() {
     }
 }
 
-/** The selected Relay companion mark. */
+/** The Chlorophone mark. */
 @Composable
-fun RelayMark(size: Dp = 32.dp, modifier: Modifier = Modifier) {
+fun ChlorophoneMark(size: Dp = 32.dp, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier.size(size),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painterResource(com.plnt.client.R.drawable.relay_mark),
-            contentDescription = "Relay for Teamspeak",
+            painterResource(com.plnt.client.R.drawable.chlorophone_mark),
+            contentDescription = "Chlorophone",
             tint = androidx.compose.ui.graphics.Color.Unspecified,
             modifier = Modifier.size(size),
         )

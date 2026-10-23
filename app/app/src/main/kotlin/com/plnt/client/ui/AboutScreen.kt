@@ -81,9 +81,9 @@ fun AboutScreen(onBack: () -> Unit) {
                     .padding(vertical = 28.dp, horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                RelayMark(size = 96.dp)
+                ChlorophoneMark(size = 96.dp)
                 Spacer(modifier = Modifier.height(18.dp))
-                Text("Relay for Teamspeak", color = TextNormal, style = MaterialTheme.typography.headlineSmall,
+                Text("Chlorophone", color = TextNormal, style = MaterialTheme.typography.headlineSmall,
                     textAlign = TextAlign.Center)
                 Text("by PHATT TECH", color = TextMuted, style = MaterialTheme.typography.labelLarge)
                 Spacer(modifier = Modifier.height(14.dp))
@@ -102,7 +102,7 @@ fun AboutScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 "TeamSpeak is a trademark of TeamSpeak Systems GmbH. " +
-                    "Relay is an independent client, not made or endorsed by TeamSpeak.",
+                    "Chlorophone is an unofficial client, not affiliated with TeamSpeak Systems GmbH.",
                 color = TextFaint,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,

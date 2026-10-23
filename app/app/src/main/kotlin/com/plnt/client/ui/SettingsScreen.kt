@@ -125,7 +125,7 @@ fun SettingsScreen(
 
             Section("Push-to-talk triggers", Icons.Outlined.Mic) {
                 // Two independent switches: both can be armed at once.
-                SwitchRow("Volume button", "Only while Relay is open", settings.pttOnVolumeButton, onPttOnVolumeButtonChange)
+                SwitchRow("Volume button", "Only while Chlorophone is open", settings.pttOnVolumeButton, onPttOnVolumeButtonChange)
                 RowDivider()
                 SwitchRow("Headset button", "Works with the screen locked", settings.pttOnHeadsetButton, onPttOnHeadsetButtonChange)
                 Footnote("The on-screen button is always live. From the lock screen, use the notification's Talk action.")
@@ -160,7 +160,7 @@ fun SettingsScreen(
                 if (batteryOptimizationExempt) {
                     InfoRow("Battery optimisation off", "Calls keep running with the screen off and the app in the background.", Speaking)
                 } else {
-                    NavRow("Allow Relay to run in the background", "Stops Android pausing the call to save battery", onClick = onRequestBatteryExemption)
+                    NavRow("Allow Chlorophone to run in the background", "Stops Android pausing the call to save battery", onClick = onRequestBatteryExemption)
                 }
             }
 

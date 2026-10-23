@@ -115,10 +115,10 @@ fun BookmarksScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RelayMark(size = 32.dp)
+                        ChlorophoneMark(size = 32.dp)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("Relay for Teamspeak", style = MaterialTheme.typography.titleMedium, color = TextNormal)
+                            Text("Chlorophone", style = MaterialTheme.typography.titleMedium, color = TextNormal)
                             Text("by PHATT TECH", style = MaterialTheme.typography.labelSmall, color = TextMuted)
                         }
                     }
@@ -248,7 +248,7 @@ private fun EmptyState(modifier: Modifier, onAdd: () -> Unit) {
             modifier = Modifier.size(96.dp).clip(CircleShape).background(SurfaceRaised),
             contentAlignment = Alignment.Center,
         ) {
-            RelayMark(size = 56.dp)
+            ChlorophoneMark(size = 56.dp)
         }
         Spacer(modifier = Modifier.height(24.dp))
         Text("No servers yet", style = MaterialTheme.typography.titleLarge, color = TextNormal)

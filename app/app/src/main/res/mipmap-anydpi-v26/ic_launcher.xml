@@ -1,1 +1,1 @@
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/relay_background"/><foreground android:drawable="@drawable/relay_foreground"/><monochrome android:drawable="@drawable/relay_monochrome"/></adaptive-icon>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@drawable/chlorophone_background"/><foreground android:drawable="@drawable/chlorophone_foreground"/></adaptive-icon>
