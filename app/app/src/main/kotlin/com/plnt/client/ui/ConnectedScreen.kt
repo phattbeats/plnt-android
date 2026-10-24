@@ -155,7 +155,7 @@ fun ConnectedScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RelayMark(size = 36.dp)
+                        ChlorophoneMark(size = 36.dp)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(

@@ -1,6 +1,6 @@
 # Screen sharing over TS6 (PHA-3289)
 
-Relay for Teamspeak (by PHATT TECH) can watch a TeamSpeak 6 screen share started from a desktop TS6 client,
+Chlorophone (by PHATT TECH) can watch a TeamSpeak 6 screen share started from a desktop TS6 client,
 and share the phone's own screen to desktop viewers (see "Sending" below).
 Nothing here depends on any particular server: the signalling rides the same
 TS3-style command channel the voice client already uses, and the media is a
@@ -57,7 +57,7 @@ construction.
   communication stream, so it works, but volume keys act on both together.
 - Tested against TS6 server 6.0 beta with WebRTC transport off (stream commands
   over the text channel). A server that moves these commands onto its WebRTC
-  data channel would need the TS6 command layer Relay does not have; the app
+  data channel would need the TS6 command layer Chlorophone does not have; the app
   reports "no stream found" there rather than failing silently.
 
 ## Sending (phone → desktop)

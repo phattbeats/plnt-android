@@ -625,8 +625,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         // redials on its own, so this says what is actually happening rather
         // than announcing a death.
         DisconnectCause.SYSTEM_KILL ->
-            "Android stopped Relay in the background. It will reconnect on its own — " +
-                "exempting Relay from battery optimisation prevents the interruption."
+            "Android stopped Chlorophone in the background. It will reconnect on its own — " +
+                "exempting Chlorophone from battery optimisation prevents the interruption."
         DisconnectCause.CONNECTION_LOST -> "Connection lost: ${ev.reason}"
         DisconnectCause.ERROR -> ev.reason
         // VoiceService replaces this with the real cause before it gets here.
