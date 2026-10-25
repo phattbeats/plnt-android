@@ -50,6 +50,7 @@ targets:
       - path: Chlorophone
         excludes:
           - "Info.plist"
+          - "PlntCoreFFIBridgingHeader.h"
       - path: PlntCoreFFI
         includes:
           - "*.swift"
@@ -63,12 +64,13 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        # The UniFFI FFI module (plnt_coreFFI) is found through the header
-        # search path: the module map sits next to the header in
-        # PlntCoreFFI/, so clang picks it up and the generated
-        # plnt_core.swift can `import plnt_coreFFI`. The Rust static archive
-        # comes from the library search path.
-        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/PlntCoreFFI"
+        # The UniFFI FFI layer reaches the app through the bridging header
+        # (SWIFT_OBJC_BRIDGING_HEADER): the generated plnt_core.swift calls
+        # the C entry points unqualified, which is what a bridging header
+        # gives. PlntCoreFFI is deliberately NOT on the header search path —
+        # that would make the module map discoverable and the same
+        # declarations visible twice.
+        SWIFT_OBJC_BRIDGING_HEADER: "Chlorophone/PlntCoreFFIBridgingHeader.h"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/build/lib/$(PLATFORM_NAME)"
         # -lplnt_core is the Rust static archive produced by build-ios.sh.
         # The frameworks are what the Rust core links against: Security
