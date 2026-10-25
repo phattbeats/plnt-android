@@ -66,6 +66,10 @@ done
 # ---- libopus ---------------------------------------------------------------
 # The vendored Opus source ships inside the audiopus_sys crate, so its
 # version is pinned by Cargo.lock rather than by a URL here.
+#
+# CMAKE_POLICY_VERSION_MINIMUM=3.5: the vendored Opus CMakeLists asks for
+# CMake < 3.5 compatibility, which CMake 4 (what the macOS runner ships)
+# refuses without that flag.
 echo "build-ios.sh: fetching cargo dependencies"
 cargo fetch --manifest-path "$REPO_ROOT/Cargo.toml"
 
@@ -113,6 +117,7 @@ build_opus() {
     -DOPUS_BUILD_PROGRAMS=OFF \
     -DOPUS_BUILD_TESTING=OFF \
     -DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     > "$log" 2>&1; then
     echo "build-ios.sh: cmake configure failed for $target" >&2
     tail -40 "$log" >&2
