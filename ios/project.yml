@@ -1,0 +1,85 @@
+# XcodeGen spec for the Chlorophone iOS app (PHA-4552).
+#
+# The project file itself is NOT committed — `xcodegen generate` writes
+# Chlorophone.xcodeproj from this spec, and CI does exactly that before
+# xcodebuild. Keeping the spec (not the .xcodeproj) in git means no
+# merge conflicts on a file that is 100% machine-generated.
+#
+# The Rust core arrives as a plain static archive produced by
+# ../ios/build-ios.sh:
+#
+#   build/lib/iphoneos/libplnt_core.a        (device, arm64)
+#   build/lib/iphonesimulator/libplnt_core.a  (simulator)
+#
+# $(PLATFORM_NAME) is "iphoneos" for device builds and "iphonesimulator" for
+# simulator builds, so one LIBRARY_SEARCH_PATHS entry serves both.
+#
+# The UniFFI Swift bindings live in ../ios/PlntCoreFFI (committed, regenerated
+# by build-ios.sh and diffed by CI). plnt_coreFFI.modulemap is found through
+# HEADER_SEARCH_PATHS, which is what lets the generated plnt_core.swift
+# `import plnt_coreFFI`.
+
+name: Chlorophone
+
+options:
+  bundleIdPrefix: tech.phatt
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ALWAYS_SEARCH_USER_PATHS: "NO"
+    CLANG_ENABLE_MODULES: "YES"
+    CLANG_ENABLE_OBJC_ARC: "YES"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+
+targets:
+  Chlorophone:
+    type: application
+    platform: iOS
+    sources:
+      - path: Chlorophone
+        excludes:
+          - "Info.plist"
+          - "PlntCoreFFIBridgingHeader.h"
+      - path: PlntCoreFFI
+        includes:
+          - "*.swift"
+    settings:
+      base:
+        PRODUCT_NAME: Chlorophone
+        PRODUCT_BUNDLE_IDENTIFIER: tech.phatt.chlorophone
+        INFOPLIST_FILE: Chlorophone/Info.plist
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # The UniFFI FFI layer reaches the app through the bridging header
+        # (SWIFT_OBJC_BRIDGING_HEADER): the generated plnt_core.swift calls
+        # the C entry points unqualified, which is what a bridging header
+        # gives. PlntCoreFFI is deliberately NOT on the header search path —
+        # that would make the module map discoverable and the same
+        # declarations visible twice.
+        SWIFT_OBJC_BRIDGING_HEADER: "Chlorophone/PlntCoreFFIBridgingHeader.h"
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/build/lib/$(PLATFORM_NAME)"
+        # -lplnt_core is the Rust static archive produced by build-ios.sh.
+        # The frameworks are what the Rust core links against: Security
+        # (native-tls / reqwest), SystemConfiguration (hickory-resolver's
+        # system DNS), CoreFoundation (the core-foundation crate).
+        # -liconv because the Rust core's unicode stack wants it.
+        OTHER_LDFLAGS: "$(inherited) -lplnt_core -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation"
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: Network.framework
+      - sdk: Security.framework

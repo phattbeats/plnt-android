@@ -39,6 +39,12 @@ since `v0.1-invite-links` — these entries ship with the next one.
 
 ### Added
 
+- iOS client (`ios/`) — the same Rust core in a SwiftUI shell (PHA-4552).
+  Sideloaded only, no licensing: CI produces an unsigned `.ipa` on a macOS
+  runner, and AltStore/SideStore re-signs it with a free personal team.
+  `AVAudioSession` `.playAndRecord` / `.voiceChat` is the iOS counterpart of
+  Android's `VOICE_COMMUNICATION` source, so a Bluetooth headset's microphone
+  is used and the platform echo canceller engages.
 - Settings screen imports an identity from a `.ini` file, accepting either
   `id=` or `name=` for the identity label (PHA-4116).
 - One live share at a time, with screen-share video settings (PHA-4176).

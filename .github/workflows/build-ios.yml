@@ -1,0 +1,205 @@
+name: build-ios
+
+# PHA-4552 — the Chlorophone iOS client.
+#
+# Runs on a macOS runner: Xcode's iOS SDK is the only place the Rust core can
+# be cross-compiled for arm64-ios and where an .app can be assembled.
+#
+# The deliverable is an *unsigned* .ipa. "Sideloaded only, no licensing" is
+# the whole point of this issue: nothing here needs an Apple Developer Program
+# account, an App Store record, or a provisioning profile. The .ipa is
+# sideloaded with AltStore/SideStore (or signed locally with a personal
+# team), which is the same shape as the Android sideload story.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-ios.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    # macos-15 ships Xcode 16, which understands the project file format
+    # (77) that current XcodeGen emits. The macos-14 image's Xcode 15.4
+    # refuses to open it: "the project cannot be opened because it is in a
+    # future Xcode project file format (77)".
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Xcode and SDK versions
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+          cmake --version | head -1
+
+      - name: Does the iOS SDK export the symbols the Rust core needs?
+        # hickory-resolver reads the system DNS configuration through
+        # SystemConfiguration.framework on every Apple target. If the iOS SDK
+        # does not export the SCDynamicStore family, the app link fails with
+        # undefined symbols — print it up front so the failure is legible
+        # instead of a wall of linker noise.
+        #
+        # Modern SDKs ship .tbd stubs rather than framework binaries, so the
+        # stub is what carries the export list.
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          TBD="$SDK/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration.tbd"
+          if [[ -f "$TBD" ]]; then
+            echo "SystemConfiguration stub: $TBD"
+            for sym in SCDynamicStoreCreate SCDynamicStoreCopyValue SCPreferencesCreate SCNetworkReachabilityCreate; do
+              if grep -q "_$sym" "$TBD"; then
+                echo "  present: _$sym"
+              else
+                echo "  MISSING: _$sym"
+              fi
+            done
+          else
+            echo "SystemConfiguration stub not found at $TBD"
+            ls "$SDK/System/Library/Frameworks/" | head -5
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry + target
+        # The Rust core takes most of the build's wall time; without this the
+        # runner rebuilds every dependency from scratch on every run.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ios-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ios-cargo-
+
+      - name: Install XcodeGen
+        # The Xcode project is generated from ios/project.yml rather than
+        # committed, so there is no machine-written .xcodeproj to merge.
+        run: brew install xcodegen
+
+      - name: Build the Rust core for iOS + generate the Swift bindings
+        run: |
+          chmod +x ./ios/build-ios.sh
+          ./ios/build-ios.sh
+
+      - name: "Smoke: the static archives are there"
+        run: |
+          ls -la ios/build/lib/iphoneos/libplnt_core.a
+          ls -la ios/build/lib/iphonesimulator/libplnt_core.a
+          file ios/build/lib/iphoneos/libplnt_core.a
+          # arm64 slice, not a leftover x86_64 host build.
+          lipo -info ios/build/lib/iphoneos/libplnt_core.a
+
+      - name: "Smoke: regenerated Swift bindings are a no-op diff"
+        # The bindings are committed so a human can open the project without
+        # running the toolchain; CI proves they still match the Rust source.
+        run: |
+          if ! git diff --quiet -- ios/PlntCoreFFI; then
+            echo "::error::ios/PlntCoreFFI is out of date — run ./ios/build-ios.sh and commit the result"
+            git diff -- ios/PlntCoreFFI | head -100
+            exit 1
+          fi
+          echo "bindings match"
+
+      - name: Generate the Xcode project
+        run: |
+          cd ios
+          xcodegen generate
+          ls -la Chlorophone.xcodeproj
+
+      - name: Build the app (unsigned, device)
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild \
+            -project Chlorophone.xcodeproj \
+            -scheme Chlorophone \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tee build/xcodebuild-device.log
+
+      - name: Build the app (unsigned, simulator)
+        # The simulator build is the one a human can run without a device, so
+        # it is worth proving it compiles.
+        #
+        # ARCHS=arm64: the Rust core's simulator slice is arm64 (Apple
+        # Silicon), and the generic simulator destination otherwise asks for
+        # x86_64 as well, which the linker rejects. An Intel-Mac simulator
+        # would need an x86_64-apple-ios slice of the core as well — see
+        # ios/README.md.
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild \
+            -project Chlorophone.xcodeproj \
+            -scheme Chlorophone \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedDataSim \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tee build/xcodebuild-simulator.log
+
+      - name: Package the .ipa
+        run: |
+          cd ios
+          APP="build/DerivedData/Build/Products/Release-iphoneos/Chlorophone.app"
+          test -d "$APP"
+          rm -rf build/Payload build/Chlorophone-unsigned.ipa
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          # The app bundle has to sit under Payload/ — that is what every
+          # installer (AltStore, SideStore, Apple Configurator) looks for.
+          zip -qry Chlorophone-unsigned.ipa Payload
+          ls -la Chlorophone-unsigned.ipa
+          unzip -l Chlorophone-unsigned.ipa | head -25
+          unzip -l Chlorophone-unsigned.ipa | grep -q "Payload/Chlorophone.app/Info.plist" \
+            || { echo "::error::the .ipa has no Payload/Chlorophone.app/Info.plist"; exit 1; }
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: chlorophone-ios-unsigned-ipa
+          path: ios/build/Chlorophone-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload the simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: chlorophone-ios-simulator-app
+          path: ios/build/DerivedDataSim/Build/Products/Debug-iphonesimulator/Chlorophone.app
+          if-no-files-found: error
+          retention-days: 14
