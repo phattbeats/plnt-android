@@ -50,3 +50,9 @@ app/app/.cxx/
 # Local environment / Gradle wrapper
 .gradle/
 *.log
+
+# iOS build outputs (PHA-4552). The Xcode project is generated from
+# ios/project.yml by xcodegen; the Rust archives come from ios/build-ios.sh.
+ios/build/
+ios/Chlorophone.xcodeproj/
+ios/*.xcworkspace/

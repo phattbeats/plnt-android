@@ -1,0 +1,168 @@
+name: build-ios
+
+# PHA-4552 — the Chlorophone iOS client.
+#
+# Runs on a macOS runner: Xcode's iOS SDK is the only place the Rust core can
+# be cross-compiled for arm64-ios and where an .app can be assembled.
+#
+# The deliverable is an *unsigned* .ipa. "Sideloaded only, no licensing" is
+# the whole point of this issue: nothing here needs an Apple Developer Program
+# account, an App Store record, or a provisioning profile. The .ipa is
+# sideloaded with AltStore/SideStore (or signed locally with a personal
+# team), which is the same shape as the Android sideload story.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-ios.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Xcode and SDK versions
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+          cmake --version | head -1
+
+      - name: Does the iOS SDK export the symbols the Rust core needs?
+        # hickory-resolver reads the system DNS configuration through
+        # SystemConfiguration.framework on every Apple target. If the iOS SDK
+        # does not export the SCDynamicStore family, the app link fails with
+        # undefined symbols — print it up front so the failure is legible
+        # instead of a wall of linker noise.
+        run: |
+          FRAMEWORK="$(xcrun --sdk iphoneos --show-sdk-path)/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration"
+          if [[ -f "$FRAMEWORK" ]]; then
+            echo "SystemConfiguration present: $FRAMEWORK"
+            nm -gU "$FRAMEWORK" 2>/dev/null | grep -c SCDynamicStore || true
+            echo "--- sample exports ---"
+            nm -gU "$FRAMEWORK" 2>/dev/null | grep -E "SCDynamicStore|SCPreferences|SCNetworkReachability" | head -20 || true
+          else
+            echo "SystemConfiguration framework not found in the iOS SDK"
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install XcodeGen
+        # The Xcode project is generated from ios/project.yml rather than
+        # committed, so there is no machine-written .xcodeproj to merge.
+        run: brew install xcodegen
+
+      - name: Build the Rust core for iOS + generate the Swift bindings
+        run: |
+          chmod +x ./ios/build-ios.sh
+          ./ios/build-ios.sh
+
+      - name: "Smoke: the static archives are there"
+        run: |
+          ls -la ios/build/lib/iphoneos/libplnt_core.a
+          ls -la ios/build/lib/iphonesimulator/libplnt_core.a
+          file ios/build/lib/iphoneos/libplnt_core.a
+          # arm64 slice, not a leftover x86_64 host build.
+          lipo -info ios/build/lib/iphoneos/libplnt_core.a
+
+      - name: "Smoke: regenerated Swift bindings are a no-op diff"
+        # The bindings are committed so a human can open the project without
+        # running the toolchain; CI proves they still match the Rust source.
+        run: |
+          if ! git diff --quiet -- ios/PlntCoreFFI; then
+            echo "::error::ios/PlntCoreFFI is out of date — run ./ios/build-ios.sh and commit the result"
+            git diff -- ios/PlntCoreFFI | head -100
+            exit 1
+          fi
+          echo "bindings match"
+
+      - name: Generate the Xcode project
+        run: |
+          cd ios
+          xcodegen generate
+          ls -la Chlorophone.xcodeproj
+
+      - name: Build the app (unsigned, device)
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild \
+            -project Chlorophone.xcodeproj \
+            -scheme Chlorophone \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tee build/xcodebuild-device.log
+
+      - name: Build the app (unsigned, simulator)
+        # The simulator build is the one a human can run without a device, so
+        # it is worth proving it compiles and launches.
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild \
+            -project Chlorophone.xcodeproj \
+            -scheme Chlorophone \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedDataSim \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tee build/xcodebuild-simulator.log
+
+      - name: Package the .ipa
+        run: |
+          cd ios
+          APP="build/DerivedData/Build/Products/Release-iphoneos/Chlorophone.app"
+          test -d "$APP"
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build/Payload
+          zip -qry ../Chlorophone-unsigned.ipa Chlorophone.app
+          cd ..
+          ls -la Chlorophone-unsigned.ipa
+          unzip -l Chlorophone-unsigned.ipa | head -25
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: chlorophone-ios-unsigned-ipa
+          path: ios/build/Chlorophone-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload the simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: chlorophone-ios-simulator-app
+          path: ios/build/DerivedDataSim/Build/Products/Debug-iphonesimulator/Chlorophone.app
+          if-no-files-found: error
+          retention-days: 14

@@ -9,7 +9,11 @@ publish = false
 
 [lib]
 # Produce a `cdylib` so the Kotlin app can dlopen() the resulting .so.
-crate-type = ["cdylib", "rlib"]
+#
+# `staticlib` is the iOS deliverable: the Xcode app links the archive
+# straight into the binary, where a dylib would have to be embedded in the
+# bundle and signed with the app. PHA-4552.
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 # Force the C symbol prefix; some Android tools trip on Rust's default-mangled names.
 [package.metadata.capi]
