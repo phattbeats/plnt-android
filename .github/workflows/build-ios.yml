@@ -84,6 +84,19 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Cache cargo registry + target
+        # The Rust core takes most of the build's wall time; without this the
+        # runner rebuilds every dependency from scratch on every run.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ios-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ios-cargo-
+
       - name: Install XcodeGen
         # The Xcode project is generated from ios/project.yml rather than
         # committed, so there is no machine-written .xcodeproj to merge.
@@ -163,14 +176,17 @@ jobs:
           cd ios
           APP="build/DerivedData/Build/Products/Release-iphoneos/Chlorophone.app"
           test -d "$APP"
-          rm -rf build/Payload
+          rm -rf build/Payload build/Chlorophone-unsigned.ipa
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
-          cd build/Payload
-          zip -qry ../Chlorophone-unsigned.ipa Chlorophone.app
-          cd ..
+          cd build
+          # The app bundle has to sit under Payload/ — that is what every
+          # installer (AltStore, SideStore, Apple Configurator) looks for.
+          zip -qry Chlorophone-unsigned.ipa Payload
           ls -la Chlorophone-unsigned.ipa
           unzip -l Chlorophone-unsigned.ipa | head -25
+          unzip -l Chlorophone-unsigned.ipa | grep -q "Payload/Chlorophone.app/Info.plist" \
+            || { echo "::error::the .ipa has no Payload/Chlorophone.app/Info.plist"; exit 1; }
 
       - name: Upload the .ipa
         uses: actions/upload-artifact@v4
