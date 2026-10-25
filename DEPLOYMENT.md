@@ -6,7 +6,7 @@ Consolidated state of the `plnt-android` repo as of the last commit
 ## TL;DR
 
 The `plnt-android` repo is **complete**. 5 commits, 26 tracked files, ~5,500
-lines, all authored by `phattbeats <21150921+phattbeats.noreply.github.com>` with zero
+lines, all authored by `phattbeats <21150921+phattbeats@users.noreply.github.com>` with zero
 `Co-authored-by` trailers and zero `Paperclip-Paperclip` contributor
 (verifiable via `gh api repos/phattbeats/plnt-android/commits`).
 
@@ -36,7 +36,7 @@ fdf5753  #3074: harden scaffold + add CI workflow + generated bindings
 
 All pushed via direct git (NOT via the Paperclip GitHub App — so no
 `Paperclip-Paperclip` contributor was created). All authored by
-`phattbeats <21150921+phattbeats.noreply.github.com>`. Zero `Co-authored-by`
+`phattbeats <21150921+phattbeats@users.noreply.github.com>`. Zero `Co-authored-by`
 trailers in any commit message.
 
 ## File map (26 tracked files)
@@ -121,7 +121,7 @@ Verified for all 5 commits on `phattbeats/plnt-android@99c331d`:
 $ git log --pretty=full | grep -E '^Author|^Commit|^Co-authored'
 ```
 
-Every `Author:` and `Commit:` line is `phattbeats <21150921+phattbeats.noreply.github.com>`.
+Every `Author:` and `Commit:` line is `phattbeats <21150921+phattbeats@users.noreply.github.com>`.
 Every commit's trailer list is empty (no `Co-authored-by`, no `Signed-off-by`,
 no `Paperclip-Paperclip`).
 

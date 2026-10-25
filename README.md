@@ -171,13 +171,13 @@ beyond what `build.sh` produces.
 Every commit in this repo must satisfy the PHATT-TECH commit-identity
 rule:
 
-- Author and committer must be `phattbeats <21150921+phattbeats.noreply.github.com>`.
+- Author and committer must be `phattbeats <21150921+phattbeats@users.noreply.github.com>`.
 - Zero `Co-authored-by` trailers (no Paperclip-Paperclip contributor).
 - Push via direct `git push` (not via the Paperclip GitHub App).
 - Always override identity before committing:
   ```bash
   git config user.name  "phattbeats"
-  git config user.email "21150921+phattbeats.noreply.github.com"
+  git config user.email "21150921+phattbeats@users.noreply.github.com"
   ```
 
 ## Where this came from
