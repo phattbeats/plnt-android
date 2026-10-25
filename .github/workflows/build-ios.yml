@@ -135,7 +135,13 @@ jobs:
 
       - name: Build the app (unsigned, simulator)
         # The simulator build is the one a human can run without a device, so
-        # it is worth proving it compiles and launches.
+        # it is worth proving it compiles.
+        #
+        # ARCHS=arm64: the Rust core's simulator slice is arm64 (Apple
+        # Silicon), and the generic simulator destination otherwise asks for
+        # x86_64 as well, which the linker rejects. An Intel-Mac simulator
+        # would need an x86_64-apple-ios slice of the core as well — see
+        # ios/README.md.
         run: |
           cd ios
           set -o pipefail
@@ -146,6 +152,8 @@ jobs:
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/DerivedDataSim \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build | tee build/xcodebuild-simulator.log

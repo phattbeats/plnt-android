@@ -132,3 +132,8 @@ ios/
   myTeamSpeak to pull synced bookmarks; the iOS app takes servers manually.
 - **Unsigned builds only.** CI cannot produce a device-installable `.ipa`
   without a signing identity, so the artifact is unsigned by design.
+- **The simulator slice is arm64 only.** The Rust core's simulator build is
+  `aarch64-apple-ios-sim`, so the simulator build in CI is `ARCHS=arm64` —
+  fine on Apple Silicon, not on an Intel Mac. An Intel simulator needs an
+  `x86_64-apple-ios` slice of the core and a `lipo` of the two archives;
+  `ios/build-ios.sh` is where that would go.
