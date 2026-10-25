@@ -163,6 +163,9 @@ build_core() {
   if [[ "$target" == *sim* ]]; then
     export SDKROOT="$SIM_SDK"
   fi
+  # Match the deployment target Opus was built with, so the linker does not
+  # warn about every object file being "newer iOS than being linked".
+  export IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET"
   pushd "$REPO_ROOT/core" >/dev/null
   cargo build --release -p plnt-core --target "$target"
   popd >/dev/null
@@ -177,10 +180,14 @@ build_core "$SIM_TARGET" "$SIM_PLATFORM" "$BUILD_DIR/opus-$SIM_TARGET"
 # Library mode: the metadata uniffi embeds in the compiled cdylib is the
 # source of truth for the Swift API. The device dylib carries the same
 # metadata as the simulator one, so one read is enough.
+#
+# The bindgen tool itself is built and run for the HOST — an iOS binary
+# cannot execute on the runner.
 echo "build-ios.sh: generating Swift bindings (library mode)"
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 pushd "$REPO_ROOT/core" >/dev/null
 cargo run --release --manifest-path "$REPO_ROOT/Cargo.toml" \
-  --target "$DEVICE_TARGET" --bin plnt-uniffi-bindgen -- generate \
+  --target "$HOST_TRIPLE" --bin plnt-uniffi-bindgen -- generate \
   --language swift \
   --out-dir "$BINDINGS_DIR" \
   --library "$REPO_ROOT/target/$DEVICE_TARGET/release/libplnt_core.dylib"

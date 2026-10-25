@@ -28,7 +28,20 @@ prefix = "plnt_"
 # `notifystream*` notifications on the floor, and to send raw `OutCommand`s
 # for the TS6 screen-share signalling verbs tsclientlib has no message types
 # for (`joinstreamrequest`, `streamsignaling`, ...).
+#
+# PHA-4552: the iOS build drops tsclientlib's `default-tls` feature. That
+# feature turns on reqwest's rustls backend, rustls pulls aws-lc-sys, and
+# aws-lc-sys's assembly references ___chkstk_darwin — a symbol iOS does not
+# have, so the app link died with "Undefined symbols: ___chkstk_darwin".
+# The one thing tsclientlib does with reqwest is a public nickname -> address
+# lookup that neither the Android nor the iOS app uses; dropping it costs
+# nothing here. The `audio` feature (audiopus) is kept explicitly.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
 tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5", features = ["unstable"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5", features = ["unstable", "audio"], default-features = false }
+
 tsproto-packets = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5" }
 tsproto = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5" }
 
