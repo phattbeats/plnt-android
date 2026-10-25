@@ -32,7 +32,11 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16, which understands the project file format
+    # (77) that current XcodeGen emits. The macos-14 image's Xcode 15.4
+    # refuses to open it: "the project cannot be opened because it is in a
+    # future Xcode project file format (77)".
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:

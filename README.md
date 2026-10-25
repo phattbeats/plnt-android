@@ -65,8 +65,15 @@ plnt-android/
 │           │   ├── MainActivity.kt
 │           │   └── uniffi/plnt_core/plnt_core.kt   Generated UniFFI binding
 │           └── res/values/themes.xml
+├── ios/                              iOS client (PHA-4552) — SwiftUI app, same Rust core
+│   ├── README.md                     Build + sideload instructions
+│   ├── build-ios.sh                  Rust core for aarch64-apple-ios + Swift bindings
+│   ├── project.yml                   XcodeGen spec (the .xcodeproj is generated)
+│   ├── PlntCoreFFI/                  Committed UniFFI Swift bindings
+│   └── Chlorophone/                  The Swift app
 ├── .github/workflows/
-│   └── build.yml                     CI: ubuntu-24.04, builds via build.sh
+│   ├── build.yml                     CI: ubuntu-24.04, builds via build.sh
+│   └── build-ios.yml                 CI: macos-14, builds the unsigned .ipa
 ├── Makefile                          Quick local targets (verify, version, bindings, clean)
 ├── build.sh                          One-command build
 ├── Cargo.toml                         Workspace root (members: core, tools/*)
@@ -86,6 +93,8 @@ plnt-android/
 | Android NDK | 27.0.12077973 | Required for `cargo-ndk 4.x` |
 | Android Platform | android-34 | NDK 27 platform target |
 | Rust targets | aarch64-linux-android, x86_64-linux-android | arm64-v8a devices + x86_64 emulator |
+| iOS Rust targets | aarch64-apple-ios, aarch64-apple-ios-sim | iPhone + iOS Simulator (PHA-4552) |
+| iOS deployment target | 16.0 | SwiftUI app minimum |
 | cargo-ndk | 4.1.0 | Pinned for reproducibility |
 | uniffi | 0.27 | UniFFI binding generator + scaffolding |
 | tsclientlib | `ee3bc6f` (commit pin) | The version proven by the spike (#3073) |
