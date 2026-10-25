@@ -183,12 +183,18 @@ build_core "$SIM_TARGET" "$SIM_PLATFORM" "$BUILD_DIR/opus-$SIM_TARGET"
 #
 # The bindgen tool itself is built and run for the HOST — an iOS binary
 # cannot execute on the runner.
+#
+# --no-format: uniffi runs `swiftformat` on the output when it finds it on
+# PATH, which would make the committed bindings depend on whichever
+# swiftformat happens to be installed. Unformatted output is byte-identical
+# everywhere, so the CI drift check means something.
 echo "build-ios.sh: generating Swift bindings (library mode)"
 HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 pushd "$REPO_ROOT/core" >/dev/null
 cargo run --release --manifest-path "$REPO_ROOT/Cargo.toml" \
   --target "$HOST_TRIPLE" --bin plnt-uniffi-bindgen -- generate \
   --language swift \
+  --no-format \
   --out-dir "$BINDINGS_DIR" \
   --library "$REPO_ROOT/target/$DEVICE_TARGET/release/libplnt_core.dylib"
 popd >/dev/null

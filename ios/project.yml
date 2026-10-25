@@ -64,14 +64,18 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # The UniFFI FFI module (plnt_coreFFI) is found through the header
-        # search path; the Rust static archive through the library search path.
+        # search path: the module map sits next to the header in
+        # PlntCoreFFI/, so clang picks it up and the generated
+        # plnt_core.swift can `import plnt_coreFFI`. The Rust static archive
+        # comes from the library search path.
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/PlntCoreFFI"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/build/lib/$(PLATFORM_NAME)"
         # -lplnt_core is the Rust static archive produced by build-ios.sh.
         # The frameworks are what the Rust core links against: Security
         # (native-tls / reqwest), SystemConfiguration (hickory-resolver's
         # system DNS), CoreFoundation (the core-foundation crate).
-        OTHER_LDFLAGS: "$(inherited) -lplnt_core -framework Security -framework SystemConfiguration -framework CoreFoundation"
+        # -liconv because the Rust core's unicode stack wants it.
+        OTHER_LDFLAGS: "$(inherited) -lplnt_core -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation"
     dependencies:
       - sdk: AVFoundation.framework
       - sdk: AudioToolbox.framework
