@@ -112,6 +112,7 @@ build_opus() {
     -DCMAKE_OSX_ARCHITECTURES="$arch" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
     -DOPUS_BUILD_PROGRAMS=OFF \
@@ -145,7 +146,17 @@ export LIBOPUS_STATIC=1
 build_core() {
   local target="$1" platform="$2" opus_prefix="$3"
   echo "build-ios.sh: cross-compiling plnt-core for $target"
-  export OPUS_LIB_DIR="$opus_prefix/lib"
+  # Opus installs to ${CMAKE_INSTALL_LIBDIR}; find the archive rather than
+  # assuming where it landed.
+  local opus_lib
+  opus_lib="$(find "$opus_prefix" -name 'libopus.a' -print -quit 2>/dev/null || true)"
+  if [[ -z "$opus_lib" ]]; then
+    echo "build-ios.sh: no libopus.a under $opus_prefix — the Opus build did not install" >&2
+    find "$opus_prefix" -type f | head -20 >&2
+    exit 1
+  fi
+  export OPUS_LIB_DIR="$(dirname "$opus_lib")"
+  echo "build-ios.sh: linking opus from $OPUS_LIB_DIR"
   # SDKROOT is what rustc and clang use to find the Apple SDK for the
   # framework links the core carries (SystemConfiguration, Security).
   export SDKROOT="$DEVICE_SDK"
