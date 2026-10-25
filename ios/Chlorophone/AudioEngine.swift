@@ -16,7 +16,7 @@ import Foundation
 /// * Push-to-talk gates *sending*, never capture. Tearing the capture stream
 ///   down drops the Bluetooth link and the next press audibly clips the first
 ///   syllable.
-final class AudioEngine {
+final class AudioEngine: @unchecked Sendable {
     /// plnt-core only ever speaks 20 ms mono frames at this rate.
     static let coreSampleRate: Double = 48_000
     static let coreFrameSamples = 960

@@ -66,17 +66,43 @@ done
 # ---- libopus ---------------------------------------------------------------
 # The vendored Opus source ships inside the audiopus_sys crate, so its
 # version is pinned by Cargo.lock rather than by a URL here.
-OPUS_CRATE_DIR="$(find "${CARGO_HOME:-$HOME/.cargo}/registry/src" -maxdepth 2 -type d -name 'audiopus_sys-*' 2>/dev/null | head -n1)"
-if [[ -z "$OPUS_CRATE_DIR" ]]; then
-  echo "build-ios.sh: audiopus_sys source not in the cargo registry — run 'cargo fetch' first" >&2
+echo "build-ios.sh: fetching cargo dependencies"
+cargo fetch --manifest-path "$REPO_ROOT/Cargo.toml"
+
+find_opus_src() {
+  local root="${CARGO_HOME:-$HOME/.cargo}/registry"
+  local dir
+  dir="$(find "$root/src" -maxdepth 2 -type d -name 'audiopus_sys-*' 2>/dev/null | head -n1)"
+  if [[ -n "$dir" && -d "$dir/opus" ]]; then
+    echo "$dir/opus"
+    return 0
+  fi
+  # Cargo did not unpack it; unpack the .crate ourselves.
+  local crate
+  crate="$(find "$root/cache" -name 'audiopus_sys-*.crate' 2>/dev/null | head -n1)"
+  if [[ -z "$crate" ]]; then
+    return 1
+  fi
+  local tmp="$BUILD_DIR/opus-src"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  tar xzf "$crate" -C "$tmp"
+  echo "$tmp/$(basename "$crate" .crate)/opus"
+}
+
+mkdir -p "$BUILD_DIR"
+OPUS_SRC="$(find_opus_src || true)"
+if [[ -z "$OPUS_SRC" || ! -d "$OPUS_SRC" ]]; then
+  echo "build-ios.sh: could not find the vendored Opus source (audiopus_sys) in the cargo registry" >&2
   exit 1
 fi
-OPUS_SRC="$OPUS_CRATE_DIR/opus"
+echo "build-ios.sh: using Opus source at $OPUS_SRC"
 
 build_opus() {
   local target="$1" sdk="$2" arch="$3" prefix="$4"
+  local log="$BUILD_DIR/opus-$target.log"
   echo "build-ios.sh: building libopus for $target ($arch)"
-  cmake -S "$OPUS_SRC" -B "$BUILD_DIR/opus-$target" \
+  if ! cmake -S "$OPUS_SRC" -B "$BUILD_DIR/opus-$target" \
     -DCMAKE_SYSTEM_NAME=iOS \
     -DCMAKE_OSX_SYSROOT="$sdk" \
     -DCMAKE_OSX_ARCHITECTURES="$arch" \
@@ -87,15 +113,21 @@ build_opus() {
     -DOPUS_BUILD_PROGRAMS=OFF \
     -DOPUS_BUILD_TESTING=OFF \
     -DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF \
-    > "$BUILD_DIR/opus-$target-configure.log" 2>&1
-  cmake --build "$BUILD_DIR/opus-$target" --target install -j "$(sysctl -n hw.ncpu)" \
-    >> "$BUILD_DIR/opus-$target-configure.log" 2>&1
+    > "$log" 2>&1; then
+    echo "build-ios.sh: cmake configure failed for $target" >&2
+    tail -40 "$log" >&2
+    exit 1
+  fi
+  if ! cmake --build "$BUILD_DIR/opus-$target" --target install -j "$(sysctl -n hw.ncpu)" >> "$log" 2>&1; then
+    echo "build-ios.sh: cmake build failed for $target" >&2
+    tail -40 "$log" >&2
+    exit 1
+  fi
 }
 
 DEVICE_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 SIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 
-mkdir -p "$BUILD_DIR"
 build_opus "$DEVICE_TARGET" "$DEVICE_SDK" "arm64" "$BUILD_DIR/opus-$DEVICE_TARGET"
 build_opus "$SIM_TARGET" "$SIM_SDK" "arm64" "$BUILD_DIR/opus-$SIM_TARGET"
 

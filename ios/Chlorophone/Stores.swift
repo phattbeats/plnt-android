@@ -88,7 +88,7 @@ enum IdentityStore {
     static func importIdentity(_ pem: String) -> Bool {
         let trimmed = pem.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        guard (try? IdentityObj.import(s: trimmed)) != nil else { return false }
+        guard (try? IdentityObj.`import`(s: trimmed)) != nil else { return false }
         return Keychain.set(Data(trimmed.utf8), account: account)
     }
 

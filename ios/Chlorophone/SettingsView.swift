@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Settings: talk mode, identity, and the About panel (the one place the
 /// product name and mark still appear).

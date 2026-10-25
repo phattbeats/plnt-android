@@ -55,15 +55,24 @@ jobs:
         # does not export the SCDynamicStore family, the app link fails with
         # undefined symbols — print it up front so the failure is legible
         # instead of a wall of linker noise.
+        #
+        # Modern SDKs ship .tbd stubs rather than framework binaries, so the
+        # stub is what carries the export list.
         run: |
-          FRAMEWORK="$(xcrun --sdk iphoneos --show-sdk-path)/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration"
-          if [[ -f "$FRAMEWORK" ]]; then
-            echo "SystemConfiguration present: $FRAMEWORK"
-            nm -gU "$FRAMEWORK" 2>/dev/null | grep -c SCDynamicStore || true
-            echo "--- sample exports ---"
-            nm -gU "$FRAMEWORK" 2>/dev/null | grep -E "SCDynamicStore|SCPreferences|SCNetworkReachability" | head -20 || true
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          TBD="$SDK/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration.tbd"
+          if [[ -f "$TBD" ]]; then
+            echo "SystemConfiguration stub: $TBD"
+            for sym in SCDynamicStoreCreate SCDynamicStoreCopyValue SCPreferencesCreate SCNetworkReachabilityCreate; do
+              if grep -q "_$sym" "$TBD"; then
+                echo "  present: _$sym"
+              else
+                echo "  MISSING: _$sym"
+              fi
+            done
           else
-            echo "SystemConfiguration framework not found in the iOS SDK"
+            echo "SystemConfiguration stub not found at $TBD"
+            ls "$SDK/System/Library/Frameworks/" | head -5
           fi
 
       - name: Install Rust toolchain
