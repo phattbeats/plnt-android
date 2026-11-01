@@ -115,6 +115,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             val token = bindingGeneration.invalidate()
             bindingStatus = bindingStatus.bound()
             voiceService = svc
+            pushIceServers()
             // Replay before queued user actions: the foreground service owns truth.
             onServiceSnapshot(svc.currentConnectionSnapshot(), initialReplay = true)
             svc.setConnectionListener(this@PlntViewModel) { snapshot ->
@@ -577,6 +578,21 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun setShareAudio(enabled: Boolean) {
         _state.update { it.copy(settings = it.settings.copy(shareAudio = enabled)) }
         viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+    }
+
+    /** PHA-4852: the user's own TURN relay for streams; blank url = none. Applies to the next stream. */
+    fun setTurnServer(url: String, username: String, credential: String) {
+        _state.update {
+            it.copy(settings = it.settings.copy(turnUrl = url.trim(), turnUsername = username.trim(), turnCredential = credential))
+        }
+        viewModelScope.launch { dataStore.saveSettings(_state.value.settings) }
+        pushIceServers()
+    }
+
+    private fun pushIceServers() {
+        val s = _state.value.settings
+        val specs = com.plnt.client.stream.IceServerConfig.build(s.turnUrl, s.turnUsername, s.turnCredential)
+        runOnService { it.iceServers = specs }
     }
 
     /** PHA-4176: screen-share video settings; 0 = Automatic. Apply from the next share. */

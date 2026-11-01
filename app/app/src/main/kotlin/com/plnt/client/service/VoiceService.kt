@@ -157,6 +157,9 @@ class VoiceService : Service() {
 
     // PHA-3289 send side: our own screen share. Same lifetime rules as the viewer.
     private var sendSession: StreamSenderSession? = null
+
+    /** PHA-4852: ICE servers for new stream peers; the app pushes the user's TURN setting here. */
+    @Volatile var iceServers: List<com.plnt.client.stream.IceServerSpec> = com.plnt.client.stream.IceServerConfig.STUN
     // The live share's long edge, so a rotation keeps the picked quality.
     private var shareLongEdge = 0
     private val displayManager by lazy { getSystemService(DisplayManager::class.java) }
@@ -590,6 +593,7 @@ class VoiceService : Service() {
             context = applicationContext,
             eglBase = eglBase,
             ownNickname = nick,
+            iceServers = iceServers,
             sendRaw = { name, args -> sendRawCommand(name, args) },
             onState = { st -> mainHandler.post { streamStateListener?.invoke(st) } },
         )
@@ -638,6 +642,7 @@ class VoiceService : Service() {
             eglBase = eglBase,
             permissionData = permissionData,
             withAudio = settings.shareAudio,
+            iceServers = iceServers,
             ownClientId = { ownClientId },
             sendRaw = { name, args -> sendRawCommand(name, args) },
             onState = { st ->

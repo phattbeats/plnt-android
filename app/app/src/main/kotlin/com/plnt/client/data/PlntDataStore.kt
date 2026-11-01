@@ -35,6 +35,9 @@ class PlntDataStore(private val context: Context) {
         val STREAM_RESOLUTION = intPreferencesKey("stream_resolution")
         val STREAM_FPS = intPreferencesKey("stream_fps")
         val STREAM_BITRATE = intPreferencesKey("stream_bitrate_kbps")
+        val TURN_URL = stringPreferencesKey("turn_url")
+        val TURN_USERNAME = stringPreferencesKey("turn_username")
+        val TURN_CREDENTIAL = stringPreferencesKey("turn_credential")
 
         /**
          * The battery-optimisation exemption is asked for once, at the first
@@ -114,6 +117,9 @@ class PlntDataStore(private val context: Context) {
             streamResolution = prefs[Keys.STREAM_RESOLUTION] ?: 0,
             streamFps = prefs[Keys.STREAM_FPS] ?: 0,
             streamBitrateKbps = prefs[Keys.STREAM_BITRATE] ?: 0,
+            turnUrl = prefs[Keys.TURN_URL].orEmpty(),
+            turnUsername = prefs[Keys.TURN_USERNAME].orEmpty(),
+            turnCredential = prefs[Keys.TURN_CREDENTIAL].orEmpty(),
         )
     }
 
@@ -133,6 +139,9 @@ class PlntDataStore(private val context: Context) {
             it[Keys.STREAM_RESOLUTION] = settings.streamResolution
             it[Keys.STREAM_FPS] = settings.streamFps
             it[Keys.STREAM_BITRATE] = settings.streamBitrateKbps
+            it[Keys.TURN_URL] = settings.turnUrl
+            it[Keys.TURN_USERNAME] = settings.turnUsername
+            it[Keys.TURN_CREDENTIAL] = settings.turnCredential
             it.remove(Keys.LEGACY_PTT_SOURCE)
             it.remove(Keys.LEGACY_INPUT_ROUTE)
             // Automatic is stored as the absence of the key, matching how loadSettings

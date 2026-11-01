@@ -76,6 +76,7 @@ class StreamSenderSession(
     private val permissionData: Intent,
     /** Share the phone's playback audio too (Settings, on by default). */
     private val withAudio: Boolean,
+    private val iceServers: List<IceServerSpec> = IceServerConfig.STUN,
     private val ownClientId: () -> Long?,
     private val sendRaw: (name: String, args: Map<String, String>) -> Unit,
     private val onState: (StreamSendState) -> Unit,
@@ -409,10 +410,7 @@ class StreamSenderSession(
         if (viewers.containsKey(clid)) return
         val t = track ?: return
         val config = PeerConnection.RTCConfiguration(
-            listOf(
-                PeerConnection.IceServer.builder("stun:turn.teamspeak.com:3478").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            ),
+            IceServerConfig.toWebRtc(iceServers),
         ).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
