@@ -1,8 +1,9 @@
 # myTeamSpeak account import investigation
 
-Relay for Teamspeak currently imports an exported identity file. Account sign-in
-and synced bookmark import are not implemented. An offline identity file does
-not replace the account flow for a user who has only a phone.
+Chlorophone imports an exported identity file and, in the account test
+candidate, signs in to a myTeamSpeak account to download the user's synced
+servers and identities. An offline identity file does not replace the account
+flow for a user who has only a phone.
 
 ## Artifact and method
 
