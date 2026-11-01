@@ -1940,6 +1940,20 @@ public func coreVersion() -> String {
 })
 }
 /**
+ * Inspect a `.ini` without importing it — for the import UI to show what the
+ * file actually holds (nickname, security level) before the user commits.
+ *
+ * Returns a human-readable summary of public metadata only. It never includes
+ * key material, so it is safe to log.
+ */
+public func describeIdentityIni(contents: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypePlntError.lift) {
+    uniffi_plnt_core_fn_func_describe_identity_ini(
+        FfiConverterString.lower(contents),$0
+    )
+})
+}
+/**
  * PHA-4849: the identity's security level — the hash-cash level TeamSpeak
  * checks. Level 8 is what a fresh identity gets; servers ask for more.
  */
@@ -1947,6 +1961,27 @@ public func identityLevel(identity: String)throws  -> UInt8 {
     return try  FfiConverterUInt8.lift(try rustCallWithError(FfiConverterTypePlntError.lift) {
     uniffi_plnt_core_fn_func_identity_level(
         FfiConverterString.lower(identity),$0
+    )
+})
+}
+/**
+ * Import from a TeamSpeak identity `.ini` file's contents (PHA-4116).
+ *
+ * This is the path for a user who exports an identity from the official client
+ * on another machine. It is entirely offline — no myTeamSpeak account, no
+ * network, no official-client secret.
+ *
+ * Takes the file's *text*, not a path: on Android the user picks the file
+ * through the Storage Access Framework, so the caller reads the content URI and
+ * hands us the string.
+ *
+ * Returns the portable identity string to persist — the same form
+ * [`IdentityObj::export`] writes and `Client::connect` accepts.
+ */
+public func importIdentityIni(contents: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypePlntError.lift) {
+    uniffi_plnt_core_fn_func_import_identity_ini(
+        FfiConverterString.lower(contents),$0
     )
 })
 }
@@ -1992,7 +2027,13 @@ private var initializationResult: InitializationResult {
     if (uniffi_plnt_core_checksum_func_core_version() != 48360) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_plnt_core_checksum_func_describe_identity_ini() != 55588) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_plnt_core_checksum_func_identity_level() != 37583) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_plnt_core_checksum_func_import_identity_ini() != 8271) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_plnt_core_checksum_func_upgrade_identity_level() != 16683) {

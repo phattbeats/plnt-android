@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.Screen
+import com.plnt.client.model.isAccountImport
 import com.plnt.client.ui.AboutScreen
 import com.plnt.client.ui.BookmarksScreen
 import com.plnt.client.ui.ChatScreen
@@ -149,6 +150,8 @@ class MainActivity : ComponentActivity() {
                             identityLevel = state.identityLevel,
                             identityLevelRaising = state.identityLevelRaising,
                             onRaiseIdentityLevel = viewModel::raiseIdentityLevel,
+                            identityChangeAllowed = state.phase == com.plnt.client.model.ConnectionPhase.DISCONNECTED ||
+                                state.phase == com.plnt.client.model.ConnectionPhase.ERROR,
                             availableInputDevices = state.availableInputDevices,
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,
@@ -160,7 +163,13 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
+                            onImportAccount = viewModel::importAccountEntries,
+                            onSignOutAccount = viewModel::signOutAccount,
+                            existingServers = state.bookmarks,
+                            hasAccountImport = state.bookmarks.any { it.isAccountImport() },
                             onImportIdentity = viewModel::importIdentity,
+                            onImportIdentityIni = viewModel::importIdentityFromIni,
+                            onDescribeIdentityIni = viewModel::describeIdentityIni,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },
                             onBack = {
