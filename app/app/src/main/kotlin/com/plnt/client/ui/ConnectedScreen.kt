@@ -9,7 +9,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -138,7 +140,16 @@ fun ConnectedScreen(
     outputDevices: List<AudioDeviceOption> = emptyList(),
     outputDeviceKey: String? = null,
     onOutputDeviceChange: (String?) -> Unit = {},
+    /** PHA-4854: administration. Long-press a user or channel; the server decides who may. */
+    onAdmin: (com.plnt.client.admin.AdminOp) -> Unit = {},
+    pendingAdmin: com.plnt.client.admin.AdminOp? = null,
+    onAdminConfirm: (String) -> Unit = {},
+    onAdminDismiss: () -> Unit = {},
+    adminNotice: String? = null,
+    onAdminNoticeDismiss: () -> Unit = {},
 ) {
+    var adminTarget by remember { mutableStateOf<AdminTarget?>(null) }
+    var adminForm by remember { mutableStateOf<AdminForm?>(null) }
     // Collapse state is per-channel and sticky; channels with nothing in them
     // start collapsed, everything else starts open.
     val expandOverrides = remember { mutableStateMapOf<Long, Boolean>() }
@@ -208,6 +219,21 @@ fun ConnectedScreen(
                 }
             }
 
+            adminNotice?.let {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Speaking.copy(alpha = 0.18f))
+                        .clickable { onAdminNoticeDismiss() }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(it, color = TextNormal, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -221,8 +247,14 @@ fun ConnectedScreen(
                             current = row.node.id == selfChannel?.id,
                             onToggle = { expandOverrides[row.node.id] = !isExpanded(row.node) },
                             onJoin = { onJoinChannel(row.node.id) },
+                            onLongPress = { adminTarget = channelTarget(channelTree, row.node) },
                         )
-                        is TreeRow.Client -> ClientRowView(row.client, row.depth, onWatchStream)
+                        is TreeRow.Client -> ClientRowView(
+                            row.client,
+                            row.depth,
+                            onWatchStream,
+                            onLongPress = if (row.client.isSelf) null else ({ adminTarget = AdminTarget.User(row.client) }),
+                        )
                     }
                 }
             }
@@ -249,6 +281,27 @@ fun ConnectedScreen(
                 onOutputDeviceChange = onOutputDeviceChange,
             )
         }
+    }
+
+    adminTarget?.let { target ->
+        AdminMenuDialog(
+            target = target,
+            ownChannelId = selfChannel?.id,
+            onAdmin = onAdmin,
+            onForm = { adminForm = it },
+            onDismiss = { adminTarget = null },
+        )
+    }
+    adminForm?.let { form ->
+        AdminFormDialog(form = form, onAdmin = onAdmin, onDismiss = { adminForm = null })
+    }
+    pendingAdmin?.let { op ->
+        AdminConfirmDialog(
+            op = op,
+            targetName = adminTargetName(channelTree, op),
+            onConfirm = onAdminConfirm,
+            onDismiss = onAdminDismiss,
+        )
     }
 
     // PHA-4849: a password-protected channel needs its password before the
@@ -307,6 +360,42 @@ private fun ChannelPasswordDialog(
     )
 }
 
+/** Where [node] sits among its siblings, for the reorder actions. */
+private fun channelTarget(tree: List<ChannelNode>, node: ChannelNode): AdminTarget.Channel {
+    fun find(siblings: List<ChannelNode>, parentId: Long): AdminTarget.Channel? {
+        if (siblings.any { it.id == node.id }) {
+            return AdminTarget.Channel(node, parentId, siblings.lastOrNull()?.id, siblings.firstOrNull()?.id)
+        }
+        for (s in siblings) find(s.children, s.id)?.let { return it }
+        return null
+    }
+    return find(tree, 0L) ?: AdminTarget.Channel(node, 0L, null, null)
+}
+
+/** The display name of whoever or whatever a pending admin operation targets. */
+private fun adminTargetName(tree: List<ChannelNode>, op: com.plnt.client.admin.AdminOp): String {
+    fun channel(id: Long, nodes: List<ChannelNode>): ChannelNode? {
+        for (n in nodes) {
+            if (n.id == id) return n
+            channel(id, n.children)?.let { return it }
+        }
+        return null
+    }
+    fun client(id: Long, nodes: List<ChannelNode>): String? {
+        for (n in nodes) {
+            n.clients.firstOrNull { it.clientId == id }?.let { return it.name }
+            client(id, n.children)?.let { return it }
+        }
+        return null
+    }
+    return when (op) {
+        is com.plnt.client.admin.AdminOp.Kick -> client(op.clientId, tree) ?: "this user"
+        is com.plnt.client.admin.AdminOp.Ban -> client(op.clientId, tree) ?: "this user"
+        is com.plnt.client.admin.AdminOp.DeleteChannel -> channel(op.channelId, tree)?.name ?: "this channel"
+        else -> ""
+    }
+}
+
 private sealed class TreeRow {
     abstract val depth: Int
 
@@ -345,6 +434,7 @@ private fun findSelfChannel(nodes: List<ChannelNode>): ChannelNode? {
  * Discord-style voice channel row: speaker glyph, name, and a lifted
  * background on the channel you're in. Tap joins; the chevron folds.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelRowView(
     node: ChannelNode,
@@ -353,6 +443,7 @@ private fun ChannelRowView(
     current: Boolean,
     onToggle: () -> Unit,
     onJoin: () -> Unit,
+    onLongPress: () -> Unit = {},
 ) {
     val isEmpty = node.clients.isEmpty() && node.children.isEmpty()
     val rotation by animateFloatAsState(if (expanded) 0f else -90f, label = "chevron")
@@ -363,7 +454,7 @@ private fun ChannelRowView(
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (current) SurfaceHigh else Color.Transparent)
-            .clickable { onJoin() }
+            .combinedClickable(onClick = onJoin, onLongClick = onLongPress)
             .padding(start = (2 + 16 * depth).dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -416,11 +507,13 @@ private fun ChannelRowView(
  * speaking, name, then muted/deafened glyphs and a red LIVE badge for a
  * screen share (tap the row to watch).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ClientRowView(
     client: ClientRow,
     depth: Int,
     onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit,
+    onLongPress: (() -> Unit)? = null,
 ) {
     val presence = client.presence
     val stream = client.streaming
@@ -432,7 +525,16 @@ private fun ClientRowView(
             .fillMaxWidth()
             .height(40.dp)
             .clip(RoundedCornerShape(8.dp))
-            .then(if (stream != null) Modifier.clickable { onWatchStream(stream) } else Modifier)
+            .then(
+                if (stream != null || onLongPress != null) {
+                    Modifier.combinedClickable(
+                        onClick = { if (stream != null) onWatchStream(stream) },
+                        onLongClick = onLongPress,
+                    )
+                } else {
+                    Modifier
+                },
+            )
             .padding(start = (30 + 16 * depth).dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

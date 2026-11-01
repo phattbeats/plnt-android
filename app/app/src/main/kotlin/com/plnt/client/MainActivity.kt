@@ -102,6 +102,13 @@ class MainActivity : ComponentActivity() {
                             pttIsPushToTalk = state.settings.pttMode == com.plnt.client.model.PttMode.PUSH_TO_TALK,
                             lastError = state.lastError,
                             onJoinChannel = viewModel::joinChannel,
+                            // PHA-4854: long-press admin actions.
+                            onAdmin = viewModel::requestAdmin,
+                            pendingAdmin = state.pendingAdmin,
+                            onAdminConfirm = viewModel::confirmAdmin,
+                            onAdminDismiss = viewModel::dismissAdmin,
+                            adminNotice = state.adminNotice,
+                            onAdminNoticeDismiss = viewModel::dismissAdminNotice,
                             // PHA-4849: a protected channel asks for its
                             // password before the move is sent.
                             pendingChannelPassword = state.pendingChannelPassword,
