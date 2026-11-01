@@ -12,6 +12,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.plnt.client.account.AccountImportOutcome
 import com.plnt.client.model.isAccountImport
+import com.plnt.client.admin.AdminCommands
+import com.plnt.client.admin.AdminInvalid
+import com.plnt.client.admin.AdminOp
 import com.plnt.client.audio.AudioDevices
 import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreBridge
@@ -561,6 +564,76 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(pendingChannelPassword = null) }
     }
 
+    // ---- PHA-4854: administration ------------------------------------------
+
+    private var nextAdminRequestId = 1
+    /** In-flight admin operations by request id, so a reply is described in terms of what was asked. */
+    private val pendingAdminOps = HashMap<Int, AdminOp>()
+
+    /**
+     * Run an admin operation. Destructive ones (kick, ban, delete channel) are
+     * parked in state first and only sent by [confirmAdmin]. The server decides
+     * whether the caller may; its answer arrives in [onAdminReply].
+     */
+    fun requestAdmin(op: AdminOp) {
+        if (op.needsConfirmation) {
+            _state.update { it.copy(pendingAdmin = op, adminNotice = null) }
+        } else {
+            sendAdmin(op)
+        }
+    }
+
+    /** The user confirmed the parked operation, optionally with a [reason] for a kick or ban. */
+    fun confirmAdmin(reason: String = "") {
+        val op = _state.value.pendingAdmin ?: return
+        _state.update { it.copy(pendingAdmin = null) }
+        sendAdmin(
+            when (op) {
+                is AdminOp.Kick -> op.copy(reason = reason.trim())
+                is AdminOp.Ban -> op.copy(reason = reason.trim())
+                else -> op
+            },
+        )
+    }
+
+    fun dismissAdmin() {
+        _state.update { it.copy(pendingAdmin = null) }
+    }
+
+    fun dismissAdminNotice() {
+        _state.update { it.copy(adminNotice = null) }
+    }
+
+    private fun sendAdmin(op: AdminOp) {
+        val id = nextAdminRequestId++
+        val cmd = try {
+            AdminCommands.build(op, id)
+        } catch (e: AdminInvalid) {
+            _state.update { it.copy(lastError = "Can't ${op.label}: ${e.message}.", adminNotice = null) }
+            return
+        }
+        pendingAdminOps[id] = op
+        _state.update { it.copy(lastError = null, adminNotice = null) }
+        runOnService { it.sendRawCommand(cmd.name, cmd.args) }
+    }
+
+    /**
+     * An `error` reply tagged with our return code. True when it was ours.
+     * The tree and roster refresh on their own from the server's own
+     * notifications (a moved client, a created or deleted channel); this only
+     * reports the outcome.
+     */
+    private fun onAdminReply(args: Map<String, String>): Boolean {
+        val id = AdminCommands.requestIdOf(args["return_code"]) ?: return false
+        val op = pendingAdminOps.remove(id) ?: return true
+        val result = AdminCommands.describe(op, args)
+        _state.update {
+            if (result.ok) it.copy(adminNotice = result.message, lastError = null)
+            else it.copy(lastError = result.message, adminNotice = null)
+        }
+        return true
+    }
+
     /** The channel with this id, anywhere in the tree. */
     private fun findChannel(channelId: Long): ChannelNode? {
         fun walk(nodes: List<ChannelNode>): ChannelNode? {
@@ -975,6 +1048,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 channelsById.clear()
                 clientsById.clear()
                 streams.clear()
+                pendingAdminOps.clear()
                 ownChannelId = null
                 _state.update {
                     it.copy(
@@ -1081,6 +1155,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 refreshStreams()
             }
             is CoreEvent.RawCommand -> {
+                if (ev.name == "error" && onAdminReply(ev.args)) return
                 if (streams.onRaw(ev)) rebuildTree()
             }
             is CoreEvent.TalkStatus -> {
