@@ -96,6 +96,11 @@ dependencies {
 
     testImplementation(libs.junit)
 
+    // PHA-4849: the real org.json, so the TeamSpeak invite service's answer
+    // can be parsed in a host unit test. The mockable android.jar that AGP
+    // puts on the unit-test classpath stubs every method out.
+    testImplementation(libs.json)
+
     // plnt-core generated Kotlin bindings + JNA-compatible loader.
     // The generated file is written to src/main/kotlin/com/plnt/client/plnt by
     // `cargo run --bin uniffi-bindgen generate src/plnt_core.udl --language kotlin`

@@ -90,12 +90,20 @@ fun InviteSheet(
                 Spacer(modifier = Modifier.width(14.dp))
                 Column {
                     Text(
-                        invite.label ?: invite.address,
+                        // PHA-4849: an invite names a code, not a server — the
+                        // server is looked up when the user taps Join.
+                        invite.label ?: if (invite.isInvite) "TeamSpeak invite" else invite.address,
                         color = TextNormal,
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        "${invite.address}:${invite.port}",
+                        when {
+                            invite.isInvite -> "Invite code ${invite.inviteCode}"
+                            // PHA-4849: no port means the server's own DNS
+                            // entry decides.
+                            invite.port > 0 -> "${invite.address}:${invite.port}"
+                            else -> invite.address
+                        },
                         color = TextMuted,
                         style = MaterialTheme.typography.bodySmall,
                     )

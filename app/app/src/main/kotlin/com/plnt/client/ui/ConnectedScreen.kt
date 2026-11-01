@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -49,11 +50,14 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -72,6 +76,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import android.media.AudioDeviceInfo
 import com.plnt.client.audio.keyDeviceType
@@ -108,6 +114,13 @@ fun ConnectedScreen(
     pttIsPushToTalk: Boolean,
     lastError: String?,
     onJoinChannel: (Long) -> Unit,
+    /**
+     * PHA-4849: a protected channel the user tapped, waiting for its
+     * password. Null when nothing is waiting.
+     */
+    pendingChannelPassword: ChannelNode? = null,
+    onChannelPasswordSubmit: (String) -> Unit = {},
+    onChannelPasswordDismiss: () -> Unit = {},
     onToggleMute: () -> Unit,
     onToggleDeafen: () -> Unit,
     onPttPress: () -> Unit,
@@ -237,6 +250,61 @@ fun ConnectedScreen(
             )
         }
     }
+
+    // PHA-4849: a password-protected channel needs its password before the
+    // move is worth sending.
+    pendingChannelPassword?.let { channel ->
+        ChannelPasswordDialog(
+            channel = channel,
+            onSubmit = onChannelPasswordSubmit,
+            onDismiss = onChannelPasswordDismiss,
+        )
+    }
+}
+
+/**
+ * PHA-4849: the password for a protected channel.
+ *
+ * The join is not sent until the password is in. A move without one is
+ * refused by the server, and the user stays in the channel they were already
+ * in with nothing to show for the tap.
+ */
+@Composable
+private fun ChannelPasswordDialog(
+    channel: ChannelNode,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember(channel.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        title = { Text("Channel password", color = TextNormal) },
+        text = {
+            Column {
+                Text(
+                    "\"${channel.name}\" is password protected.",
+                    color = TextMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(password) }) { Text("Join", color = Brand) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
+        },
+    )
 }
 
 private sealed class TreeRow {

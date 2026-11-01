@@ -74,6 +74,12 @@ import com.plnt.client.ui.theme.SurfaceRaised
 fun SettingsScreen(
     settings: Settings,
     identityExport: String?,
+    /**
+     * PHA-4849: the identity's security level, and whether a raise is running.
+     */
+    identityLevel: Int? = null,
+    identityLevelRaising: Boolean = false,
+    onRaiseIdentityLevel: (Int) -> Unit = {},
     availableInputDevices: List<AudioDeviceOption>,
     availableOutputDevices: List<AudioDeviceOption>,
     batteryOptimizationExempt: Boolean,
@@ -93,6 +99,7 @@ fun SettingsScreen(
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
+    var showLevelPicker by remember { mutableStateOf(false) }
     var qualityPicker by remember { mutableStateOf<QualityKnob?>(null) }
 
     Scaffold(
@@ -165,6 +172,16 @@ fun SettingsScreen(
             }
 
             Section("Identity", Icons.Outlined.Key) {
+                NavRow(
+                    "Security level",
+                    when {
+                        identityLevel == null -> "Unknown"
+                        identityLevelRaising -> "Level $identityLevel — raising…"
+                        else -> "Level $identityLevel"
+                    },
+                    enabled = identityLevel != null && !identityLevelRaising,
+                ) { showLevelPicker = true }
+                RowDivider()
                 NavRow("Export identity", "Copy it to move this identity to another device", enabled = identityExport != null) { showExport = true }
                 RowDivider()
                 NavRow("Import identity", "Paste one exported elsewhere") { showImport = true }
@@ -175,6 +192,31 @@ fun SettingsScreen(
             Section("About", Icons.Outlined.Info) {
                 NavRow("About this app", "Version, credits and licences", onClick = onOpenAbout)
             }
+        }
+    }
+
+    // PHA-4849: the security level picker.
+    if (showLevelPicker) {
+        SettingsSheet(title = "Security level", onDismiss = { showLevelPicker = false }) {
+            Text(
+                "A TeamSpeak security level is a hash-cash property of your identity: the level is " +
+                    "how many leading zero bits its hash has to have, so every level doubles the " +
+                    "work. A server that asks for a higher level than yours will refuse you.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMuted,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            listOf(12, 14, 16, 18, 20).forEach { level ->
+                ChoiceRow("Level $level", null, identityLevel == level) {
+                    showLevelPicker = false
+                    onRaiseIdentityLevel(level)
+                }
+                RowDivider()
+            }
+            Footnote(
+                "Level 12 is instant. 16 takes a moment. 18 and 20 take minutes — the app " +
+                    "keeps working while it does, and the level is kept even if you leave."
+            )
         }
     }
 

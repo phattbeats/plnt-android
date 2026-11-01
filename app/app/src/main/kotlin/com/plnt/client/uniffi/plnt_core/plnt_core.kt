@@ -744,6 +744,12 @@ internal open class UniffiVTableCallbackInterfaceEventSink(
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -770,7 +776,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_plnt_core_fn_constructor_client_new(`sink`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
-    fun uniffi_plnt_core_fn_method_client_connect(`ptr`: Pointer,`address`: RustBuffer.ByValue,`port`: Short,`nickname`: RustBuffer.ByValue,`identityPem`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_plnt_core_fn_method_client_connect(`ptr`: Pointer,`address`: RustBuffer.ByValue,`port`: Short,`nickname`: RustBuffer.ByValue,`identityPem`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`channel`: RustBuffer.ByValue,`channelPassword`: RustBuffer.ByValue,`privilegeKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_method_client_disconnect(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -785,6 +791,8 @@ internal interface UniffiLib : Library {
     fun uniffi_plnt_core_fn_method_client_set_input_muted(`ptr`: Pointer,`muted`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_method_client_set_output_muted(`ptr`: Pointer,`muted`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_plnt_core_fn_method_client_use_privilege_key(`ptr`: Pointer,`token`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_plnt_core_fn_clone_identityobj(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
@@ -801,6 +809,10 @@ internal interface UniffiLib : Library {
     fun uniffi_plnt_core_fn_init_callback_vtable_eventsink(`vtable`: UniffiVTableCallbackInterfaceEventSink,
     ): Unit
     fun uniffi_plnt_core_fn_func_core_version(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_plnt_core_fn_func_identity_level(`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    fun uniffi_plnt_core_fn_func_upgrade_identity_level(`identity`: RustBuffer.ByValue,`target`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_plnt_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -916,6 +928,10 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_plnt_core_checksum_func_core_version(
     ): Short
+    fun uniffi_plnt_core_checksum_func_identity_level(
+    ): Short
+    fun uniffi_plnt_core_checksum_func_upgrade_identity_level(
+    ): Short
     fun uniffi_plnt_core_checksum_method_client_connect(
     ): Short
     fun uniffi_plnt_core_checksum_method_client_disconnect(
@@ -931,6 +947,8 @@ internal interface UniffiLib : Library {
     fun uniffi_plnt_core_checksum_method_client_set_input_muted(
     ): Short
     fun uniffi_plnt_core_checksum_method_client_set_output_muted(
+    ): Short
+    fun uniffi_plnt_core_checksum_method_client_use_privilege_key(
     ): Short
     fun uniffi_plnt_core_checksum_method_identityobj_export(
     ): Short
@@ -964,13 +982,19 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_plnt_core_checksum_func_core_version() != 48360.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_plnt_core_checksum_method_client_connect() != 26877.toShort()) {
+    if (lib.uniffi_plnt_core_checksum_func_identity_level() != 37583.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_func_upgrade_identity_level() != 16683.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_connect() != 25055.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_disconnect() != 49375.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_plnt_core_checksum_method_client_join_channel() != 32077.toShort()) {
+    if (lib.uniffi_plnt_core_checksum_method_client_join_channel() != 34370.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_send_pcm_frame() != 52815.toShort()) {
@@ -986,6 +1010,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_client_set_output_muted() != 36648.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_plnt_core_checksum_method_client_use_privilege_key() != 33556.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_plnt_core_checksum_method_identityobj_export() != 42603.toShort()) {
@@ -1403,8 +1430,18 @@ public interface ClientInterface {
     /**
      * Connect to a TeamSpeak 3 server and wait until the first `BookEvents` batch
      * has been received (the server has accepted us and sent the initial state).
+     *
+     * PHA-4849: [channel] is the channel an invite asked us to land in — a
+     * `/`-separated path of names (`Movies/Lobby`) or a numeric channel id
+     * (`42`). [channel_password] is that channel's password, and
+     * [privilege_key] is a token from the server's admin, spent once right
+     * after the session is up.
+     *
+     * The channel password is hashed by tsclientlib before it reaches the
+     * wire (`base64(sha1(password))`, TeamSpeak's own encoding) — the plain
+     * text never leaves the device, and neither password is ever logged.
      */
-    fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `nickname`: kotlin.String, `identityPem`: kotlin.String, `password`: kotlin.String?)
+    fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `nickname`: kotlin.String, `identityPem`: kotlin.String, `password`: kotlin.String?, `channel`: kotlin.String?, `channelPassword`: kotlin.String?, `privilegeKey`: kotlin.String?)
     
     /**
      * Disconnect cleanly. Drops the command channel; the background task exits.
@@ -1414,6 +1451,13 @@ public interface ClientInterface {
     /**
      * Move the own client to a channel by id. The channel's current name is
      * resolved from the cached tree.
+     *
+     * PHA-4849: [password] is the channel's password, for a channel that has
+     * one. It used to be dropped on the floor here (`_password` and
+     * `password: None`), so a password-protected channel could never be
+     * entered — the request went out without a password and the server
+     * refused the move. The password is hashed before it reaches the wire
+     * (see [build_client_move]) and is never logged.
      */
     fun `joinChannel`(`channelId`: kotlin.ULong, `password`: kotlin.String?)
     
@@ -1440,6 +1484,14 @@ public interface ClientInterface {
     fun `setInputMuted`(`muted`: kotlin.Boolean)
     
     fun `setOutputMuted`(`muted`: kotlin.Boolean)
+    
+    /**
+     * PHA-4849: spend a privilege key — a token the server's admin issued —
+     * on the live connection. A key works once; the server's answer is an
+     * `error` command carrying `return_code=token` (id=0 means it was
+     * accepted), which reaches the app as a `RawCommand`.
+     */
+    fun `usePrivilegeKey`(`token`: kotlin.String)
     
     companion object
 }
@@ -1539,13 +1591,23 @@ open class Client: Disposable, AutoCloseable, ClientInterface {
     /**
      * Connect to a TeamSpeak 3 server and wait until the first `BookEvents` batch
      * has been received (the server has accepted us and sent the initial state).
+     *
+     * PHA-4849: [channel] is the channel an invite asked us to land in — a
+     * `/`-separated path of names (`Movies/Lobby`) or a numeric channel id
+     * (`42`). [channel_password] is that channel's password, and
+     * [privilege_key] is a token from the server's admin, spent once right
+     * after the session is up.
+     *
+     * The channel password is hashed by tsclientlib before it reaches the
+     * wire (`base64(sha1(password))`, TeamSpeak's own encoding) — the plain
+     * text never leaves the device, and neither password is ever logged.
      */
-    @Throws(PlntException::class)override fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `nickname`: kotlin.String, `identityPem`: kotlin.String, `password`: kotlin.String?)
+    @Throws(PlntException::class)override fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `nickname`: kotlin.String, `identityPem`: kotlin.String, `password`: kotlin.String?, `channel`: kotlin.String?, `channelPassword`: kotlin.String?, `privilegeKey`: kotlin.String?)
         = 
     callWithPointer {
     uniffiRustCallWithError(PlntException) { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_connect(
-        it, FfiConverterString.lower(`address`),FfiConverterUShort.lower(`port`),FfiConverterString.lower(`nickname`),FfiConverterString.lower(`identityPem`),FfiConverterOptionalString.lower(`password`),_status)
+        it, FfiConverterString.lower(`address`),FfiConverterUShort.lower(`port`),FfiConverterString.lower(`nickname`),FfiConverterString.lower(`identityPem`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalString.lower(`channel`),FfiConverterOptionalString.lower(`channelPassword`),FfiConverterOptionalString.lower(`privilegeKey`),_status)
 }
     }
     
@@ -1570,6 +1632,13 @@ open class Client: Disposable, AutoCloseable, ClientInterface {
     /**
      * Move the own client to a channel by id. The channel's current name is
      * resolved from the cached tree.
+     *
+     * PHA-4849: [password] is the channel's password, for a channel that has
+     * one. It used to be dropped on the floor here (`_password` and
+     * `password: None`), so a password-protected channel could never be
+     * entered — the request went out without a password and the server
+     * refused the move. The password is hashed before it reaches the wire
+     * (see [build_client_move]) and is never logged.
      */
     @Throws(PlntException::class)override fun `joinChannel`(`channelId`: kotlin.ULong, `password`: kotlin.String?)
         = 
@@ -1651,6 +1720,24 @@ open class Client: Disposable, AutoCloseable, ClientInterface {
     uniffiRustCallWithError(PlntException) { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_set_output_muted(
         it, FfiConverterBoolean.lower(`muted`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * PHA-4849: spend a privilege key — a token the server's admin issued —
+     * on the live connection. A key works once; the server's answer is an
+     * `error` command carrying `return_code=token` (id=0 means it was
+     * accepted), which reaches the app as a `RawCommand`.
+     */
+    @Throws(PlntException::class)override fun `usePrivilegeKey`(`token`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_method_client_use_privilege_key(
+        it, FfiConverterString.lower(`token`),_status)
 }
     }
     
@@ -2954,6 +3041,45 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_core_version(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * PHA-4849: the identity's security level — the hash-cash level TeamSpeak
+         * checks. Level 8 is what a fresh identity gets; servers ask for more.
+         */
+    @Throws(PlntException::class) fun `identityLevel`(`identity`: kotlin.String): kotlin.UByte {
+            return FfiConverterUByte.lift(
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_identity_level(
+        FfiConverterString.lower(`identity`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * PHA-4849: raise the identity's security level to at least `target`.
+         *
+         * TeamSpeak's security level is a hash-cash property of the identity: the
+         * level is the number of leading zero bits in `sha1(public key + counter)`.
+         * Raising it means finding a counter whose hash has more leading zeros —
+         * pure CPU work, no server involved, and the identity's key does not change.
+         *
+         * This is slow by design: level 16 takes a moment, level 20 takes minutes,
+         * level 24 takes hours. The caller runs it off the UI thread and can stop by
+         * simply not asking for a higher level again.
+         *
+         * Returns the new export string — the counter moved, so the export changed
+         * and the caller has to persist it or the work is lost.
+         */
+    @Throws(PlntException::class) fun `upgradeIdentityLevel`(`identity`: kotlin.String, `target`: kotlin.UByte): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(PlntException) { _status ->
+    UniffiLib.INSTANCE.uniffi_plnt_core_fn_func_upgrade_identity_level(
+        FfiConverterString.lower(`identity`),FfiConverterUByte.lower(`target`),_status)
 }
     )
     }
