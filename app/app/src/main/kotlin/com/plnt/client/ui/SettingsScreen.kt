@@ -101,7 +101,10 @@ fun SettingsScreen(
     onOutputDeviceChange: (String?) -> Unit,
     onShareAudioChange: (Boolean) -> Unit,
     onStreamQualityChange: (resolution: Int, fps: Int, bitrateKbps: Int) -> Unit,
-    onImportAccount: suspend (List<com.plnt.client.account.AccountEntry>) -> Boolean,
+    onImportAccount: suspend (List<com.plnt.client.account.AccountEntry>) -> com.plnt.client.account.AccountImportOutcome?,
+    onSignOutAccount: suspend () -> Boolean,
+    existingServers: List<com.plnt.client.model.Bookmark>,
+    hasAccountImport: Boolean,
     onImportIdentity: suspend (String) -> Boolean,
     onImportIdentityIni: suspend (String) -> String?,
     onDescribeIdentityIni: (String) -> String?,
@@ -111,6 +114,9 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var showAccount by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    var signOutMessage by remember { mutableStateOf<String?>(null) }
+    var signingOut by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
@@ -232,6 +238,12 @@ fun SettingsScreen(
 
             Section("myTeamSpeak", Icons.Outlined.Key) {
                 NavRow("Sign in with myTeamSpeak", "Import your synced servers and identities", enabled = identityChangeAllowed) { showAccount = true }
+                if (hasAccountImport) {
+                    RowDivider()
+                    NavRow("Sign out and remove imported servers", "Erases the imported identities and servers from this phone", enabled = identityChangeAllowed) { confirmSignOut = true }
+                    Footnote("Signing out clears this phone only. It cannot cancel the myTeamSpeak session — revoke the device in the official client to do that.")
+                }
+                signOutMessage?.let { Text(it, color = TextNormal) }
             }
 
             Section("Identity", Icons.Outlined.Key) {
@@ -283,7 +295,35 @@ fun SettingsScreen(
             )
         }
     }
-    if (showAccount) AccountSignInSheet(identityChangeAllowed, onImportAccount, onDismiss = { showAccount = false })
+    if (showAccount) AccountSignInSheet(identityChangeAllowed, existingServers, onImportAccount, onDismiss = { showAccount = false })
+
+    if (confirmSignOut) {
+        SettingsSheet(title = "Sign out of myTeamSpeak?", onDismiss = { confirmSignOut = false }) {
+            Text(
+                "This erases the identities and server passwords imported from your myTeamSpeak account, removes the imported servers from this phone, and forgets this device's sign-in id.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMuted,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "Your myTeamSpeak session stays active on the server. Revoke this device in the official client to end it there.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMuted,
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            PrimaryButton("Sign out on this phone", enabled = !signingOut, modifier = Modifier.fillMaxWidth(), onClick = {
+                signingOut = true
+                scope.launch {
+                    val ok = onSignOutAccount()
+                    signingOut = false
+                    confirmSignOut = false
+                    signOutMessage = if (ok) "Signed out on this phone. The myTeamSpeak session is still active on the server." else "Could not sign out. Try again."
+                }
+            })
+            Spacer(modifier = Modifier.height(8.dp))
+            SecondaryButton("Cancel", enabled = !signingOut, modifier = Modifier.fillMaxWidth(), onClick = { confirmSignOut = false })
+        }
+    }
 
     if (showExport && identityExport != null) {
         val clipboard = LocalClipboardManager.current
@@ -352,7 +392,7 @@ fun SettingsScreen(
         SettingsSheet(title = "Import identity", onDismiss = { if (!importSaving) dismissImport() }) {
             Text(
                 "Pick the `.ini` the official client exported, or paste an identity string. " +
-                    "This replaces the identity in Relay for Teamspeak. Export the current identity first. " +
+                    "This replaces the identity in Chlorophone. Export the current identity first. " +
                     "File import does not sign in to myTeamSpeak or download synced bookmarks.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextMuted,

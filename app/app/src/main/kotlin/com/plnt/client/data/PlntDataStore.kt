@@ -81,6 +81,8 @@ class PlntDataStore(private val context: Context) {
                         channel = o.optString("channel", "").ifEmpty { null },
                         channelPassword = o.optString("channelpassword", "").ifEmpty { null },
                         privilegeKey = o.optString("privilegekey", "").ifEmpty { null },
+                        // Absent in stores written before account import existed.
+                        folder = o.optString("folder", "").ifEmpty { null },
                     )
                 }
             }
@@ -103,7 +105,8 @@ class PlntDataStore(private val context: Context) {
                     // PHA-4856 (WS8) moves this blob into an encrypted store.
                     .put("channel", b.channel ?: "")
                     .put("channelpassword", b.channelPassword ?: "")
-                    .put("privilegekey", b.privilegeKey ?: ""),
+                    .put("privilegekey", b.privilegeKey ?: "")
+                    .put("folder", b.folder ?: ""),
             )
         }
         context.plntDataStore.edit { it[Keys.BOOKMARKS] = arr.toString() }

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.plnt.client.model.ACCOUNT_IMPORT_ID_PREFIX
 import com.plnt.client.model.Bookmark
 import org.json.JSONObject
 
@@ -54,6 +55,7 @@ class SessionStore(context: Context) {
             .put("channel", bookmark.channel ?: "")
             .put("channelpassword", bookmark.channelPassword ?: "")
             .put("privilegekey", bookmark.privilegeKey ?: "")
+            .put("folder", bookmark.folder ?: "")
         val editor = prefs.edit()
             .putString(KEY_BOOKMARK, json.toString())
             .putString(KEY_LAST_BOOKMARK_ID, bookmark.id)
@@ -85,6 +87,7 @@ class SessionStore(context: Context) {
                     channel = o.optString("channel", "").ifEmpty { null },
                     channelPassword = o.optString("channelpassword", "").ifEmpty { null },
                     privilegeKey = o.optString("privilegekey", "").ifEmpty { null },
+                    folder = o.optString("folder", "").ifEmpty { null },
                 ),
                 lastChannelId = if (prefs.contains(KEY_LAST_CHANNEL)) prefs.getLong(KEY_LAST_CHANNEL, 0L) else null,
             )
@@ -105,6 +108,23 @@ class SessionStore(context: Context) {
      */
     fun clear() {
         prefs.edit().remove(KEY_BOOKMARK).remove(KEY_LAST_CHANNEL).commit()
+    }
+
+    /**
+     * Drops the persisted session when it points at a server imported from a
+     * myTeamSpeak account. A sign-out erases the identity behind that server,
+     * so a restart-reconnect would only fail closed on it; a session for a
+     * hand-added server is left alone.
+     */
+    fun forgetAccountSession() {
+        val raw = prefs.getString(KEY_BOOKMARK, null) ?: return
+        val id = runCatching { JSONObject(raw).optString("id", "") }.getOrDefault("")
+        if (!id.startsWith(ACCOUNT_IMPORT_ID_PREFIX)) return
+        prefs.edit()
+            .remove(KEY_BOOKMARK)
+            .remove(KEY_LAST_CHANNEL)
+            .remove(KEY_LAST_BOOKMARK_ID)
+            .commit()
     }
 
     private companion object {
