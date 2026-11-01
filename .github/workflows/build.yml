@@ -169,9 +169,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: "Test: Android host unit suite"
+      - name: "Test: Android JVM unit suite"
         working-directory: app
-        run: ./gradlew --no-daemon testDebugUnitTest
+        run: |
+          ./gradlew --no-daemon :app:testDebugUnitTest
+          grep -h '<testsuite ' app/build/test-results/testDebugUnitTest/TEST-*.xml
 
       # PHA-4856 (WS8): audit the merged manifest of the debug APK and of a
       # release build: nothing debuggable in release, no cleartext, backup

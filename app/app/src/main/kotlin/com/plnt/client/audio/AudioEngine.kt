@@ -21,7 +21,6 @@ import com.plnt.client.model.AudioDeviceOption
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
@@ -87,7 +86,8 @@ class AudioEngine(
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
 
-    private val playbackTrack = AtomicReference<AudioTrack?>(null)
+    private val playbackLock = Any()
+    @Volatile private var playbackWriter: PlaybackWriter? = null
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -165,7 +165,10 @@ class AudioEngine(
         record?.let { runCatching { it.stop() }; it.release() }
         record = null
 
-        playbackTrack.getAndSet(null)?.let { runCatching { it.stop() }; it.release() }
+        synchronized(playbackLock) {
+            playbackWriter?.close()
+            playbackWriter = null
+        }
 
         audioManager.mode = AudioManager.MODE_NORMAL
         Log.i(TAG, "AudioEngine stopped")
@@ -209,11 +212,11 @@ class AudioEngine(
 
     /** Feed one decoded 20 ms / 960-sample / 48 kHz mono frame from plnt-core to the speaker/headset. */
     fun onPlaybackFrame(samples: FloatArray) {
-        val track = playbackTrack.get() ?: return
         if (samples.size != CORE_FRAME_SAMPLES) {
             Log.w(TAG, "onPlaybackFrame: got ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
         }
-        track.write(samples, 0, samples.size, AudioTrack.WRITE_NON_BLOCKING)
+        // Rejection is explicit in PlaybackWriter (bounded overflow or failed output).
+        playbackWriter?.offer(samples)
     }
 
     // ---- device rehoming --------------------------------------------------
@@ -354,11 +357,21 @@ class AudioEngine(
 
     // ---- playback -------------------------------------------------------------
 
-    private fun openPlaybackTrack(reopen: Boolean = false) {
-        val old = if (reopen) playbackTrack.getAndSet(null) else playbackTrack.get()
-        old?.let { runCatching { it.stop() }; it.release() }
-        if (!reopen && playbackTrack.get() != null) return
+    private fun openPlaybackTrack(reopen: Boolean = false) = synchronized(playbackLock) {
+        if (!running.get()) return@synchronized
+        val existing = playbackWriter
+        if (existing != null) {
+            if (reopen) existing.reopen()
+        } else {
+            playbackWriter = PlaybackWriter.threaded(::buildPlaybackSink) { error ->
+                Log.e(TAG, "playback unavailable", error)
+                onAudioError("playback", error)
+            }.also { it.reopen() }
+        }
+    }
 
+    /** The writer owns each track from successful acquisition until close. */
+    private fun buildPlaybackSink(): PlaybackSink {
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -372,6 +385,7 @@ class AudioEngine(
         // Same unchecked-acquisition problem as capture (#3290 item 8), and
         // the worse half of it: a failure here means the call is connected and
         // the user hears nothing at all.
+        var opened: AudioTrack? = null
         val track = try {
             AudioTrack(
                 attrs,
@@ -380,19 +394,26 @@ class AudioEngine(
                 AudioTrack.MODE_STREAM,
                 AudioManager.AUDIO_SESSION_ID_GENERATE,
             ).also {
-                // Same reasoning as buildAudioRecord(): Automatic leaves this untouched.
+                opened = it // release even when state/preferred device/play fails
+                check(it.state == AudioTrack.STATE_INITIALIZED) { "AudioTrack not initialized" }
                 preferredOutputKey?.let { key ->
                     findDevice(AudioManager.GET_DEVICES_OUTPUTS, key)?.let(it::setPreferredDevice)
                 }
                 it.play()
+                check(it.playState == AudioTrack.PLAYSTATE_PLAYING) { "AudioTrack did not start" }
             }
-        } catch (t: Throwable) {
-            playbackTrack.set(null)
-            Log.e(TAG, "playback unavailable", t)
-            onAudioError("playback", t)
-            return
+        } catch (e: Exception) {
+            opened?.let { runCatching { it.release() } }
+            throw e
         }
-        playbackTrack.set(track)
+        return object : PlaybackSink {
+            override fun write(samples: FloatArray, offset: Int, count: Int): Int =
+                track.write(samples, offset, count, AudioTrack.WRITE_NON_BLOCKING)
+
+            override fun close() {
+                try { track.stop() } finally { track.release() }
+            }
+        }
     }
 
     private fun findDevice(flags: Int, key: String): AudioDeviceInfo? =
