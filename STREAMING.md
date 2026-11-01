@@ -1,5 +1,7 @@
 # Screen sharing over TS6 (PHA-3289)
 
+> Scope/status update (2026-11-01): [ROADMAP.md](ROADMAP.md) and [README.md](README.md) supersede the original voice-only exclusions. This document retains implementation and historical verification detail; planned camera/files/admin/TeamSpeakID work is not a claim of released or device-verified functionality.
+
 Chlorophone (by PHATT TECH) can watch a TeamSpeak 6 screen share started from a desktop TS6 client,
 and share the phone's own screen to desktop viewers (see "Sending" below).
 Nothing here depends on any particular server: the signalling rides the same
