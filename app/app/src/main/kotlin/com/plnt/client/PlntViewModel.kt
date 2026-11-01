@@ -580,24 +580,25 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      */
     /**
      * PHA-4849: a channel password we tried is remembered only once the server
-     * has put us in that channel. A refused password is forgotten, so the next
-     * tap on the channel asks again instead of retrying a password the server
-     * has already turned down.
+     * has put us in that channel. A refused password is never confirmed, so
+     * the next tap on that channel asks again instead of retrying a password
+     * the server has already turned down.
+     *
+     * Nothing is *forgotten* on a roster snapshot: a snapshot can arrive
+     * between the join request and the move, and dropping the password then
+     * would lose one the server was about to accept.
      */
     private fun confirmOrForgetTriedPasswords(clients: List<com.plnt.client.core.CoreClientInfo>) {
         if (triedChannelPasswords.isEmpty()) return
         val own = _state.value.ownClientId ?: return
-        val ourChannel = clients.firstOrNull { it.id == own }?.channelId
-        val confirmed = triedChannelPasswords.entries
-            .filter { it.key == ourChannel }
-            .map { it.key to it.value }
-        triedChannelPasswords.keys
-            .filter { it != ourChannel }
-            .forEach { triedChannelPasswords.remove(it) }
-        confirmed.forEach { (channelId, password) ->
-            knownChannelPasswords[channelId] = password
-            triedChannelPasswords.remove(channelId)
-        }
+        val ourChannel = clients.firstOrNull { it.id == own }?.channelId ?: return
+        val confirmed = triedChannelPasswords[ourChannel] ?: return
+        // The server put us in the channel the password was tried for, so the
+        // password was accepted. Remember it, and drop the rest: a password
+        // that was refused is simply never confirmed, so the next tap on that
+        // channel asks again instead of retrying it silently.
+        knownChannelPasswords[ourChannel] = confirmed
+        triedChannelPasswords.clear()
     }
 
     private fun joinPendingChannel() {
