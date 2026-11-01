@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DropdownMenu
@@ -128,6 +129,9 @@ fun ConnectedScreen(
     onDisconnect: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenChat: () -> Unit,
+    onOpenFiles: () -> Unit = {},
+    unreadChat: Int = 0,
+    pokes: List<Pair<String, String>> = emptyList(),
     /** PHA-3289: tap a streaming client's row to watch. */
     onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit = {},
     /** PHA-3289 send side: our own share and its start/stop. */
@@ -227,11 +231,20 @@ fun ConnectedScreen(
                 }
             }
 
+            pokes.lastOrNull()?.let { (from, msg) ->
+                androidx.compose.material3.Text(
+                    "$from poked you${if (msg.isNotBlank()) ": $msg" else ""}",
+                    modifier = Modifier.fillMaxWidth().background(Brand).padding(12.dp),
+                    color = OnBrand,
+                )
+            }
             ControlBar(
                 phase = phase,
                 channelName = selfChannel?.name,
                 serverName = serverName,
                 onOpenChat = onOpenChat,
+                onOpenFiles = onOpenFiles,
+                unreadChat = unreadChat,
                 inputMuted = inputMuted,
                 outputDeafened = outputDeafened,
                 transmitting = transmitting,
@@ -489,6 +502,8 @@ private fun ControlBar(
     channelName: String?,
     serverName: String,
     onOpenChat: () -> Unit,
+    onOpenFiles: () -> Unit = {},
+    unreadChat: Int = 0,
     inputMuted: Boolean,
     outputDeafened: Boolean,
     transmitting: Boolean,
@@ -633,9 +648,15 @@ private fun ControlBar(
             )
             PanelButton(
                 icon = Icons.Outlined.ChatBubbleOutline,
-                description = "Chat",
-                active = false,
+                description = if (unreadChat > 0) "Chat, $unreadChat unread" else "Chat",
+                active = unreadChat > 0,
                 onClick = onOpenChat,
+            )
+            PanelButton(
+                icon = Icons.Filled.Folder,
+                description = "Files",
+                active = false,
+                onClick = onOpenFiles,
             )
             PanelButton(
                 icon = Icons.Filled.CallEnd,

@@ -130,6 +130,8 @@ sealed class Screen {
     data object Connected : Screen()
     data object Settings : Screen()
     data object Chat : Screen()
+    /** PHA-4864: channel file browser. */
+    data object Files : Screen()
     /** The one place the PLNT name and mark still appear (PHA-3072 rebrand). */
     data object About : Screen()
     /** PHA-3289: full-screen viewer for one screen share. */
@@ -161,6 +163,10 @@ data class AppState(
     /** Output devices the hardware offers right now. Same refresh rules as [availableInputDevices]. */
     val availableOutputDevices: List<AudioDeviceOption> = emptyList(),
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** PHA-4864: file browser state and unread/poke badges. */
+    val files: FilesUiState = FilesUiState(),
+    val unreadChat: Int = 0,
+    val pokes: List<Pair<String, String>> = emptyList(),
     /**
      * False while the call is connected but the OS has not granted the
      * microphone — see `VoiceState.microphoneActive` (#3290). Renders as a
@@ -222,4 +228,14 @@ fun AppState.withVoiceBindingFailure(reason: String): AppState = copy(
     channelTree = emptyList(),
     screen = Screen.Bookmarks,
     lastError = reason,
+)
+
+/** PHA-4864: what the file browser screen shows. [progress] is 0..1 for the running transfer, null if none. */
+data class FilesUiState(
+    val dir: String = "/",
+    val entries: List<com.plnt.client.files.RemoteFile> = emptyList(),
+    val busy: Boolean = false,
+    val error: String? = null,
+    val notice: String? = null,
+    val progress: Float? = null,
 )
