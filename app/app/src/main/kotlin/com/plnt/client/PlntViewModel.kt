@@ -126,6 +126,25 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.sendRawCommand(name, args) }
     }
     private var ownChannelId: Long? = null
+
+    // PHA-4864: durable chat history, raw-reply correlation for file commands, pokes.
+    val chatHistory = com.plnt.client.files.ChatHistory(
+        com.plnt.client.files.FileChatHistoryStore(java.io.File(app.filesDir, "chat-history.tsv")),
+    )
+    val fileReplies = com.plnt.client.files.RawReplyCorrelator()
+
+    private fun conversationId(target: ChatMessageTarget, peer: Long) = when (target) {
+        ChatMessageTarget.Channel -> "channel:${ownChannelId ?: 0}"
+        is ChatMessageTarget.Direct -> "private:$peer"
+    }
+
+    private fun persist(target: ChatMessageTarget, peer: Long, from: String, isSelf: Boolean, text: String) {
+        runCatching {
+            chatHistory.append(
+                com.plnt.client.files.StoredMessage(conversationId(target, peer), System.currentTimeMillis(), from, isSelf, text),
+            )
+        }
+    }
     private var streamPollJob: kotlinx.coroutines.Job? = null
 
     private val connection = object : ServiceConnection {
@@ -692,6 +711,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             )
         }
+        persist(target, (target as? ChatMessageTarget.Direct)?.clientId ?: 0L, clientsById[ownId]?.name ?: "you", true, trimmed)
         runOnService { it.sendTextMessage(target, trimmed) }
     }
 
@@ -991,13 +1011,19 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 refreshStreams()
             }
             is CoreEvent.RawCommand -> {
-                if (streams.onRaw(ev)) rebuildTree()
+                if (ev.name == "notifyclientpoke") {
+                    chatHistory.poke(ev.args["invokername"].orEmpty(), ev.args["msg"].orEmpty())
+                } else if (fileReplies.onRaw(ev.name, ev.args)) {
+                    // consumed by a pending file command
+                } else if (streams.onRaw(ev)) rebuildTree()
             }
             is CoreEvent.TalkStatus -> {
                 talking[ev.clientId] = ev.talking
                 rebuildTree()
             }
-            is CoreEvent.TextMessage -> _state.update {
+            is CoreEvent.TextMessage -> {
+                persist(ev.target, ev.fromClientId, ev.fromName, false, ev.text)
+                _state.update {
                 it.copy(
                     chatMessages = it.chatMessages + ChatMessage(
                         id = UUID.randomUUID().toString(),
@@ -1008,6 +1034,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                         text = ev.text,
                     ),
                 )
+                }
             }
         }
     }

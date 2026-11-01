@@ -1297,7 +1297,7 @@ fn install_raw_listener(con: &mut Connection, sink: Arc<dyn EventSink>) {
         if let RawEvent::ReceivePacket(p) = ev {
             if p.header().packet_type().is_command() {
                 let text = String::from_utf8_lossy(p.content());
-                if let Some(ev) = raw_command_event(&text) {
+                for ev in raw_command_events(&text) {
                     sink.on_event(ev);
                 }
             }
@@ -1309,17 +1309,51 @@ fn install_raw_listener(con: &mut Connection, sink: Arc<dyn EventSink>) {
 /// Only the first `|`-separated part is surfaced; every stream notification
 /// seen in the wild is single-part.
 fn raw_command_event(text: &str) -> Option<ConnEvent> {
+    raw_command_events(text).into_iter().next()
+}
+
+/// PHA-4864: like [`raw_command_event`], but a file listing arrives as one
+/// `|`-separated command with an entry per part, so every part is surfaced as
+/// its own event under the same name. A poke (`notifyclientpoke`) is also
+/// surfaced here — it carries `invokerid`, `invokername`, `msg` — so the app
+/// needs no new event variant (and no binding regeneration) to show it.
+fn raw_command_events(text: &str) -> Vec<ConnEvent> {
     let name = text.split(|c| c == ' ' || c == '|').next().unwrap_or("");
+    if name == "notifyclientpoke"
+        || name.starts_with("notifyfilelist")
+        || name == "notifystartupload"
+        || name == "notifystartdownload"
+        || name == "notifystatusfiletransfer"
+    {
+        let multi = name.starts_with("notifyfilelist");
+        let parts: Vec<&str> = if multi { text.split('|').collect() } else { vec![text] };
+        return parts
+            .iter()
+            .enumerate()
+            .map(|(i, part)| {
+                // Only the first part carries the command name.
+                let owned;
+                let line = if i == 0 {
+                    *part
+                } else {
+                    owned = format!("{name} {part}");
+                    &owned
+                };
+                let (n, args) = parse_command(line);
+                ConnEvent::RawCommand { name: n, args }
+            })
+            .collect();
+    }
     let wanted = name.starts_with("notifystream")
         || name == "notifyjoinstreamrequest"
         || name == "notifyrespondjoinstreamrequest"
         || name == "notifyremovedfromstream"
         || (name == "error" && text.contains(" return_code="));
     if !wanted {
-        return None;
+        return Vec::new();
     }
     let (name, args) = parse_command(text);
-    Some(ConnEvent::RawCommand { name, args })
+    vec![ConnEvent::RawCommand { name, args }]
 }
 
 /// Split `name k=v k=v` (first part only) into its name and unescaped args.
@@ -1414,6 +1448,23 @@ mod raw_command_tests {
         assert!(raw_command_event("error id=0 msg=ok return_code=60001").is_some());
         assert!(raw_command_event("error id=0 msg=ok").is_none());
         assert!(raw_command_event("notifytextmessage targetmode=2 msg=hi").is_none());
+        match raw_command_event("notifyclientpoke invokerid=5 invokername=Bob msg=hey\\sthere") {
+            Some(ConnEvent::RawCommand { name, args }) => {
+                assert_eq!(name, "notifyclientpoke");
+                assert_eq!(args["invokername"], "Bob");
+                assert_eq!(args["msg"], "hey there");
+            }
+            other => panic!("poke not surfaced: {other:?}"),
+        }
+        let list = raw_command_events("notifyfilelist cid=1 path=\\/ name=a size=3|cid=1 path=\\/ name=b size=4");
+        assert_eq!(list.len(), 2);
+        match &list[1] {
+            ConnEvent::RawCommand { name, args } => {
+                assert_eq!(name, "notifyfilelist");
+                assert_eq!(args["name"], "b");
+            }
+            _ => panic!(),
+        }
         assert!(raw_command_event("notifyclientmoved clid=1 ctid=2").is_none());
     }
 }
