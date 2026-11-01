@@ -89,6 +89,7 @@ class VoiceLinkHarnessTest {
             repeat(pending.size) { pending.removeFirst().second() }
             maxPending = maxOf(maxPending, writer.pendingSamples)
         }
+        lateDrops += arrivals.size // arrived after their final playout tick
         stalled = false
         var budget = 10_000
         while (pending.isNotEmpty() && budget-- > 0) pending.removeFirst().second()
