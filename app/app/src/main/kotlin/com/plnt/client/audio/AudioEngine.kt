@@ -104,6 +104,26 @@ class AudioEngine(
     private val scoRouter = BluetoothScoRouter(context, audioManager)
 
     /**
+     * True while a phone call or another app holds audio focus. Capture stays
+     * open (so SCO does not drop) but no frames are sent or played.
+     */
+    @Volatile private var interrupted = false
+
+    private val focus = AudioFocusController(
+        audioManager,
+        onPause = { reason ->
+            Log.i(TAG, "audio interrupted: $reason")
+            interrupted = true
+        },
+        onResume = {
+            Log.i(TAG, "audio interruption ended")
+            interrupted = false
+            // A call can leave the route/SCO link and streams stale.
+            rehome("audio focus regained")
+        },
+    )
+
+    /**
      * Starts playback and, when [withCapture] is true, capture — on whatever
      * route Android currently has active.
      *
@@ -117,6 +137,7 @@ class AudioEngine(
         if (!running.compareAndSet(false, true)) return
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        focus.acquire()
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
         emitDeviceLists()
         // Route to the preferred device *before* opening the streams —
@@ -156,6 +177,8 @@ class AudioEngine(
         capturing.set(false)
 
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
+        focus.release()
+        interrupted = false
         scoRouter.release()
         captureThread?.join(500)
         captureThread = null
@@ -216,6 +239,7 @@ class AudioEngine(
             Log.w(TAG, "onPlaybackFrame: got ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
         }
         // Rejection is explicit in PlaybackWriter (bounded overflow or failed output).
+        if (interrupted) return
         playbackWriter?.offer(samples)
     }
 
@@ -287,7 +311,7 @@ class AudioEngine(
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->
                     // Capture never stops; only forwarding is gated by PTT.
-                    if (sending.get()) onCaptureFrame(frame)
+                    if (sending.get() && !interrupted) onCaptureFrame(frame)
                 }
             }
         }
