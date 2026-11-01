@@ -100,6 +100,14 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      * connection — the channel ids of one server mean nothing on another.
      */
     private val knownChannelPasswords = HashMap<Long, String>()
+
+    /**
+     * PHA-4849: the passwords we have *tried* for a channel, and not yet
+     * confirmed. A password is only remembered once the server has put us in
+     * the channel: a refused password must not be remembered, or the next tap
+     * on that channel would retry it silently and fail the same way.
+     */
+    private val triedChannelPasswords = HashMap<Long, String>()
     private val channelsById = HashMap<Long, com.plnt.client.core.CoreChannel>()
     // clientId -> last roster snapshot entry, for nicknames and peer mute state.
     private val clientsById = HashMap<Long, com.plnt.client.core.CoreClientInfo>()
@@ -422,6 +430,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         // PHA-4849: channel ids belong to one server; a new connection is a
         // new server as far as the passwords we know go.
         knownChannelPasswords.clear()
+        triedChannelPasswords.clear()
         // The channel an invite asked for, resolved once the channel tree is
         // here — see [joinPendingChannel].
         pendingChannelSpec = bookmark.channel
@@ -534,7 +543,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun submitChannelPassword(password: String) {
         val node = _state.value.pendingChannelPassword ?: return
         _state.update { it.copy(pendingChannelPassword = null) }
-        if (password.isNotEmpty()) knownChannelPasswords[node.id] = password
+        // PHA-4849: remembered only once the server has put us in the
+        // channel — a refused password is forgotten rather than retried.
+        if (password.isNotEmpty()) triedChannelPasswords[node.id] = password
         runOnService { it.joinChannel(node.id, password.ifEmpty { null }) }
     }
 
@@ -567,12 +578,34 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      * put us there if the server honoured it, and this move is then a no-op
      * that also carries the password.
      */
+    /**
+     * PHA-4849: a channel password we tried is remembered only once the server
+     * has put us in that channel. A refused password is forgotten, so the next
+     * tap on the channel asks again instead of retrying a password the server
+     * has already turned down.
+     */
+    private fun confirmOrForgetTriedPasswords(clients: List<com.plnt.client.core.CoreClientInfo>) {
+        if (triedChannelPasswords.isEmpty()) return
+        val own = _state.value.ownClientId ?: return
+        val ourChannel = clients.firstOrNull { it.id == own }?.channelId
+        val confirmed = triedChannelPasswords.entries
+            .filter { it.key == ourChannel }
+            .map { it.key to it.value }
+        triedChannelPasswords.keys
+            .filter { it != ourChannel }
+            .forEach { triedChannelPasswords.remove(it) }
+        confirmed.forEach { (channelId, password) ->
+            knownChannelPasswords[channelId] = password
+            triedChannelPasswords.remove(channelId)
+        }
+    }
+
     private fun joinPendingChannel() {
         val spec = pendingChannelSpec ?: return
         val node = com.plnt.client.model.ChannelPath.resolve(spec, _state.value.channelTree) ?: return
         pendingChannelSpec = null
         val password = pendingChannelPassword
-        if (password != null) knownChannelPasswords[node.id] = password
+        if (password != null) triedChannelPasswords[node.id] = password
         runOnService { it.joinChannel(node.id, password) }
     }
 
@@ -947,6 +980,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 rebuildTree()
                 refreshStreams()
+                confirmOrForgetTriedPasswords(ev.clients)
             }
             is CoreEvent.ClientMoved -> {
                 roster.values.forEach { it.remove(ev.clientId) }
