@@ -193,6 +193,13 @@ data class AppState(
     val pendingChannelPassword: ChannelNode? = null,
     /** PHA-3289: our own outgoing screen share; IDLE when not sharing. */
     val streamSend: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
+    /**
+     * PHA-4854: a destructive admin operation (kick, ban, delete channel)
+     * waiting for the user to confirm. Nothing is sent until they do.
+     */
+    val pendingAdmin: com.plnt.client.admin.AdminOp? = null,
+    /** PHA-4854: the server accepted the last admin operation. Failures go to [lastError]. */
+    val adminNotice: String? = null,
 ) {
     val phase: ConnectionPhase get() = connectionStatus.phase
 }
