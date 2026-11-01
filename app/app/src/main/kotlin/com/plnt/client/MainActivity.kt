@@ -102,6 +102,11 @@ class MainActivity : ComponentActivity() {
                             pttIsPushToTalk = state.settings.pttMode == com.plnt.client.model.PttMode.PUSH_TO_TALK,
                             lastError = state.lastError,
                             onJoinChannel = viewModel::joinChannel,
+                            // PHA-4849: a protected channel asks for its
+                            // password before the move is sent.
+                            pendingChannelPassword = state.pendingChannelPassword,
+                            onChannelPasswordSubmit = viewModel::submitChannelPassword,
+                            onChannelPasswordDismiss = viewModel::dismissChannelPassword,
                             onToggleMute = { viewModel.setMuted(!state.inputMuted) },
                             onToggleDeafen = { viewModel.setDeafened(!state.outputDeafened) },
                             onPttPress = viewModel::pttPress,
@@ -133,6 +138,10 @@ class MainActivity : ComponentActivity() {
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
+                            // PHA-4849: the identity's security level.
+                            identityLevel = state.identityLevel,
+                            identityLevelRaising = state.identityLevelRaising,
+                            onRaiseIdentityLevel = viewModel::raiseIdentityLevel,
                             availableInputDevices = state.availableInputDevices,
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,

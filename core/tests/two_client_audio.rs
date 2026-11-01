@@ -92,7 +92,17 @@ fn connect(nick: &str) -> (Arc<Client>, Arc<CapturingSink>) {
     let identity = IdentityObj::create().export();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        match client.connect(host.clone(), port, nick.to_string(), identity.clone(), None) {
+        match client.connect(
+            host.clone(),
+            port,
+            nick.to_string(),
+            identity.clone(),
+            None,
+            // PHA-4849: no server password, no invited channel, no privilege key.
+            None,
+            None,
+            None,
+        ) {
             Ok(()) => return (client, sink),
             Err(e) if Instant::now() < deadline => {
                 eprintln!("{nick}: connect failed ({e}), retrying");

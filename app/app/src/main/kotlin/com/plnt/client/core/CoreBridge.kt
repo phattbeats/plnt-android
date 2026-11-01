@@ -138,9 +138,27 @@ sealed class ChatMessageTarget {
 }
 
 interface CoreClient {
-    fun connect(address: String, port: Int, nickname: String, identityPem: String, password: String?)
+    /**
+     * PHA-4849: [channel] is the channel to land in (a path of names or a
+     * channel id), [channelPassword] that channel's password, and
+     * [privilegeKey] a token the server's admin issued. A [port] of 0 means
+     * "no port given" — the server's own DNS entry decides.
+     */
+    fun connect(
+        address: String,
+        port: Int,
+        nickname: String,
+        identityPem: String,
+        password: String?,
+        channel: String?,
+        channelPassword: String?,
+        privilegeKey: String?,
+    )
     fun disconnect()
+    /** PHA-4849: [password] is the channel's password, for a channel that has one. */
     fun joinChannel(channelId: Long, password: String?)
+    /** PHA-4849: spend a privilege key on the live connection. Good for one use. */
+    fun usePrivilegeKey(token: String)
     fun setInputMuted(muted: Boolean)
     fun setOutputMuted(muted: Boolean)
     /** Encode+send one 20 ms / 960-sample / 48 kHz mono frame. See #3077's AudioEngine — the only caller. */
@@ -190,12 +208,31 @@ object CoreBridge {
         }
         val native = uniffi.plnt_core.Client(sink)
         return object : CoreClient {
-            override fun connect(address: String, port: Int, nickname: String, identityPem: String, password: String?) {
-                native.connect(address, port.toUShort(), nickname, identityPem, password)
+            override fun connect(
+                address: String,
+                port: Int,
+                nickname: String,
+                identityPem: String,
+                password: String?,
+                channel: String?,
+                channelPassword: String?,
+                privilegeKey: String?,
+            ) {
+                native.connect(
+                    address,
+                    port.toUShort(),
+                    nickname,
+                    identityPem,
+                    password,
+                    channel,
+                    channelPassword,
+                    privilegeKey,
+                )
             }
             override fun disconnect() = native.disconnect()
             override fun joinChannel(channelId: Long, password: String?) =
                 native.joinChannel(channelId.toULong(), password)
+            override fun usePrivilegeKey(token: String) = native.usePrivilegeKey(token)
             override fun setInputMuted(muted: Boolean) = native.setInputMuted(muted)
             override fun setOutputMuted(muted: Boolean) = native.setOutputMuted(muted)
             override fun sendPcmFrame(samples: FloatArray) = native.sendPcmFrame(samples.toList())
@@ -213,6 +250,29 @@ object CoreBridge {
         true
     } catch (e: Throwable) {
         false
+    }
+
+    /**
+     * PHA-4849: the identity's security level — the hash-cash level
+     * TeamSpeak checks. Null when the identity cannot be read.
+     */
+    fun identityLevel(identity: String): Int? = try {
+        uniffi.plnt_core.identityLevel(identity).toInt()
+    } catch (e: Throwable) {
+        null
+    }
+
+    /**
+     * PHA-4849: raise the identity's security level to at least [target].
+     *
+     * This is CPU work and it grows fast: level 12 is instant, level 16 takes
+     * a moment, level 20 takes minutes. Call it off the UI thread and expect
+     * it to take its time. Null when the identity could not be raised.
+     */
+    fun upgradeIdentityLevel(identity: String, target: Int): String? = try {
+        uniffi.plnt_core.upgradeIdentityLevel(identity, target.toUByte())
+    } catch (e: Throwable) {
+        null
     }
 
     private fun translate(ev: uniffi.plnt_core.ConnEvent): CoreEvent = when (ev) {

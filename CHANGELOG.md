@@ -48,3 +48,27 @@ since `v0.1-invite-links` — these entries ship with the next one.
 - Settings screen imports an identity from a `.ini` file, accepting either
   `id=` or `name=` for the identity label (PHA-4116).
 - One live share at a time, with screen-share video settings (PHA-4176).
+- Channel passwords work, end to end (PHA-4849). `join_channel` used to
+  accept a password and drop it on the floor, and the command that did go
+  out carried the password in the clear instead of TeamSpeak's
+  `base64(sha1(password))` form — so a password-protected channel could not
+  be entered no matter what was typed. Tapping a protected channel now asks
+  for the password, and the password reaches the server correctly.
+- TeamSpeak's own link host, `tmspk.gg` (PHA-4849): `tmspk.gg/s=host?…` is
+  read as a server link, and `tmspk.gg/<code>` is an invite, resolved
+  against TeamSpeak's invite service. An `https://tmspk.gg/…` link opens
+  Chlorophone (Android offers it in the "Open with" chooser — the domain is
+  not ours, so there is nothing to verify against).
+- Privilege keys (PHA-4849): a `token=` in a link is spent once, on the
+  connection it comes with, through TeamSpeak's `privilegekeyuse`. The
+  server's answer reaches the app, so a refused key is visible.
+- An invited channel is joined (PHA-4849). The channel an invite names — by
+  id or by a path of names — is joined on arrival, with its password when
+  one came with it.
+- The identity's security level can be raised (PHA-4849). TeamSpeak's level
+  is a hash-cash property of the identity, so raising it is CPU work:
+  Settings → Identity → Security level. Level 12 is instant, 16 takes a
+  moment, 18 and 20 take minutes.
+- An empty port means "let the server's own DNS entry decide" (PHA-4849) —
+  the `_ts3._udp.` SRV record, or TSDNS. A TeamSpeak *nickname* needs it:
+  the nickname lookup is what knows the server's port.

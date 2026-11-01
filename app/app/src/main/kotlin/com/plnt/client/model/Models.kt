@@ -8,6 +8,23 @@ data class Bookmark(
     val port: Int,
     val nickname: String,
     val serverPassword: String? = null,
+    /**
+     * PHA-4849: the channel to land in when connecting — a `/`-separated path
+     * of channel names (`Movies/Lobby`) or a channel id (`42`). Empty means
+     * "wherever the server puts us".
+     */
+    val channel: String? = null,
+    /**
+     * PHA-4849: that channel's password. A secret, exactly like
+     * [serverPassword] — and stored the same way, which PHA-4856 (WS8) is
+     * going to move into an encrypted store.
+     */
+    val channelPassword: String? = null,
+    /**
+     * PHA-4849: a privilege key — rights the server's admin handed out. It is
+     * good for one use and is spent on the connection it comes with.
+     */
+    val privilegeKey: String? = null,
 )
 
 /**
@@ -132,6 +149,13 @@ data class AppState(
     val lastError: String? = null,
     val settings: Settings = Settings(),
     val identityExport: String? = null,
+    /**
+     * PHA-4849: the identity's security level — the hash-cash level
+     * TeamSpeak checks. Null when the identity cannot be read.
+     */
+    val identityLevel: Int? = null,
+    /** PHA-4849: a level raise is running. It is slow work, so the UI waits. */
+    val identityLevelRaising: Boolean = false,
     /** Input devices the hardware offers right now — refreshed on plug/unplug and on entering Settings. */
     val availableInputDevices: List<AudioDeviceOption> = emptyList(),
     /** Output devices the hardware offers right now. Same refresh rules as [availableInputDevices]. */
@@ -160,6 +184,13 @@ data class AppState(
      * about to connect them before any network call.
      */
     val pendingInvite: ServerLink? = null,
+    /**
+     * PHA-4849: a password-protected channel the user tapped, waiting for the
+     * password. Null when there is nothing to ask about. The join is not sent
+     * until the password is in — sending it without one is what the server
+     * refuses.
+     */
+    val pendingChannelPassword: ChannelNode? = null,
     /** PHA-3289: our own outgoing screen share; IDLE when not sharing. */
     val streamSend: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
 ) {

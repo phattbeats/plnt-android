@@ -1669,6 +1669,7 @@ dependencies = [
  "ndk-context",
  "serde",
  "serde_json",
+ "sha-1",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

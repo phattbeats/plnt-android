@@ -47,6 +47,13 @@ class SessionStore(context: Context) {
             .put("port", bookmark.port)
             .put("nickname", bookmark.nickname)
             .put("password", bookmark.serverPassword ?: "")
+            // PHA-4849: the invited channel, its password and the privilege
+            // key — so a restart reconnects to the same place, with the same
+            // rights. This store is encrypted, so they are not in the clear
+            // here the way a bookmark's are in PlntDataStore.
+            .put("channel", bookmark.channel ?: "")
+            .put("channelpassword", bookmark.channelPassword ?: "")
+            .put("privilegekey", bookmark.privilegeKey ?: "")
         val editor = prefs.edit()
             .putString(KEY_BOOKMARK, json.toString())
             .putString(KEY_LAST_BOOKMARK_ID, bookmark.id)
@@ -75,6 +82,9 @@ class SessionStore(context: Context) {
                     port = o.getInt("port"),
                     nickname = o.getString("nickname"),
                     serverPassword = o.optString("password", "").ifEmpty { null },
+                    channel = o.optString("channel", "").ifEmpty { null },
+                    channelPassword = o.optString("channelpassword", "").ifEmpty { null },
+                    privilegeKey = o.optString("privilegekey", "").ifEmpty { null },
                 ),
                 lastChannelId = if (prefs.contains(KEY_LAST_CHANNEL)) prefs.getLong(KEY_LAST_CHANNEL, 0L) else null,
             )
