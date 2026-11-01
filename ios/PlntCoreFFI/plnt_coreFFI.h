@@ -368,9 +368,19 @@ RustBuffer uniffi_plnt_core_fn_func_core_version(RustCallStatus *_Nonnull out_st
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_DESCRIBE_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_DESCRIBE_IDENTITY_INI
+RustBuffer uniffi_plnt_core_fn_func_describe_identity_ini(RustBuffer contents, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_IDENTITY_LEVEL
 #define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_IDENTITY_LEVEL
 uint8_t uniffi_plnt_core_fn_func_identity_level(RustBuffer identity, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_IMPORT_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_IMPORT_IDENTITY_INI
+RustBuffer uniffi_plnt_core_fn_func_import_identity_ini(RustBuffer contents, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_UPGRADE_IDENTITY_LEVEL
@@ -664,9 +674,21 @@ uint16_t uniffi_plnt_core_checksum_func_core_version(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_DESCRIBE_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_DESCRIBE_IDENTITY_INI
+uint16_t uniffi_plnt_core_checksum_func_describe_identity_ini(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_IDENTITY_LEVEL
 #define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_IDENTITY_LEVEL
 uint16_t uniffi_plnt_core_checksum_func_identity_level(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_IMPORT_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_IMPORT_IDENTITY_INI
+uint16_t uniffi_plnt_core_checksum_func_import_identity_ini(void
     
 );
 #endif
