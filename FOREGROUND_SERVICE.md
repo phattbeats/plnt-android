@@ -1,5 +1,7 @@
 # #3078 — Foreground service, notification actions, reconnect, identity + bookmark storage
 
+> Scope/status update (2026-11-01): [ROADMAP.md](ROADMAP.md) and [README.md](README.md) supersede the original voice-only exclusions. This document retains implementation and historical verification detail; planned camera/files/admin/TeamSpeakID work is not a claim of released or device-verified functionality.
+
 Goal: the connection survives screen-off, app switching, and a wifi↔LTE handoff, and the user can
 mute/talk/disconnect from the persistent notification.
 

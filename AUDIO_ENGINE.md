@@ -1,5 +1,7 @@
 # #3077 — Android audio engine
 
+> Scope/status update (2026-11-01): [ROADMAP.md](ROADMAP.md) and [README.md](README.md) supersede the original voice-only exclusions. This document retains implementation and historical verification detail; planned camera/files/admin/TeamSpeakID work is not a claim of released or device-verified functionality.
+
 `AudioEngine` (`app/app/src/main/kotlin/com/plnt/client/audio/AudioEngine.kt`)
 owns the two device audio streams for one call: mic capture and call
 playback, both hitting `plnt-core`'s fixed 20 ms / 960-sample / 48 kHz mono
