@@ -1,17 +1,22 @@
 # plnt-android
 
-PLNT Android client: a voice-only TeamSpeak 3/6 client built on
+by PHATT TECH
+
+The app ships as **Chlorophone**. The test candidate supports importing an
+exported TeamSpeak identity in Settings → Identity (offline key-file import),
+and signing in with a myTeamSpeak account in Settings → myTeamSpeak to
+download synced servers and their identities.
+
+A TeamSpeak 3/6 Android client built on
 [`ReSpeak/tsclientlib`](https://github.com/ReSpeak/tsclientlib) (pinned to
 commit `ee3bc6f`) and a Kotlin/Compose UI. This repo packages the Rust
 core as Android loadable libraries (`.so` files) via
 [`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) and exposes it to
 Kotlin through [UniFFI](https://github.com/mozilla/uniffi-rs).
 
-Goal of #3074: `./build.sh` produces an installable `app-debug.apk`
-on a clean machine. Voice scope only — connect, channel tree,
-who-is-talking, join channel, push-to-talk / open mic, mute/deafen,
-Bluetooth headsets. No chat, no streams, no file transfer, no
-TS6-only features.
+The canonical build entry point is `./build.sh`, which produces `app-debug.apk`.
+The app supports Android 8 or newer on ARM64 and x86_64 devices. It includes
+voice, channel navigation, chat, and TeamSpeak 6 screen sharing.
 
 ## Status
 
@@ -168,7 +173,9 @@ library failed to load it reads `unavailable: <exception>` instead.
 - **Kotlin audio** uses `VOICE_COMMUNICATION` stream type.
 - **Foreground service** with `FOREGROUND_SERVICE_MICROPHONE` for
   background voice.
-- **Compose UI** in TeamSpeak branding with a Discord-style layout (PHA-3072 rebrand, 2026-10-10); the PLNT name, plant mark and palette appear only on Settings → About.
+- **Compose UI** in TeamSpeak branding with a Discord-style layout
+  (PHA-3072 rebrand, 2026-10-10), renamed to **Chlorophone** with the mark 02
+  launcher icon (PHA-4341).
 
 The build pipeline delivers the bridge for those features. Voice-session
 APIs (connect, channel tree, PTT) are scheduled for follow-up tickets —

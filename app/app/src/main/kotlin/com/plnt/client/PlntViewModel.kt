@@ -10,6 +10,11 @@ import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.plnt.client.account.AccountImportOutcome
+import com.plnt.client.model.isAccountImport
+import com.plnt.client.admin.AdminCommands
+import com.plnt.client.admin.AdminInvalid
+import com.plnt.client.admin.AdminOp
 import com.plnt.client.audio.AudioDevices
 import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreBridge
@@ -65,6 +70,7 @@ import java.util.UUID
  */
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val identityStore = IdentityStore(app)
+    private val accountStore = com.plnt.client.account.AccountStore(app)
     private val dataStore = PlntDataStore(app)
     private val sessionStore = SessionStore(app)
     private val powerManager = app.getSystemService(PowerManager::class.java)
@@ -72,6 +78,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state
 
+    private var changingIdentity = false
     private var voiceService: VoiceService? = null
     private var bindingStatus = VoiceServiceBindingStatus()
     private var bindingRegistered = false
@@ -538,6 +545,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startConnect(bookmark: Bookmark) {
+        if (changingIdentity) return
         connectedHost = bookmark.address
         if (bindingStatus.failed) {
             requestVoiceBinding()
@@ -575,7 +583,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         try {
-            val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
+            val (connectionBookmark, identity) = accountStore.resolve(bookmark) {
+                _state.value.identityExport ?: identityStore.loadOrCreate()
+            }
             val app = getApplication<Application>()
             ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
             runOnService { svc ->
@@ -587,7 +597,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     ServerTapAction.IGNORE -> onServiceSnapshot(svc.currentConnectionSnapshot())
                     ServerTapAction.CONNECT -> try {
-                        svc.connect(bookmark, identity)
+                        svc.connect(connectionBookmark, identity)
                     } catch (t: Throwable) {
                         svc.failConnectionStart(t.message ?: t.javaClass.simpleName)
                     }
@@ -681,6 +691,76 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     /** The user backed out of the password prompt. */
     fun dismissChannelPassword() {
         _state.update { it.copy(pendingChannelPassword = null) }
+    }
+
+    // ---- PHA-4854: administration ------------------------------------------
+
+    private var nextAdminRequestId = 1
+    /** In-flight admin operations by request id, so a reply is described in terms of what was asked. */
+    private val pendingAdminOps = HashMap<Int, AdminOp>()
+
+    /**
+     * Run an admin operation. Destructive ones (kick, ban, delete channel) are
+     * parked in state first and only sent by [confirmAdmin]. The server decides
+     * whether the caller may; its answer arrives in [onAdminReply].
+     */
+    fun requestAdmin(op: AdminOp) {
+        if (op.needsConfirmation) {
+            _state.update { it.copy(pendingAdmin = op, adminNotice = null) }
+        } else {
+            sendAdmin(op)
+        }
+    }
+
+    /** The user confirmed the parked operation, optionally with a [reason] for a kick or ban. */
+    fun confirmAdmin(reason: String = "") {
+        val op = _state.value.pendingAdmin ?: return
+        _state.update { it.copy(pendingAdmin = null) }
+        sendAdmin(
+            when (op) {
+                is AdminOp.Kick -> op.copy(reason = reason.trim())
+                is AdminOp.Ban -> op.copy(reason = reason.trim())
+                else -> op
+            },
+        )
+    }
+
+    fun dismissAdmin() {
+        _state.update { it.copy(pendingAdmin = null) }
+    }
+
+    fun dismissAdminNotice() {
+        _state.update { it.copy(adminNotice = null) }
+    }
+
+    private fun sendAdmin(op: AdminOp) {
+        val id = nextAdminRequestId++
+        val cmd = try {
+            AdminCommands.build(op, id)
+        } catch (e: AdminInvalid) {
+            _state.update { it.copy(lastError = "Can't ${op.label}: ${e.message}.", adminNotice = null) }
+            return
+        }
+        pendingAdminOps[id] = op
+        _state.update { it.copy(lastError = null, adminNotice = null) }
+        runOnService { it.sendRawCommand(cmd.name, cmd.args) }
+    }
+
+    /**
+     * An `error` reply tagged with our return code. True when it was ours.
+     * The tree and roster refresh on their own from the server's own
+     * notifications (a moved client, a created or deleted channel); this only
+     * reports the outcome.
+     */
+    private fun onAdminReply(args: Map<String, String>): Boolean {
+        val id = AdminCommands.requestIdOf(args["return_code"]) ?: return false
+        val op = pendingAdminOps.remove(id) ?: return true
+        val result = AdminCommands.describe(op, args)
+        _state.update {
+            if (result.ok) it.copy(adminNotice = result.message, lastError = null)
+            else it.copy(lastError = result.message, adminNotice = null)
+        }
+        return true
     }
 
     /** The channel with this id, anywhere in the tree. */
@@ -906,20 +986,85 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun importIdentity(pem: String): Boolean {
-        if (!identityStore.import(pem)) return false
-        _state.update {
-            it.copy(identityExport = pem, identityLevel = CoreBridge.identityLevel(pem))
+    /** Explicit local import only; account data was already verified in the preview. */
+    suspend fun importAccountEntries(entries: List<com.plnt.client.account.AccountEntry>): AccountImportOutcome? {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR) || entries.isEmpty()) return null
+        changingIdentity = true
+        return try {
+            // A server this phone already has is never added a second time:
+            // importing it again would leave two entries for one host.
+            val duplicates = com.plnt.client.account.duplicateServers(entries, _state.value.bookmarks)
+            val fresh = entries.filterNot { it.bookmark.id in duplicates }
+            if (fresh.isEmpty()) return AccountImportOutcome(0, duplicates.size)
+            val ids = fresh.map { it.bookmark.id }.toSet()
+            val next = _state.value.bookmarks.filterNot { it.id in ids } + fresh.map { it.bookmark }
+            withContext(Dispatchers.IO) {
+                accountStore.save(fresh)
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            AccountImportOutcome(fresh.size, duplicates.size)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { null
+        } finally { changingIdentity = false }
+    }
+
+    /**
+     * Forgets the myTeamSpeak account on this phone: the imported identities
+     * and server passwords are erased, the imported servers are removed from
+     * the list, and the device id is dropped so the next sign-in registers as
+     * a new device.
+     *
+     * The server side is not touched — this build cannot write to the account.
+     * The owner has to revoke the device in the official client; the UI says
+     * so instead of implying the session was cancelled.
+     */
+    suspend fun signOutAccount(): Boolean {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return false
+        changingIdentity = true
+        return try {
+            val next = _state.value.bookmarks.filterNot { it.isAccountImport() }
+            withContext(Dispatchers.IO) {
+                accountStore.clearImported()
+                sessionStore.forgetAccountSession()
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { false
+        } finally { changingIdentity = false }
+    }
+
+    suspend fun importIdentity(pem: String): Boolean = replaceIdentity {
+        if (identityStore.import(pem)) pem else null
+    } != null
+
+    private suspend fun replaceIdentity(import: () -> String?): String? {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return null
+        changingIdentity = true
+        return try {
+            val pem = withContext(Dispatchers.IO) { import() } ?: return null
+            _state.update {
+                it.copy(identityExport = pem, identityLevel = CoreBridge.identityLevel(pem))
+            }
+            pem
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Provider and keystore exceptions can include sensitive values.
+            null
+        } finally {
+            changingIdentity = false
         }
-        return true
     }
 
     /** Replaces the on-device identity with a freshly generated one. */
     fun createNewIdentity() {
-        val pem = identityStore.createNew()
-        _state.update {
-            it.copy(identityExport = pem, identityLevel = CoreBridge.identityLevel(pem))
-        }
+        viewModelScope.launch { replaceIdentity { identityStore.createNew() } }
     }
 
     /**
@@ -958,6 +1103,24 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /**
+     * Import an identity from an exported TeamSpeak `.ini` file (PHA-4116).
+     *
+     * Takes the file's text, not a path: Android hands back a Storage Access
+     * Framework content URI, so the caller reads the stream and gives us the
+     * string. Returns the persisted identity, or null if the file wasn't a
+     * readable export — the stored identity is left alone on failure.
+     */
+    suspend fun importIdentityFromIni(contents: String): String? =
+        replaceIdentity { identityStore.importIni(contents) }
+
+    /**
+     * What an exported `.ini` contains, without importing it — so the UI can
+     * show the user what they are about to replace their identity with before
+     * they commit. Public metadata only; never key material.
+     */
+    fun describeIdentityIni(contents: String): String? = identityStore.describeIni(contents)
 
     /**
      * What to show after a disconnect, or null when there is nothing to
@@ -1015,6 +1178,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 channelsById.clear()
                 clientsById.clear()
                 streams.clear()
+                pendingAdminOps.clear()
                 ownChannelId = null
                 _state.update {
                     it.copy(
@@ -1121,6 +1285,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 refreshStreams()
             }
             is CoreEvent.RawCommand -> {
+                if (ev.name == "error" && onAdminReply(ev.args)) return
                 if (ev.name == "notifyclientpoke") {
                     chatHistory.poke(ev.args["invokername"].orEmpty(), ev.args["msg"].orEmpty())
                     _state.update { it.copy(pokes = chatHistory.pendingPokes()) }
