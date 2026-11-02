@@ -169,6 +169,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Kotlin unit tests (app)
+        # PHA-4852: IceServerConfigTest and the other app tests had never run in CI.
+        run: cd app && ./gradlew --no-daemon testDebugUnitTest
+
       # Deliberately last: a red test must not cost us the APK artifact, which
       # is what on-device verification runs against.
       #

@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.StopScreenShare
+import androidx.compose.material.icons.filled.FlipCameraAndroid
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.HeadsetOff
@@ -121,6 +123,8 @@ fun ConnectedScreen(
     shareState: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
     onShareScreen: () -> Unit = {},
     onStopShare: () -> Unit = {},
+    onShareCamera: () -> Unit = {},
+    onSwitchCamera: () -> Unit = {},
     /** Where other people's voices play: the in-call output switcher. */
     outputDevices: List<AudioDeviceOption> = emptyList(),
     outputDeviceKey: String? = null,
@@ -231,6 +235,8 @@ fun ConnectedScreen(
                 shareState = shareState,
                 onShareScreen = onShareScreen,
                 onStopShare = onStopShare,
+                onShareCamera = onShareCamera,
+                onSwitchCamera = onSwitchCamera,
                 outputDevices = outputDevices,
                 outputDeviceKey = outputDeviceKey,
                 onOutputDeviceChange = onOutputDeviceChange,
@@ -433,6 +439,8 @@ private fun ControlBar(
     shareState: com.plnt.client.stream.StreamSendState,
     onShareScreen: () -> Unit,
     onStopShare: () -> Unit,
+    onShareCamera: () -> Unit,
+    onSwitchCamera: () -> Unit,
     outputDevices: List<AudioDeviceOption>,
     outputDeviceKey: String?,
     onOutputDeviceChange: (String?) -> Unit,
@@ -562,6 +570,12 @@ private fun ControlBar(
                 active = false,
                 fill = if (sharing) Brand else SurfaceHigh,
                 onClick = if (sharing) onStopShare else onShareScreen,
+            )
+            PanelButton(
+                icon = if (sharing && shareState.camera) Icons.Filled.FlipCameraAndroid else Icons.Filled.Videocam,
+                description = if (sharing && shareState.camera) "Switch camera" else "Share camera",
+                active = false,
+                onClick = if (sharing && shareState.camera) onSwitchCamera else if (sharing) onStopShare else onShareCamera,
             )
             PanelButton(
                 icon = Icons.Outlined.ChatBubbleOutline,

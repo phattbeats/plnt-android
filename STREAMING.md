@@ -141,3 +141,28 @@ captures them) and the share's picked long edge, then calls
 the virtual display in place: Android 14+ allows one virtual display per
 projection, so it must not be recreated. There is no renegotiation; the
 encoder carries the new resolution to every viewer.
+
+## Camera share, TURN and NAT (PHA-4852)
+
+**Camera share.** The Videocam button on the call panel asks for CAMERA at tap
+time (denial shows an error and starts nothing), then runs the same
+`StreamSenderSession` with a `Camera2Enumerator` capturer instead of
+MediaProjection. The foreground service gains the `camera` type while it runs.
+While sharing, the same button flips front/back (`CameraVideoCapturer.switchCamera`,
+no renegotiation). WebRTC rotates frames with the device, so orientation follows
+the phone. A camera share is picture-only: the microphone belongs to the voice
+call, so `audio=0` is announced. Revocation, another app taking the camera, or a
+camera error all arrive via `CameraEventsHandler` and end the share cleanly
+(`stopstream` sent, service type dropped).
+
+**TURN.** STUN is the default and no relay is hosted or shipped. Settings ->
+Relay (TURN) takes the user's own `turn:`/`turns:` URL and credentials; both
+send and view peers use it from the next stream.
+
+**NAT notes (expected behaviour, not yet measured on devices).**
+- Same LAN / full-cone / port-restricted NAT: STUN host/srflx pairs connect.
+- Symmetric NAT or CGNAT on the phone (common on LTE): srflx pairs fail, ICE goes
+  FAILED and the viewer is dropped (`onIceConnectionChange`). Only a TURN relay
+  recovers this; configure one and restart the share.
+- Wi-Fi <-> LTE handoff mid-share: the sender drops the viewer on ICE FAILED; the
+  viewer re-requests to join and gets a fresh offer.

@@ -43,4 +43,7 @@ data class StreamSendState(
     val viewers: Int = 0,
     /** Human-readable detail for ENDED / FAILED, null otherwise. */
     val detail: String? = null,
+    /** PHA-4852: this share is the camera, not the screen. */
+    val camera: Boolean = false,
+    val frontCamera: Boolean = true,
 )

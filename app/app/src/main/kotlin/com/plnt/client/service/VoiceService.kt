@@ -197,6 +197,8 @@ class VoiceService : Service() {
     private val orphanedSends = ArrayDeque<StreamSenderSession>()
     /** A screen share holds the `mediaProjection` foreground type; see [foregroundTypes]. */
     private var projectionActive = false
+    /** A camera share holds the `camera` foreground type (PHA-4852). */
+    private var cameraActive = false
 
     private data class ConnectionParams(val bookmark: Bookmark, val identityPem: String)
     private var connectionParams: ConnectionParams? = null
@@ -623,10 +625,22 @@ class VoiceService : Service() {
      * the foreground with type `mediaProjection`, so the type is added before
      * capture starts and dropped again in [stopScreenShare].
      */
-    fun startScreenShare(permissionData: Intent, title: String, settings: com.plnt.client.model.Settings) {
+    fun startScreenShare(permissionData: Intent, title: String, settings: com.plnt.client.model.Settings) =
+        startShare(permissionData, title, settings)
+
+    /** PHA-4852: share the camera. The caller has already been granted CAMERA. */
+    fun startCameraShare(title: String, settings: com.plnt.client.model.Settings) =
+        startShare(null, title, settings)
+
+    fun switchShareCamera() {
+        sendSession?.switchCamera()
+    }
+
+    private fun startShare(permissionData: Intent?, title: String, settings: com.plnt.client.model.Settings) {
         stopScreenShare()
         if (client == null) return
-        promoteForProjection(true)
+        val camera = permissionData == null
+        if (camera) promoteForCamera(true) else promoteForProjection(true)
         // PHA-4176: Automatic = the most the share can carry on Wi-Fi, a lighter
         // profile on metered data; anything picked in Settings wins.
         val metered = runCatching { connectivityManager.isActiveNetworkMetered }.getOrDefault(false)
@@ -634,7 +648,9 @@ class VoiceService : Service() {
             settings.streamResolution, settings.streamFps, settings.streamBitrateKbps, metered,
         )
         val (dw, dh) = shareDisplaySize()
-        val (w, h) = com.plnt.client.stream.StreamQualityPolicy.frameSize(quality.longEdge, dw, dh)
+        // A camera is landscape 16:9 at the chosen long edge; WebRTC rotates frames itself.
+        val (w, h) = if (camera) quality.longEdge to quality.longEdge * 9 / 16
+        else com.plnt.client.stream.StreamQualityPolicy.frameSize(quality.longEdge, dw, dh)
         shareLongEdge = quality.longEdge
         Diag.add("share: quality ${w}x$h ${quality.fps}fps ${quality.bitrateKbps}kbps metered=$metered")
         val session = StreamSenderSession(
@@ -659,7 +675,7 @@ class VoiceService : Service() {
                             sendSession = null
                             if (s.awaitingStreamId) orphanedSends.addLast(s)
                             runCatching { displayManager.unregisterDisplayListener(shareDisplayListener) }
-                            promoteForProjection(false)
+                            if (camera) promoteForCamera(false) else promoteForProjection(false)
                         }
                     }
                 }
@@ -678,7 +694,8 @@ class VoiceService : Service() {
         // start it, so keep the session around to send `stopstream` then.
         if (s.awaitingStreamId) orphanedSends.addLast(s)
         runCatching { displayManager.unregisterDisplayListener(shareDisplayListener) }
-        promoteForProjection(false)
+        if (cameraActive) promoteForCamera(false)
+        if (projectionActive) promoteForProjection(false)
         sendStateListener?.invoke(StreamSendState())
     }
 
@@ -698,6 +715,17 @@ class VoiceService : Service() {
         Diag.add("share: stopping stray stream $id (live=${live?.current?.streamId})")
         sendRawCommand("stopstream", mapOf("id" to id))
         return true
+    }
+
+    /** Adds or drops the `camera` foreground type (needs CAMERA granted first). */
+    private fun promoteForCamera(on: Boolean) {
+        cameraActive = on
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        runCatching { startForeground(NOTIFICATION_ID, buildNotification(), foregroundTypes(micForegroundActive)) }
+            .onFailure {
+                Log.w(TAG, "foreground type update (camera=$on) refused", it)
+                if (on) cameraActive = false
+            }
     }
 
     /** Adds or drops the `mediaProjection` foreground type on top of the voice types. */
@@ -724,6 +752,7 @@ class VoiceService : Service() {
         var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         if (withMicrophone) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         if (projectionActive) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        if (cameraActive) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         return types
     }
 

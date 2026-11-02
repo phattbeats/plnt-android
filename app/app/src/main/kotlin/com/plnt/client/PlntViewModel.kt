@@ -466,6 +466,22 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.startScreenShare(permissionData, title, settings) }
     }
 
+    /** PHA-4852: the Activity has CAMERA; share the camera. */
+    fun startCameraShare() {
+        val nick = _state.value.bookmarks.firstOrNull { it.id == _state.value.connectionStatus.activeBookmarkId }?.nickname
+        val title = if (nick.isNullOrBlank()) "Phone camera" else "$nick's camera"
+        val settings = _state.value.settings
+        runOnService { it.startCameraShare(title, settings) }
+    }
+
+    fun switchShareCamera() {
+        runOnService { it.switchShareCamera() }
+    }
+
+    fun onCameraPermissionDenied() {
+        _state.update { it.copy(lastError = "Camera permission denied. Allow it in Android settings to share your camera.") }
+    }
+
     fun stopScreenShare() {
         runOnService { it.stopScreenShare() }
     }
