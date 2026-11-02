@@ -129,3 +129,39 @@ class ChatHistoryTest {
         h.poke("a", "wake"); assertEquals(1, h.pendingPokes().size); h.ackPokes(); assertTrue(h.pendingPokes().isEmpty())
     }
 }
+
+class WireUpTest {
+    @Test fun correlatesListAndError() {
+        val c = RawReplyCorrelator(); var got: RawReplyCorrelator.Reply? = null
+        val rc = c.register { got = it }
+        assertTrue(c.onRaw("notifyfilelist", mapOf("name" to "a.txt", "size" to "5", "type" to "1", "datetime" to "9")))
+        assertTrue(c.onRaw("notifyfilelist", mapOf("name" to "d", "type" to "0")))
+        assertNull(got)
+        assertFalse(c.onRaw("error", mapOf("return_code" to "other", "id" to "0")))
+        assertTrue(c.onRaw("error", mapOf("return_code" to rc, "id" to "0", "msg" to "ok")))
+        val files = FileReplies.files(got!!)
+        assertEquals(listOf("a.txt", "d"), files.map { it.name }); assertTrue(files[1].isDir)
+    }
+    @Test fun errorMapsToPermissionDenied() {
+        val c = RawReplyCorrelator(); var res: FileResult<List<RemoteFile>>? = null
+        val rc = c.register { res = FileReplies.toResult(it, FileReplies::files) }
+        c.onRaw("error", mapOf("return_code" to rc, "id" to "2568", "msg" to "insufficient"))
+        assertTrue((res as FileResult.Failed).permissionDenied)
+    }
+    @Test fun grantFromReply() {
+        val c = RawReplyCorrelator(); var g: TransferGrant? = null
+        val rc = c.register { g = FileReplies.grant(it) }
+        c.onRaw("notifystartdownload", mapOf("serverftfid" to "2", "ftkey" to "k", "port" to "30033", "size" to "7"))
+        c.onRaw("error", mapOf("return_code" to rc, "id" to "0"))
+        assertEquals(30033, g!!.port)
+    }
+    @Test fun historyStoreRoundTripsAwkwardText() {
+        val f = File.createTempFile("hist", ".tsv"); f.delete()
+        val s = FileChatHistoryStore(f)
+        val m = StoredMessage("channel:1", 5L, "Bob\tX", false, "line1\nline2\\n \t end")
+        s.save(listOf(m, m.copy(atMillis = 6, isSelf = true)))
+        assertEquals(listOf(m, m.copy(atMillis = 6, isSelf = true)), s.load())
+        assertTrue(FileChatHistoryStore(File("/nonexistent/x")).load().isEmpty())
+        f.delete()
+    }
+}

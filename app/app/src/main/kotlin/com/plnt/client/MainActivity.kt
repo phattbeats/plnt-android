@@ -122,6 +122,9 @@ class MainActivity : ComponentActivity() {
                             onDisconnect = viewModel::disconnect,
                             onOpenSettings = { viewModel.navigate(Screen.Settings) },
                             onOpenChat = { viewModel.navigate(Screen.Chat) },
+                            onOpenFiles = { viewModel.navigate(Screen.Files) },
+                            unreadChat = state.unreadChat,
+                            pokes = state.pokes,
                             onWatchStream = viewModel::watchStream,
                             shareState = state.streamSend,
                             onShareScreen = ::launchScreenCapture,
@@ -141,6 +144,17 @@ class MainActivity : ComponentActivity() {
                             peers = flattenClients(state.channelTree).filterNot { it.isSelf },
                             onSend = viewModel::sendChatMessage,
                             onBack = { viewModel.navigate(Screen.Connected) },
+                        )
+                        Screen.Files -> com.plnt.client.ui.FilesScreen(
+                            state = state.files,
+                            onOpenDir = viewModel::openDir,
+                            onUp = viewModel::upDir,
+                            onBack = { viewModel.navigate(Screen.Connected) },
+                            onDownload = viewModel::downloadFile,
+                            onUpload = viewModel::uploadFile,
+                            onNewFolder = viewModel::newFolder,
+                            onDelete = viewModel::deleteFile,
+                            onCancel = viewModel::cancelTransfer,
                         )
                         Screen.About -> AboutScreen(onBack = { viewModel.navigate(Screen.Settings) })
                         Screen.Settings -> SettingsScreen(
