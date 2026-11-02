@@ -3,17 +3,25 @@
     API 31+. The encrypted prefs are keyed to this device's Android Keystore
     master key, which is never backed up or transferred: restored elsewhere
     they cannot be decrypted (and plnt_identity is a private key that should
-    not leave the phone anyway). Bookmarks and settings still go along.
+    not leave the phone anyway). PHA-4856: that includes the bookmark secrets
+    (plnt_bookmark_secrets), and the diagnostics opt-in (plnt_diag) is a
+    per-phone consent, not a setting to carry over. Bookmarks (without their
+    passwords) and settings still go along. BackupRulesTest keeps this file and
+    backup_rules.xml in step with every encrypted store the code opens.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="plnt_identity.xml" />
         <exclude domain="sharedpref" path="plnt_session.xml" />
+        <exclude domain="sharedpref" path="plnt_bookmark_secrets.xml" />
+        <exclude domain="sharedpref" path="plnt_diag.xml" />
         <exclude domain="file" path="plnt-diag.log" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="plnt_identity.xml" />
         <exclude domain="sharedpref" path="plnt_session.xml" />
+        <exclude domain="sharedpref" path="plnt_bookmark_secrets.xml" />
+        <exclude domain="sharedpref" path="plnt_diag.xml" />
         <exclude domain="file" path="plnt-diag.log" />
     </device-transfer>
 </data-extraction-rules>
