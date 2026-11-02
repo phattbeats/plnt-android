@@ -72,7 +72,7 @@ object Diag {
     /** Reads the user's choice; called from the service and the UI, whichever comes first. */
     fun init(ctx: Context) {
         val on = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
-        apply(ctx, on)
+        applyChoice(ctx, on)
     }
 
     fun isEnabled(ctx: Context): Boolean =
@@ -81,11 +81,11 @@ object Diag {
     /** Settings > Diagnostics. Off stops uploads at once and deletes the local trace. */
     fun setEnabled(ctx: Context, on: Boolean) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on).commit()
-        apply(ctx, on)
+        applyChoice(ctx, on)
     }
 
     @Synchronized
-    private fun apply(ctx: Context, on: Boolean) {
+    private fun applyChoice(ctx: Context, on: Boolean) {
         val f = File(ctx.applicationContext.filesDir, "plnt-diag.log")
         enabled = on
         if (!on) {
