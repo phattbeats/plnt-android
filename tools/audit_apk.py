@@ -88,6 +88,9 @@ def main():
             if not exported:
                 continue
             print(f"exported {kind}: {name} permission={guard}")
+            # Compose ui-tooling's preview activity ships in debug builds only.
+            if not release and name == "androidx.compose.ui.tooling.PreviewActivity":
+                continue
             if name not in EXPORTED_OK and not guard:
                 problems.append(f"exported {kind} {name} has no permission")
 
