@@ -295,7 +295,9 @@ class StreamSenderSession(
             ?: names.firstOrNull() ?: return null
         frontCamera = en.isFrontFacing(name)
         val events = object : CameraVideoCapturer.CameraEventsHandler {
-            private fun end(why: String) = main.post { runCatching { stop(why) } }
+            private fun end(why: String) {
+                main.post { runCatching { stop(why) } }
+            }
             override fun onCameraError(errorDescription: String?) = end("camera error: $errorDescription")
             override fun onCameraDisconnected() = end("camera disconnected")
             override fun onCameraFreezed(errorDescription: String?) = end("camera froze: $errorDescription")
