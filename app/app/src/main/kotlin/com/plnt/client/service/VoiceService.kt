@@ -305,7 +305,7 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         logLifecycle("onCreate", "")
-        Diag.init(filesDir)
+        Diag.init(this)
         // Before any connect: the native DNS resolver needs the app Context
         // to resolve server hostnames on Android (PHA-3289).
         com.plnt.client.core.AndroidContext.ensure(this)

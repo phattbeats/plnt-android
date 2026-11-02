@@ -156,6 +156,8 @@ class MainActivity : ComponentActivity() {
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,
                             onRequestBatteryExemption = viewModel::requestBatteryExemption,
+                            diagnosticsEnabled = state.diagnosticsEnabled,
+                            onDiagnosticsChange = viewModel::setDiagnosticsEnabled,
                             onPttModeChange = viewModel::setPttMode,
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,

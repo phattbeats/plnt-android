@@ -50,15 +50,14 @@ class SessionStore(context: Context) {
             .put("password", bookmark.serverPassword ?: "")
             // PHA-4849: the invited channel, its password and the privilege
             // key — so a restart reconnects to the same place, with the same
-            // rights. This store is encrypted, so they are not in the clear
-            // here the way a bookmark's are in PlntDataStore.
+            // rights. This store is encrypted, like the bookmark vault
+            // (PHA-4856) the same secrets live in.
             .put("channel", bookmark.channel ?: "")
             .put("channelpassword", bookmark.channelPassword ?: "")
             .put("privilegekey", bookmark.privilegeKey ?: "")
             .put("folder", bookmark.folder ?: "")
         val editor = prefs.edit()
             .putString(KEY_BOOKMARK, json.toString())
-            .putString(KEY_LAST_BOOKMARK_ID, bookmark.id)
         if (lastChannelId != null) {
             editor.putLong(KEY_LAST_CHANNEL, lastChannelId)
         } else {
@@ -95,19 +94,14 @@ class SessionStore(context: Context) {
     }
 
     /**
-     * Id of the bookmark most recently connected to. Unlike [load] this
-     * survives [clear], so the diagnostic auto-join on open can prefer the
-     * server the user last used over simply the first bookmark.
-     */
-    fun lastBookmarkId(): String? = prefs.getString(KEY_LAST_BOOKMARK_ID, null)
-
-    /**
      * The session is over by the user's own decision. Called from
      * `VoiceService.shutdown()` and nowhere near `onDestroy()`: a kill must
      * leave this intact, which is the entire point.
      */
     fun clear() {
-        prefs.edit().remove(KEY_BOOKMARK).remove(KEY_LAST_CHANNEL).commit()
+        // KEY_LAST_BOOKMARK_ID only fed the diagnostic auto-join PHA-4856
+        // removed; an older install's value goes with the session.
+        prefs.edit().remove(KEY_BOOKMARK).remove(KEY_LAST_CHANNEL).remove(KEY_LAST_BOOKMARK_ID).commit()
     }
 
     /**

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Headset
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
@@ -94,6 +95,9 @@ fun SettingsScreen(
     availableOutputDevices: List<AudioDeviceOption>,
     batteryOptimizationExempt: Boolean,
     onRequestBatteryExemption: () -> Unit,
+    /** PHA-4856: the user's switch for the diagnostic trace and its upload. */
+    diagnosticsEnabled: Boolean = false,
+    onDiagnosticsChange: (Boolean) -> Unit = {},
     onPttModeChange: (PttMode) -> Unit,
     onPttOnVolumeButtonChange: (Boolean) -> Unit,
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
@@ -263,6 +267,15 @@ fun SettingsScreen(
                 RowDivider()
                 NavRow("Create new identity", "Servers will see you as a new user", enabled = identityChangeAllowed) { showCreate = true }
                 if (!identityChangeAllowed) Footnote("Disconnect before replacing your identity.")
+            }
+
+            Section("Diagnostics", Icons.Outlined.BugReport) {
+                SwitchRow("Send connection diagnostics", "Helps PHATT TECH find why calls drop", diagnosticsEnabled, onDiagnosticsChange)
+                Footnote(
+                    "Off unless you turn it on. While on, a connection trace is uploaded to PHATT TECH. " +
+                        "Passwords, keys, nicknames, server addresses and IPs are removed before it is written. " +
+                        "Turning it off stops uploads and deletes the trace from this phone.",
+                )
             }
 
             Section("About", Icons.Outlined.Info) {
