@@ -194,6 +194,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * PHA-4852: leaving the app (home/recents) while watching a stream shrinks
+     * the viewer into a PiP window instead of dropping back to a blank screen.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            viewModel.state.value.screen == Screen.StreamViewer
+        ) {
+            runCatching {
+                enterPictureInPictureMode(
+                    android.app.PictureInPictureParams.Builder()
+                        .setAspectRatio(android.util.Rational(16, 9))
+                        .build(),
+                )
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // The app was already open (singleTop-style reuse) when a link was tapped.
