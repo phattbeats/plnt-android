@@ -19,8 +19,14 @@ prefix = "plnt_"
 # tsclientlib pinned by exact commit so the build is reproducible.
 # ee3bc6f45a7137db7793ba5593a321df400d53e5 ("Fix pulling partial packets from AudioQueue")
 # Upstream: https://github.com/ReSpeak/tsclientlib
-tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5" }
+# PHA-3289: `unstable` exposes `get_tsproto_client_mut()`, which is the only
+# way to see raw command packets before tsclientlib's parser drops the TS6-only
+# `notifystream*` notifications on the floor, and to send raw `OutCommand`s
+# for the TS6 screen-share signalling verbs tsclientlib has no message types
+# for (`joinstreamrequest`, `streamsignaling`, ...).
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5", features = ["unstable"] }
 tsproto-packets = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5" }
+tsproto = { git = "https://github.com/ReSpeak/tsclientlib", rev = "ee3bc6f45a7137db7793ba5593a321df400d53e5" }
 
 # audiopus (Rust Opus bindings). Same version family tsclientlib depends on.
 audiopus = "0.3.0-rc.0"
