@@ -256,6 +256,7 @@ class VoiceService : Service() {
     private var availableInputDevices: List<AudioDeviceOption> = emptyList()
     private var availableOutputDevices: List<AudioDeviceOption> = emptyList()
 
+    private var exitProcessOnDestroy = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     /** Latest onStartCommand id, so a hang-up only un-starts us if no newer start is pending. */
@@ -354,7 +355,7 @@ class VoiceService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE_MUTE -> setInputMuted(!inputMuted)
             ACTION_TOGGLE_TALK -> setPushToTalk(!transmitting)
-            ACTION_DISCONNECT -> disconnect("notification")
+            ACTION_DISCONNECT -> endAndExit("notification exit")
         }
         if (intent == null) restorePersistedSession()
         return START_STICKY
@@ -789,6 +790,20 @@ class VoiceService : Service() {
         shutdown(DisconnectCause.USER, "disconnected by user")
     }
 
+    /**
+     * PHA-4920: the user closed the app (swiped it from Recents or tapped Exit
+     * on the notification). End the session, clear the persisted snapshot so
+     * nothing redials it, stop the service and let the process go. Unlike
+     * [disconnect] the process is also killed once the service is destroyed,
+     * so no cached process lingers.
+     */
+    fun endAndExit(source: String) {
+        exitProcessOnDestroy = true
+        disconnect(source)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     /** Initial setup failed before the asynchronous native connect was launched. */
     fun failConnectionStart(reason: String) {
         shutdown(DisconnectCause.ERROR, reason)
@@ -883,6 +898,7 @@ class VoiceService : Service() {
         mediaSession.release()
         if (eglBaseLazy.isInitialized()) runCatching { eglBase.release() }
         super.onDestroy()
+        if (exitProcessOnDestroy) android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     // ---- session persistence (#3290 item 2) ----------------------------
@@ -980,6 +996,9 @@ class VoiceService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         logLifecycle("onTaskRemoved", "task swiped from Recents")
+        // PHA-4920: closing the app ends the call. Backgrounding does not
+        // reach here; only removing the task does.
+        endAndExit("task removed")
         super.onTaskRemoved(rootIntent)
     }
 
@@ -1504,7 +1523,7 @@ class VoiceService : Service() {
         )
         val disconnectAction = NotificationCompat.Action(
             android.R.drawable.ic_menu_close_clear_cancel,
-            "Disconnect",
+            "Exit",
             servicePendingIntent(ACTION_DISCONNECT, 3),
         )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
