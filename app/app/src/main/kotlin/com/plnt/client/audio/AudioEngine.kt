@@ -17,6 +17,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.util.Log
+import com.plnt.client.model.InputRoute
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -44,12 +45,16 @@ const val CORE_FRAME_SAMPLES = 960 // 48_000 * 0.020
 class AudioEngine(
     private val context: Context,
     private val onCaptureFrame: (FloatArray) -> Unit,
+    /** Fires whenever the set of physically-present input routes changes (plug/unplug, BT connect). */
+    private val onInputRoutesChanged: (Set<InputRoute>) -> Unit = {},
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val running = AtomicBoolean(false)
     /** Gates whether captured frames are forwarded to [onCaptureFrame]. Capture itself never stops. */
     private val sending = AtomicBoolean(false)
+
+    @Volatile private var preferredRoute: InputRoute = InputRoute.AUTO
 
     private var captureThread: Thread? = null
     private var record: AudioRecord? = null
@@ -60,10 +65,12 @@ class AudioEngine(
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            onInputRoutesChanged(computeAvailableInputRoutes())
             if (addedDevices.any { it.isRelevant() }) rehome("device added: ${addedDevices.joinToString { it.describe() }}")
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            onInputRoutesChanged(computeAvailableInputRoutes())
             if (removedDevices.any { it.isRelevant() }) rehome("device removed: ${removedDevices.joinToString { it.describe() }}")
         }
     }
@@ -77,14 +84,15 @@ class AudioEngine(
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
-        // Route to a connected Bluetooth headset if one is present *before*
-        // opening the streams — AudioRecord/AudioTrack pick up whatever route
-        // is active at open time, they don't hot-follow it.
-        scoRouter.routeToPreferredDeviceAndWait()
+        onInputRoutesChanged(computeAvailableInputRoutes())
+        // Route to the preferred device *before* opening the streams —
+        // AudioRecord/AudioTrack pick up whatever route is active at open
+        // time, they don't hot-follow it.
+        scoRouter.routeToPreferredDeviceAndWait(preferredRoute)
 
         openPlaybackTrack()
         openCaptureAndStartThread()
-        Log.i(TAG, "AudioEngine started (mode=MODE_IN_COMMUNICATION)")
+        Log.i(TAG, "AudioEngine started (mode=MODE_IN_COMMUNICATION, preferredRoute=$preferredRoute)")
     }
 
     fun shutdown() {
@@ -115,6 +123,32 @@ class AudioEngine(
         sending.set(value)
     }
 
+    /**
+     * Which [InputRoute]s the hardware currently offers. AUTO and BUILTIN_MIC are always
+     * present; the rest reflect whatever [AudioManager] currently reports connected.
+     */
+    fun availableInputRoutes(): Set<InputRoute> = computeAvailableInputRoutes()
+
+    /**
+     * User-initiated override of the auto-priority chain (PHA-3132 follow-up: "switch
+     * inputs"). Re-routes immediately if a call is live — unlike [setSending] this is a
+     * deliberate route change, not a PTT toggle, so re-opening the streams here is correct
+     * (see the class doc for why PTT itself must not do this).
+     */
+    fun setPreferredInputRoute(route: InputRoute) {
+        preferredRoute = route
+        if (running.get()) rehome("input route changed to $route")
+    }
+
+    private fun computeAvailableInputRoutes(): Set<InputRoute> {
+        val present = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).map { it.type }.toSet()
+        val routes = mutableSetOf(InputRoute.AUTO, InputRoute.BUILTIN_MIC)
+        if (AudioDeviceInfo.TYPE_BLUETOOTH_SCO in present) routes += InputRoute.BLUETOOTH
+        if (AudioDeviceInfo.TYPE_WIRED_HEADSET in present) routes += InputRoute.WIRED_HEADSET
+        if (AudioDeviceInfo.TYPE_USB_HEADSET in present) routes += InputRoute.USB_HEADSET
+        return routes
+    }
+
     /** Feed one decoded 20 ms / 960-sample / 48 kHz mono frame from plnt-core to the speaker/headset. */
     fun onPlaybackFrame(samples: FloatArray) {
         val track = playbackTrack.get() ?: return
@@ -133,7 +167,7 @@ class AudioEngine(
         // AudioTrack don't hot-swap devices; MODE_IN_COMMUNICATION + the new
         // active AudioDeviceInfo means a fresh instance picks up the new route
         // and native sample rate automatically.
-        scoRouter.routeToPreferredDeviceAndWait()
+        scoRouter.routeToPreferredDeviceAndWait(preferredRoute)
         openPlaybackTrack(reopen = true)
         reopenCapture()
     }
@@ -334,9 +368,17 @@ internal class BluetoothScoRouter(
     private var latch: CountDownLatch? = null
 
     @SuppressLint("MissingPermission") // BLUETOOTH_CONNECT is required + declared in the manifest
-    fun routeToPreferredDeviceAndWait() {
+    fun routeToPreferredDeviceAndWait(preference: InputRoute = InputRoute.AUTO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            routeViaCommunicationDevice()
+            routeViaCommunicationDevice(preference)
+            return
+        }
+
+        // Pre-API 31 there is no per-device selection API beyond SCO on/off;
+        // an explicit non-Bluetooth preference just means "don't force SCO"
+        // and let Android's own wired > built-in fallback apply.
+        if (preference != InputRoute.AUTO && preference != InputRoute.BLUETOOTH) {
+            stopSco()
             return
         }
 
@@ -358,25 +400,38 @@ internal class BluetoothScoRouter(
         latch?.await(2, TimeUnit.SECONDS)
     }
 
+    private fun stopSco() {
+        if (!scoRequested) return
+        audioManager.stopBluetoothSco()
+        audioManager.isBluetoothScoOn = false
+        scoRequested = false
+    }
+
     @SuppressLint("MissingPermission")
-    private fun routeViaCommunicationDevice() {
+    private fun routeViaCommunicationDevice(preference: InputRoute) {
         val devices = audioManager.availableCommunicationDevices
-        val preferred = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+        val byPreference: List<AudioDeviceInfo> = when (preference) {
+            InputRoute.BLUETOOTH -> devices.filter { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+            InputRoute.WIRED_HEADSET -> devices.filter { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
+            InputRoute.USB_HEADSET -> devices.filter { it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
+            InputRoute.BUILTIN_MIC -> devices.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+            InputRoute.AUTO -> emptyList()
+        }
+        // A specific preference falls back to the auto chain if the requested
+        // device has since disappeared (e.g. the headset was unplugged mid-call).
+        val preferred = byPreference.firstOrNull()
+            ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
             ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
         if (preferred != null) {
             val ok = audioManager.setCommunicationDevice(preferred)
-            Log.i(TAG, "setCommunicationDevice(${preferred.type}) -> $ok")
+            Log.i(TAG, "setCommunicationDevice(${preferred.type}, preference=$preference) -> $ok")
         }
     }
 
     fun release() {
-        if (scoRequested) {
-            audioManager.stopBluetoothSco()
-            audioManager.isBluetoothScoOn = false
-            scoRequested = false
-        }
+        stopSco()
         if (scoReceiverRegistered) {
             runCatching { context.unregisterReceiver(scoStateReceiver) }
             scoReceiverRegistered = false

@@ -26,6 +26,7 @@ import com.plnt.client.core.CoreBridge
 import com.plnt.client.core.CoreClient
 import com.plnt.client.core.CoreEvent
 import com.plnt.client.model.Bookmark
+import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,8 @@ data class VoiceState(
     val outputMuted: Boolean,
     val transmitting: Boolean,
     val pttMode: PttMode,
+    val preferredInputRoute: InputRoute,
+    val availableInputRoutes: Set<InputRoute>,
 )
 
 /**
@@ -107,6 +110,8 @@ class VoiceService : Service() {
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
+    private var preferredInputRoute: InputRoute = InputRoute.AUTO
+    private var availableInputRoutes: Set<InputRoute> = setOf(InputRoute.AUTO, InputRoute.BUILTIN_MIC)
 
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var mediaSession: MediaSessionCompat
@@ -199,7 +204,15 @@ class VoiceService : Service() {
         listener?.invoke(currentState())
     }
 
-    fun currentState(): VoiceState = VoiceState(inputMuted, outputMuted, transmitting, pttMode)
+    fun currentState(): VoiceState =
+        VoiceState(inputMuted, outputMuted, transmitting, pttMode, preferredInputRoute, availableInputRoutes)
+
+    /** PHA-3132 follow-up: user-facing mic route override, independent of PTT mode. */
+    fun setPreferredInputRoute(route: InputRoute) {
+        preferredInputRoute = route
+        audioEngine?.setPreferredInputRoute(route)
+        emitState()
+    }
 
     private fun emitState() {
         stateListener?.invoke(currentState())
@@ -284,14 +297,19 @@ class VoiceService : Service() {
         teardownClientOnly()
 
         lateinit var engine: AudioEngine
-        engine = AudioEngine(applicationContext, onCaptureFrame = { frame ->
-            // frame is 960 samples @ 48 kHz mono, exactly what sendPcmFrame expects.
-            try {
-                client?.sendPcmFrame(frame)
-            } catch (t: Throwable) {
-                Log.w(TAG, "sendPcmFrame failed", t)
-            }
-        })
+        engine = AudioEngine(
+            applicationContext,
+            onCaptureFrame = { frame ->
+                // frame is 960 samples @ 48 kHz mono, exactly what sendPcmFrame expects.
+                try {
+                    client?.sendPcmFrame(frame)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "sendPcmFrame failed", t)
+                }
+            },
+            onInputRoutesChanged = { routes -> mainHandler.post { availableInputRoutes = routes; emitState() } },
+        )
+        engine.setPreferredInputRoute(preferredInputRoute)
         audioEngine = engine
 
         val c = CoreBridge.newClient(

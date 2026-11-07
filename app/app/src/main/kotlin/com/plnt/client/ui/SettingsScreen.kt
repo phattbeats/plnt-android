@@ -46,6 +46,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.plnt.client.core.CoreBridge
+import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
 import com.plnt.client.ui.theme.Bg
@@ -62,9 +63,11 @@ import com.plnt.client.ui.theme.SurfaceRaised
 fun SettingsScreen(
     settings: Settings,
     identityExport: String?,
+    availableInputRoutes: Set<InputRoute>,
     onPttModeChange: (PttMode) -> Unit,
     onPttOnVolumeButtonChange: (Boolean) -> Unit,
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
+    onInputRouteChange: (InputRoute) -> Unit,
     onImportIdentity: (String) -> Boolean,
     onBack: () -> Unit,
 ) {
@@ -108,6 +111,23 @@ fun SettingsScreen(
                     "service holds the media session. The volume button only fires while " +
                     "PLNT is in the foreground; use the notification's Talk action from the " +
                     "lock screen.",
+                style = MaterialTheme.typography.labelSmall,
+                color = BoneFaint,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+
+            SectionGap()
+
+            SectionHeader("Audio input")
+            // Only offer routes the hardware actually has right now (PHA-3076-style
+            // rule: don't show a picker option that would silently no-op).
+            InputRoute.entries.filter { it in availableInputRoutes }.forEach { route ->
+                RadioRow(route.label(), settings.preferredInputRoute == route) { onInputRouteChange(route) }
+            }
+            Text(
+                "Auto follows whatever route Android considers current (Bluetooth, then " +
+                    "wired, then the phone's own mic). Pick a specific one to keep using it " +
+                    "even while another device is connected.",
                 style = MaterialTheme.typography.labelSmall,
                 color = BoneFaint,
                 modifier = Modifier.padding(top = 8.dp),
@@ -205,6 +225,14 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+private fun InputRoute.label(): String = when (this) {
+    InputRoute.AUTO -> "Auto"
+    InputRoute.BUILTIN_MIC -> "Phone mic"
+    InputRoute.WIRED_HEADSET -> "Wired headset"
+    InputRoute.BLUETOOTH -> "Bluetooth"
+    InputRoute.USB_HEADSET -> "USB headset"
 }
 
 @Composable

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import com.plnt.client.model.Bookmark
+import com.plnt.client.model.InputRoute
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
 import kotlinx.coroutines.flow.first
@@ -28,6 +29,7 @@ class PlntDataStore(private val context: Context) {
         val PTT_MODE = stringPreferencesKey("ptt_mode")
         val PTT_VOLUME_BUTTON = booleanPreferencesKey("ptt_volume_button")
         val PTT_HEADSET_BUTTON = booleanPreferencesKey("ptt_headset_button")
+        val INPUT_ROUTE = stringPreferencesKey("input_route")
 
         /**
          * Superseded: PTT trigger used to be one mutually-exclusive enum
@@ -78,10 +80,13 @@ class PlntDataStore(private val context: Context) {
         val mode = prefs[Keys.PTT_MODE]?.let { runCatching { PttMode.valueOf(it) }.getOrNull() }
             ?: PttMode.PUSH_TO_TALK
         val legacy = prefs[Keys.LEGACY_PTT_SOURCE]
+        val inputRoute = prefs[Keys.INPUT_ROUTE]?.let { runCatching { InputRoute.valueOf(it) }.getOrNull() }
+            ?: InputRoute.AUTO
         return Settings(
             pttMode = mode,
             pttOnVolumeButton = prefs[Keys.PTT_VOLUME_BUTTON] ?: (legacy == "VOLUME_BUTTON"),
             pttOnHeadsetButton = prefs[Keys.PTT_HEADSET_BUTTON] ?: (legacy == "HEADSET_BUTTON"),
+            preferredInputRoute = inputRoute,
         )
     }
 
@@ -90,6 +95,7 @@ class PlntDataStore(private val context: Context) {
             it[Keys.PTT_MODE] = settings.pttMode.name
             it[Keys.PTT_VOLUME_BUTTON] = settings.pttOnVolumeButton
             it[Keys.PTT_HEADSET_BUTTON] = settings.pttOnHeadsetButton
+            it[Keys.INPUT_ROUTE] = settings.preferredInputRoute.name
             it.remove(Keys.LEGACY_PTT_SOURCE)
         }
     }

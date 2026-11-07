@@ -67,9 +67,11 @@ class MainActivity : ComponentActivity() {
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
+                            availableInputRoutes = state.availableInputRoutes,
                             onPttModeChange = viewModel::setPttMode,
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,
+                            onInputRouteChange = viewModel::setPreferredInputRoute,
                             onImportIdentity = viewModel::importIdentity,
                             onBack = {
                                 viewModel.navigate(
