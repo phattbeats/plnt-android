@@ -71,6 +71,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state
 
+    private var changingIdentity = false
     private var voiceService: VoiceService? = null
     private var bindingStatus = VoiceServiceBindingStatus()
     private var bindingRegistered = false
@@ -324,6 +325,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startConnect(bookmark: Bookmark) {
+        if (changingIdentity) return
         if (bindingStatus.failed) {
             requestVoiceBinding()
             if (bindingStatus.failed) return
@@ -598,16 +600,31 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun importIdentity(pem: String): Boolean {
-        if (!identityStore.import(pem)) return false
-        _state.update { it.copy(identityExport = pem) }
-        return true
+    suspend fun importIdentity(pem: String): Boolean = replaceIdentity {
+        if (identityStore.import(pem)) pem else null
+    } != null
+
+    private suspend fun replaceIdentity(import: () -> String?): String? {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return null
+        changingIdentity = true
+        return try {
+            val pem = withContext(Dispatchers.IO) { import() } ?: return null
+            _state.update { it.copy(identityExport = pem) }
+            pem
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Provider and keystore exceptions can include sensitive values.
+            null
+        } finally {
+            changingIdentity = false
+        }
     }
 
     /** Replaces the on-device identity with a freshly generated one. */
     fun createNewIdentity() {
-        val pem = identityStore.createNew()
-        _state.update { it.copy(identityExport = pem) }
+        viewModelScope.launch { replaceIdentity { identityStore.createNew() } }
     }
 
     /**
@@ -618,11 +635,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      * string. Returns the persisted identity, or null if the file wasn't a
      * readable export — the stored identity is left alone on failure.
      */
-    fun importIdentityFromIni(contents: String): String? {
-        val pem = identityStore.importIni(contents) ?: return null
-        _state.update { it.copy(identityExport = pem) }
-        return pem
-    }
+    suspend fun importIdentityFromIni(contents: String): String? =
+        replaceIdentity { identityStore.importIni(contents) }
 
     /**
      * What an exported `.ini` contains, without importing it — so the UI can
