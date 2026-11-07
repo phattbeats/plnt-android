@@ -1,6 +1,16 @@
 package com.plnt.client.model
 
 /** A saved server (#3076 screen 1: bookmarks list with add/edit). */
+/**
+ * The id prefix every server imported from a myTeamSpeak account carries.
+ * It marks the entry as account-backed, so the right identity is used at
+ * connect time and so a sign-out knows which servers to remove.
+ */
+const val ACCOUNT_IMPORT_ID_PREFIX = "myts:"
+
+/** True for bookmarks this app imported from a myTeamSpeak account. */
+fun Bookmark.isAccountImport(): Boolean = id.startsWith(ACCOUNT_IMPORT_ID_PREFIX)
+
 data class Bookmark(
     val id: String,
     val label: String,
@@ -8,6 +18,15 @@ data class Bookmark(
     val port: Int,
     val nickname: String,
     val serverPassword: String? = null,
+    /**
+     * The myTeamSpeak folder this server came from, when it was imported from
+     * an account. The sync payload only carries the folder's server-side id
+     * (Item_Data.parent) and the importer deliberately fetches only the
+     * bookmark and identity classes, so no folder *name* is available — the
+     * reference is kept so the grouping is not silently lost. Null for servers
+     * the user added by hand.
+     */
+    val folder: String? = null,
 )
 
 /**

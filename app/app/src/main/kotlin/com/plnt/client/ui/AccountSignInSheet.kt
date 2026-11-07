@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.plnt.client.account.*
+import com.plnt.client.model.Bookmark
 import com.plnt.client.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -26,7 +27,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun AccountSignInSheet(
     importAllowed: Boolean,
-    onImport: suspend (List<AccountEntry>) -> Boolean,
+    existingServers: List<Bookmark>,
+    onImport: suspend (List<AccountEntry>) -> AccountImportOutcome?,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -56,7 +58,7 @@ fun AccountSignInSheet(
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding()
             .padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Sign in with myTeamSpeak", color = TextNormal)
-            Text("Download synced servers and identities, then choose what to save in Relay. Your account password and session are not saved. Nothing is uploaded to your account.", color = TextMuted)
+            Text("Download synced servers and identities, then choose what to save in Chlorophone. Your account password and session are not saved. Nothing is uploaded to your account.", color = TextMuted)
             if (preview == null && !imported) {
                 PlntTextField("Email", email, { if (!busy) email = it }, keyboardType = KeyboardType.Email)
                 PlntTextField("Password", password, { if (!busy) password = it }, visualTransformation = PlntPasswordMask)
@@ -88,13 +90,26 @@ fun AccountSignInSheet(
                     })
             }
             preview?.let { result ->
+                val duplicates = duplicateServers(result.entries, existingServers)
+                val alreadyImported = result.entries.filter { entry -> entry.bookmark.id in existingServers.map { b -> b.id } }.map { it.bookmark.id }.toSet()
                 Text("Choose servers to import. Their matching identities are saved securely without replacing your current identity. Existing imports of the same servers will be updated.", color = TextMuted)
+                if (duplicates.isNotEmpty()) {
+                    Text("${duplicates.size} of these are already saved on this phone. They stay as they are and are not added a second time.", color = TextMuted)
+                }
                 for (entry in result.entries) Row(Modifier.fillMaxWidth()) {
                     Checkbox(checked = entry.bookmark.id in selected, enabled = !busy,
                         onCheckedChange = { checked -> selected = if (checked) selected + entry.bookmark.id else selected - entry.bookmark.id })
                     Column(Modifier.weight(1f).padding(top = 8.dp)) {
                         Text(entry.bookmark.label.ifBlank { entry.bookmark.address }, color = TextNormal)
                         Text("${entry.bookmark.address}:${entry.bookmark.port} · ${entry.bookmark.nickname}", color = TextMuted)
+                        // The sync payload names a synced server's folder by its
+                        // server-side id only, and this build fetches just the
+                        // bookmark and identity classes, so there is no folder
+                        // name to show. The reference is kept so the grouping
+                        // survives the import.
+                        entry.folder?.let { Text("Synced folder ${it.take(8)}", color = TextMuted) }
+                        if (entry.bookmark.id in alreadyImported) Text("Already imported — importing again updates it", color = TextMuted)
+                        if (entry.bookmark.id in duplicates) Text("Already saved on this phone", color = TextMuted)
                     }
                 }
                 PrimaryButton(if (busy) "Saving…" else "Import selected servers",
@@ -102,10 +117,16 @@ fun AccountSignInSheet(
                         busy = true
                         scope.launch {
                             try {
-                                if (onImport(result.entries.filter { it.bookmark.id in selected })) {
-                                    preview = null; selected = emptySet(); imported = true
-                                    message = "Imported. Open Servers and connect to test your identity and permissions."
-                                } else message = "Could not save the import. Disconnect and try again."
+                                val outcome = onImport(result.entries.filter { it.bookmark.id in selected })
+                                when {
+                                    outcome == null -> message = "Could not save the import. Disconnect and try again."
+                                    outcome.imported == 0 && outcome.skippedDuplicates > 0 ->
+                                        message = "Those servers are already saved. Nothing was imported."
+                                    outcome.skippedDuplicates > 0 ->
+                                        message = "Imported ${outcome.imported} servers. ${outcome.skippedDuplicates} were already saved and were left unchanged."
+                                    else -> message = "Imported ${outcome.imported} servers. Open Servers and connect to test your identity and permissions."
+                                }
+                                if (outcome != null) { preview = null; selected = emptySet(); imported = true }
                             } finally { busy = false }
                         }
                     })

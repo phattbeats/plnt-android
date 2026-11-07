@@ -76,6 +76,8 @@ class PlntDataStore(private val context: Context) {
                         port = o.getInt("port"),
                         nickname = o.getString("nickname"),
                         serverPassword = o.optString("password", "").ifEmpty { null },
+                        // Absent in stores written before account import existed.
+                        folder = o.optString("folder", "").ifEmpty { null },
                     )
                 }
             }
@@ -92,7 +94,8 @@ class PlntDataStore(private val context: Context) {
                     .put("address", b.address)
                     .put("port", b.port)
                     .put("nickname", b.nickname)
-                    .put("password", b.serverPassword ?: ""),
+                    .put("password", b.serverPassword ?: "")
+                    .put("folder", b.folder ?: ""),
             )
         }
         context.plntDataStore.edit { it[Keys.BOOKMARKS] = arr.toString() }

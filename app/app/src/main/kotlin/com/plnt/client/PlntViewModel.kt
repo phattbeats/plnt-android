@@ -10,6 +10,8 @@ import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.plnt.client.account.AccountImportOutcome
+import com.plnt.client.model.isAccountImport
 import com.plnt.client.audio.AudioDevices
 import com.plnt.client.core.ChatMessageTarget
 import com.plnt.client.core.CoreEvent
@@ -604,15 +606,48 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Explicit local import only; account data was already verified in the preview. */
-    suspend fun importAccountEntries(entries: List<com.plnt.client.account.AccountEntry>): Boolean {
+    suspend fun importAccountEntries(entries: List<com.plnt.client.account.AccountEntry>): AccountImportOutcome? {
         if (changingIdentity || initialConnect != null ||
-            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR) || entries.isEmpty()) return false
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR) || entries.isEmpty()) return null
         changingIdentity = true
         return try {
-            val ids = entries.map { it.bookmark.id }.toSet()
-            val next = _state.value.bookmarks.filterNot { it.id in ids } + entries.map { it.bookmark }
+            // A server this phone already has is never added a second time:
+            // importing it again would leave two entries for one host.
+            val duplicates = com.plnt.client.account.duplicateServers(entries, _state.value.bookmarks)
+            val fresh = entries.filterNot { it.bookmark.id in duplicates }
+            if (fresh.isEmpty()) return AccountImportOutcome(0, duplicates.size)
+            val ids = fresh.map { it.bookmark.id }.toSet()
+            val next = _state.value.bookmarks.filterNot { it.id in ids } + fresh.map { it.bookmark }
             withContext(Dispatchers.IO) {
-                accountStore.save(entries)
+                accountStore.save(fresh)
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            AccountImportOutcome(fresh.size, duplicates.size)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { null
+        } finally { changingIdentity = false }
+    }
+
+    /**
+     * Forgets the myTeamSpeak account on this phone: the imported identities
+     * and server passwords are erased, the imported servers are removed from
+     * the list, and the device id is dropped so the next sign-in registers as
+     * a new device.
+     *
+     * The server side is not touched — this build cannot write to the account.
+     * The owner has to revoke the device in the official client; the UI says
+     * so instead of implying the session was cancelled.
+     */
+    suspend fun signOutAccount(): Boolean {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return false
+        changingIdentity = true
+        return try {
+            val next = _state.value.bookmarks.filterNot { it.isAccountImport() }
+            withContext(Dispatchers.IO) {
+                accountStore.clearImported()
+                sessionStore.forgetAccountSession()
                 dataStore.saveBookmarks(next)
             }
             _state.update { it.copy(bookmarks = next) }

@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.Screen
+import com.plnt.client.model.isAccountImport
 import com.plnt.client.ui.AboutScreen
 import com.plnt.client.ui.BookmarksScreen
 import com.plnt.client.ui.ChatScreen
@@ -147,6 +148,9 @@ class MainActivity : ComponentActivity() {
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
                             onImportAccount = viewModel::importAccountEntries,
+                            onSignOutAccount = viewModel::signOutAccount,
+                            existingServers = state.bookmarks,
+                            hasAccountImport = state.bookmarks.any { it.isAccountImport() },
                             onImportIdentity = viewModel::importIdentity,
                             onImportIdentityIni = viewModel::importIdentityFromIni,
                             onDescribeIdentityIni = viewModel::describeIdentityIni,
