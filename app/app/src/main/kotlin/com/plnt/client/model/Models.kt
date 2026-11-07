@@ -102,7 +102,7 @@ data class ChatMessage(
     val text: String,
 )
 
-enum class PttMode { PUSH_TO_TALK, OPEN_MIC }
+enum class PttMode { PUSH_TO_TALK, OPEN_MIC, VOICE_ACTIVATION }
 
 /**
  * One selectable entry in the Settings audio input/output pickers — a single

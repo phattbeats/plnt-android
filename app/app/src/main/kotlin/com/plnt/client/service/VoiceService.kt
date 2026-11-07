@@ -12,6 +12,9 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Point
 import android.hardware.display.DisplayManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
@@ -133,6 +136,13 @@ class VoiceService : Service() {
     private val binder = LocalBinder()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioFocusHeld = false
+    private var audioFocusInterrupted = false
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        mainHandler.post { handleAudioFocusChange(change) }
+    }
 
     private var client: CoreClient? = null
     private var audioEngine: AudioEngine? = null
@@ -579,7 +589,9 @@ class VoiceService : Service() {
 
     fun setOutputMuted(muted: Boolean) {
         outputMuted = muted
+        audioEngine?.setPlaybackMuted(muted || audioFocusInterrupted)
         runCatching { client?.setOutputMuted(muted) }
+        updateNotification()
         emitState()
     }
 
@@ -767,6 +779,8 @@ class VoiceService : Service() {
 
     fun setPttMode(mode: PttMode) {
         pttMode = mode
+        // VAD reports the actual speech gate asynchronously; open mic is
+        // deliberately always transmitting while unmuted.
         transmitting = mode == PttMode.OPEN_MIC
         applySendingGate()
         emitState()
@@ -774,7 +788,12 @@ class VoiceService : Service() {
 
     private fun applySendingGate() {
         val engine = audioEngine ?: return
-        engine.setSending(!inputMuted && transmitting)
+        val modeAllowsCapture = when (pttMode) {
+            PttMode.PUSH_TO_TALK -> transmitting
+            PttMode.OPEN_MIC, PttMode.VOICE_ACTIVATION -> true
+        }
+        engine.setVoiceActivationEnabled(pttMode == PttMode.VOICE_ACTIVATION)
+        engine.setSending(!inputMuted && !audioFocusInterrupted && modeAllowsCapture)
     }
 
     /**
@@ -1026,11 +1045,69 @@ class VoiceService : Service() {
         else -> "unknown"
     }
 
+    // ---- audio focus -----------------------------------------------------
+
+    /**
+     * Voice is not music: on an interruption we pause both directions instead
+     * of ducking speech. The call and its Bluetooth route stay alive, so a
+     * short phone-call interruption resumes without a reconnect chirp.
+     */
+    private fun acquireCallAudioFocus() {
+        if (audioFocusHeld) return
+        val request = audioFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(audioFocusListener, mainHandler)
+            .build()
+            .also { audioFocusRequest = it }
+        audioFocusHeld = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        audioFocusInterrupted = !audioFocusHeld
+        if (!audioFocusHeld) Log.w(TAG, "voice audio focus was not granted; call starts paused")
+    }
+
+    private fun releaseCallAudioFocus() {
+        audioFocusRequest?.let { request ->
+            runCatching { audioManager.abandonAudioFocusRequest(request) }
+        }
+        audioFocusRequest = null
+        audioFocusHeld = false
+        audioFocusInterrupted = false
+    }
+
+    private fun handleAudioFocusChange(change: Int) {
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                audioFocusHeld = true
+                audioFocusInterrupted = false
+                audioEngine?.setPlaybackMuted(outputMuted)
+                Log.i(TAG, "voice audio focus regained")
+            }
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                audioFocusHeld = false
+                audioFocusInterrupted = true
+                audioEngine?.setPlaybackMuted(true)
+                Log.i(TAG, "voice audio focus interrupted: $change")
+            }
+            else -> return
+        }
+        applySendingGate()
+        updateNotification()
+        emitState()
+    }
+
     // ---- connection lifecycle ----------------------------------------
 
     private fun doConnect() {
         val params = connectionParams ?: return
         teardownClientOnly()
+        acquireCallAudioFocus()
         ensureAudioEngine()
 
         val generation = clientGeneration.current()
@@ -1154,9 +1231,18 @@ class VoiceService : Service() {
                 }
             },
             onAudioError = { stage, error -> mainHandler.post { reportAudioFailure(stage, error) } },
+            onVoiceActivityChanged = { active -> mainHandler.post {
+                if (pttMode == PttMode.VOICE_ACTIVATION && transmitting != active) {
+                    transmitting = active
+                    updateNotification()
+                    emitState()
+                }
+            } },
         )
         engine.setPreferredInputDevice(preferredInputDeviceKey)
         engine.setPreferredOutputDevice(preferredOutputDeviceKey)
+        engine.setPlaybackMuted(outputMuted || audioFocusInterrupted)
+        engine.setVoiceActivationEnabled(pttMode == PttMode.VOICE_ACTIVATION)
         audioEngine = engine
         // Opening capture without the microphone foreground-service type would
         // get us silence at best; the call runs output-only until the mic can
@@ -1168,6 +1254,7 @@ class VoiceService : Service() {
     private fun releaseAudioEngine() {
         audioEngine?.shutdown()
         audioEngine = null
+        releaseCallAudioFocus()
     }
 
     /**
@@ -1487,6 +1574,7 @@ class VoiceService : Service() {
             awaitingNetwork -> "Waiting for network…"
             reconnecting -> "Reconnecting…"
             connectionParams == null -> "Idle"
+            audioFocusInterrupted -> "$label — paused by another call"
             // The user is connected but cannot be heard — the one call state
             // that looks fine and isn't.
             audioEngine?.isCaptureActive() == false -> "$label — no microphone"

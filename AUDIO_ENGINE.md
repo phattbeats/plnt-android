@@ -47,6 +47,9 @@ to `AudioEngine.onPlaybackFrame`.
 - **PTT gates sending, not capture**: `AudioEngine.setSending(Boolean)` only
   toggles whether captured frames are forwarded; the capture thread and
   `AudioRecord` never stop, so there's no SCO reconnect between PTT presses.
+- **PHA-4851 reliability follow-up**: bounded partial-write playback buffering,
+  energy VAD with a 240 ms hangover, and call-audio-focus interruption handling
+  are documented with their verification requirements in `VOICE_RELIABILITY.md`.
 
 ## What's NOT implemented here (explicitly out of scope for #3077)
 
