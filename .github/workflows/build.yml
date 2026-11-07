@@ -138,10 +138,11 @@ jobs:
       #
       # `--target` is explicit because .cargo/config.toml pins `[build] target`
       # to the two Android triples — without it cargo builds a test binary the
-      # runner cannot execute. PHA-3238's identity round trip is host-only
-      # (pure key encode/decode, no device or server needed).
-      - name: "Test: identity round trip (host)"
+      # runner cannot execute. The whole plnt-core suite is host-only (pure
+      # Rust: identity round trip, core_version smoke — no device or server
+      # needed), so running it here catches regressions `--test
+      # identity_roundtrip` alone missed (PHA-3249).
+      - name: "Test: plnt-core host suite"
         run: |
           sudo apt-get update && sudo apt-get install -y libopus-dev
-          cargo test -p plnt-core --target x86_64-unknown-linux-gnu \
-            --test identity_roundtrip -- --nocapture
+          cargo test -p plnt-core --target x86_64-unknown-linux-gnu
