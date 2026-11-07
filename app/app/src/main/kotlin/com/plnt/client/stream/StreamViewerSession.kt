@@ -62,6 +62,7 @@ class StreamViewerSession(
     context: Context,
     private val eglBase: EglBase,
     private val ownNickname: String,
+    private val iceServers: List<IceServerSpec> = IceServerConfig.STUN,
     private val sendRaw: (name: String, args: Map<String, String>) -> Unit,
     private val onState: (StreamViewState) -> Unit,
 ) {
@@ -108,12 +109,7 @@ class StreamViewerSession(
         update(StreamViewState(phase = StreamViewPhase.JOINING, stream = stream))
 
         val config = PeerConnection.RTCConfiguration(
-            listOf(
-                // The desktop client gathers against TeamSpeak's own STUN; a
-                // public fallback covers a server operator who blocks it.
-                PeerConnection.IceServer.builder("stun:turn.teamspeak.com:3478").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            ),
+            IceServerConfig.toWebRtc(iceServers),
         ).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
