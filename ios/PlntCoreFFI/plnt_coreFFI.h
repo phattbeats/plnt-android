@@ -363,6 +363,16 @@ RustBuffer uniffi_plnt_core_fn_func_core_version(RustCallStatus *_Nonnull out_st
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_DESCRIBE_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_DESCRIBE_IDENTITY_INI
+RustBuffer uniffi_plnt_core_fn_func_describe_identity_ini(RustBuffer contents, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_IMPORT_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_FN_FUNC_IMPORT_IDENTITY_INI
+RustBuffer uniffi_plnt_core_fn_func_import_identity_ini(RustBuffer contents, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_FFI_PLNT_CORE_RUSTBUFFER_ALLOC
 #define UNIFFI_FFIDEF_FFI_PLNT_CORE_RUSTBUFFER_ALLOC
 RustBuffer ffi_plnt_core_rustbuffer_alloc(uint64_t size, RustCallStatus *_Nonnull out_status
@@ -646,6 +656,18 @@ void ffi_plnt_core_rust_future_complete_void(uint64_t handle, RustCallStatus *_N
 #ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_CORE_VERSION
 #define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_CORE_VERSION
 uint16_t uniffi_plnt_core_checksum_func_core_version(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_DESCRIBE_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_DESCRIBE_IDENTITY_INI
+uint16_t uniffi_plnt_core_checksum_func_describe_identity_ini(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_IMPORT_IDENTITY_INI
+#define UNIFFI_FFIDEF_UNIFFI_PLNT_CORE_CHECKSUM_FUNC_IMPORT_IDENTITY_INI
+uint16_t uniffi_plnt_core_checksum_func_import_identity_ini(void
     
 );
 #endif
