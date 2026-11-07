@@ -194,14 +194,11 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
-<<<<<<< HEAD
                             onTurnServerChange = viewModel::setTurnServer,
-=======
                             onImportAccount = viewModel::importAccountEntries,
                             onSignOutAccount = viewModel::signOutAccount,
                             existingServers = state.bookmarks,
                             hasAccountImport = state.bookmarks.any { it.isAccountImport() },
->>>>>>> origin/main
                             onImportIdentity = viewModel::importIdentity,
                             onImportIdentityIni = viewModel::importIdentityFromIni,
                             onDescribeIdentityIni = viewModel::describeIdentityIni,
