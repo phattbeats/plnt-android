@@ -237,6 +237,14 @@ class VoiceService : Service() {
     private var ownClientId: Long? = null
     private var lastChannelId: Long? = null
 
+    /**
+     * PHA-4849: the password of the channel we are in, when it had one.
+     * A reconnect comes back to that channel — and a protected channel needs
+     * its password again, or the move is refused and the user lands in the
+     * default channel with no idea why.
+     */
+    private var lastChannelPassword: String? = null
+
     /** `SystemClock.elapsedRealtime()` of the last successful connect, for [logLifecycle]. */
     private var connectedAtElapsedMs: Long? = null
 
@@ -550,8 +558,20 @@ class VoiceService : Service() {
 
     fun joinChannel(channelId: Long, password: String?) {
         lastChannelId = channelId
+        // PHA-4849: keep the password so a reconnect can come back to a
+        // protected channel. It is never logged.
+        lastChannelPassword = password
         persistSession()
         runCatching { client?.joinChannel(channelId, password) }
+    }
+
+    /**
+     * PHA-4849: spend a privilege key on the live connection. Good for one
+     * use — the server's answer is an `error` command carrying
+     * `return_code=token`.
+     */
+    fun usePrivilegeKey(token: String) {
+        runCatching { client?.usePrivilegeKey(token) }
     }
 
     fun setInputMuted(muted: Boolean) {
@@ -939,8 +959,13 @@ class VoiceService : Service() {
                 val session = runCatching { sessionStore.load() }.getOrNull()
                 // peek(), not loadOrCreate(): an install whose identity is gone
                 // must not silently reconnect as a brand-new stranger.
-                val pem = session?.let { runCatching { identityStore.peek() }.getOrNull() }
-                if (session != null && pem != null) session to pem else null
+                session?.let {
+                    runCatching {
+                        val (bookmark, pem) = com.plnt.client.account.AccountStore(applicationContext)
+                            .resolve(it.bookmark) { identityStore.peek() }
+                        it.copy(bookmark = bookmark) to pem
+                    }.getOrNull()
+                }
             }
             if (!clientGeneration.accepts(restoreGeneration) || connectionParams != null) return@launch
             if (restored == null) {
@@ -1078,13 +1103,39 @@ class VoiceService : Service() {
 
         serviceScope.launch(Dispatchers.IO) {
             try {
+                // PHA-4849: only a path of channel *names* can be asked for at
+                // connect time — the server ignores a channel id there, and
+                // the client lands in the default channel with nothing to
+                // show for it. An id is joined after the channel tree arrives
+                // (PlntViewModel.joinPendingChannel).
+                val connectChannel =
+                    if (com.plnt.client.model.ChannelPath.isConnectTime(params.bookmark.channel)) {
+                        params.bookmark.channel
+                    } else {
+                        null
+                    }
                 c.connect(
                     params.bookmark.address,
                     params.bookmark.port,
                     params.bookmark.nickname,
                     params.identityPem,
                     params.bookmark.serverPassword,
+                    // PHA-4849: the channel an invite asked us to land in, its
+                    // password, and the privilege key that came with it.
+                    connectChannel,
+                    if (connectChannel != null) params.bookmark.channelPassword else null,
+                    params.bookmark.privilegeKey,
                 )
+                // PHA-4849: a privilege key is good for one use. Drop it from
+                // the params, so a later reconnect does not spend it a second
+                // time (and does not get quietly refused for it).
+                if (params.bookmark.privilegeKey != null) {
+                    mainHandler.post {
+                        connectionParams = connectionParams?.let {
+                            it.copy(bookmark = it.bookmark.copy(privilegeKey = null))
+                        }
+                    }
+                }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main) {
                     // A failed old attempt must never shut down a newer session.
@@ -1194,7 +1245,7 @@ class VoiceService : Service() {
                 reconnecting = false
                 reconnectAttempts = 0
                 reconnectBackoffMs = INITIAL_BACKOFF_MS
-                lastChannelId?.let { chan -> runCatching { client?.joinChannel(chan, null) } }
+                lastChannelId?.let { chan -> runCatching { client?.joinChannel(chan, lastChannelPassword) } }
                 acquireWakeLock()
                 mediaSession.isActive = true
                 mediaSession.setPlaybackState(

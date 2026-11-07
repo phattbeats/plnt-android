@@ -102,7 +102,10 @@ fun BookmarksScreen(
             id = newId(),
             label = "",
             address = "",
-            port = 9987,
+            // PHA-4849: no port by default — the resolver decides (SRV /
+            // TSDNS / nickname), and falls back to 9987 when there is
+            // nothing to say.
+            port = 0,
             nickname = NicknameGenerator.random(),
         )
         isNew = true
@@ -345,7 +348,9 @@ private fun BookmarkRow(bookmark: Bookmark, connected: Boolean, pending: Boolean
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                "${bookmark.address}:${bookmark.port}",
+                // PHA-4849: no port means the server's own DNS entry
+                // decides, so there is no port to show.
+                if (bookmark.port > 0) "${bookmark.address}:${bookmark.port}" else bookmark.address,
                 color = TextMuted,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
@@ -403,6 +408,17 @@ private fun BookmarkSheet(
                 port,
                 { port = it.filter(Char::isDigit) },
                 keyboardType = KeyboardType.Number,
+                placeholder = "Automatic",
+            )
+            // PHA-4849: an empty port means "let the server's own DNS decide"
+            // - the `_ts3._udp.` SRV record, or TSDNS. A TeamSpeak *nickname*
+            // needs it too: the nickname lookup is what knows the server's
+            // port, and a forced 9987 overwrites it.
+            Text(
+                "Leave the port empty to let the server's DNS entry decide.",
+                color = TextFaint,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
             )
             Spacer(modifier = Modifier.height(14.dp))
             PlntTextField(
@@ -466,7 +482,10 @@ private fun BookmarkSheet(
                             initial.copy(
                                 label = label,
                                 address = address.trim(),
-                                port = port.toIntOrNull() ?: 9987,
+                                // PHA-4849: no port typed means the resolver
+                                // decides (SRV / TSDNS / nickname), not a
+                                // forced 9987.
+                                port = port.trim().toIntOrNull() ?: 0,
                                 nickname = nickname,
                                 serverPassword = password.ifBlank { null },
                             ),

@@ -20,10 +20,15 @@ webrtc = "125.6422.07"
 # Android deps), so the ServerLink → QR matrix step also runs in host tests.
 zxing = "3.5.3"
 junit = "4.13.2"
+# PHA-4849: the real org.json for host unit tests. The mockable android.jar
+# that AGP puts on the unit-test classpath stubs every method out, so the
+# TeamSpeak invite service's answer cannot be parsed without this.
+json = "20250107"
 
 [libraries]
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
+json = { module = "org.json:json", version.ref = "json" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore-preferences" }

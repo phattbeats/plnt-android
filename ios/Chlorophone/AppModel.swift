@@ -140,7 +140,14 @@ final class AppModel: ObservableObject {
                     port: port,
                     nickname: nickname,
                     identityPem: identity,
-                    password: password
+                    password: password,
+                    // PHA-4849: the invited channel, its password and a
+                    // privilege key. The iOS client does not read invites
+                    // yet, so they are nil here; the Android client does
+                    // (PHA-4849).
+                    channel: nil,
+                    channelPassword: nil,
+                    privilegeKey: nil
                 )
                 Task { @MainActor in
                     self?.phase = .connected

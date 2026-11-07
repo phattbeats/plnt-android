@@ -169,9 +169,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+<<<<<<< HEAD
       - name: Kotlin unit tests (app)
         # PHA-4852: IceServerConfigTest and the other app tests had never run in CI.
         run: cd app && ./gradlew --no-daemon testDebugUnitTest
+=======
+      - name: "Test: Android host unit suite"
+        working-directory: app
+        run: ./gradlew --no-daemon testDebugUnitTest
+>>>>>>> origin/main
 
       # Deliberately last: a red test must not cost us the APK artifact, which
       # is what on-device verification runs against.
@@ -188,3 +194,9 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libopus-dev
           cargo test -p plnt-core --target x86_64-unknown-linux-gnu -- --nocapture
+
+      - name: "Test: Kotlin JVM unit tests"
+        working-directory: app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon testDebugUnitTest

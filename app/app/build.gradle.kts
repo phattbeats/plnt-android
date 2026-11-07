@@ -12,8 +12,12 @@ android {
         applicationId = "com.plnt.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.1.2-account-test"
+        ndk {
+            // JNA bundles other ABIs; only advertise the ones our core ships.
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
     }
 
     // One fixed signing key for every CI build, so a new APK installs over
@@ -95,6 +99,11 @@ dependencies {
     implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
+
+    // PHA-4849: the real org.json, so the TeamSpeak invite service's answer
+    // can be parsed in a host unit test. The mockable android.jar that AGP
+    // puts on the unit-test classpath stubs every method out.
+    testImplementation(libs.json)
 
     // plnt-core generated Kotlin bindings + JNA-compatible loader.
     // The generated file is written to src/main/kotlin/com/plnt/client/plnt by
