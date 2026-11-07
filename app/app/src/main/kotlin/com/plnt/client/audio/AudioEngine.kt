@@ -61,6 +61,8 @@ class AudioEngine(
      * call that looks connected and carries no audio.
      */
     private val onAudioError: (stage: String, error: Throwable) -> Unit = { _, _ -> },
+    /** Fires only when VAD opens or closes the send gate. */
+    private val onVoiceActivityChanged: (Boolean) -> Unit = {},
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -74,6 +76,10 @@ class AudioEngine(
     private val capturing = AtomicBoolean(false)
     /** Gates whether captured frames are forwarded to [onCaptureFrame]. Capture itself never stops. */
     private val sending = AtomicBoolean(false)
+    private val voiceActivationEnabled = AtomicBoolean(false)
+    private val voiceActivity = AtomicBoolean(false)
+    private val voiceActivityLock = Any()
+    private val voiceActivityDetector = VoiceActivityDetector()
 
     // #3282 device overrides, both null (= Automatic) by default. See
     // [setPreferredInputDevice] for what "Automatic" costs: nothing at all.
@@ -88,6 +94,10 @@ class AudioEngine(
     private var noiseSuppressor: NoiseSuppressor? = null
 
     private val playbackTrack = AtomicReference<AudioTrack?>(null)
+    private val playbackLock = Any()
+    private val nonBlockingPlayback = NonBlockingPcmQueue()
+    private val playbackMuted = AtomicBoolean(false)
+    private val playbackWriteErrorReported = AtomicBoolean(false)
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -154,6 +164,7 @@ class AudioEngine(
     fun shutdown() {
         if (!running.compareAndSet(true, false)) return
         capturing.set(false)
+        updateVoiceActivity(false)
 
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
         scoRouter.release()
@@ -165,7 +176,11 @@ class AudioEngine(
         record?.let { runCatching { it.stop() }; it.release() }
         record = null
 
-        playbackTrack.getAndSet(null)?.let { runCatching { it.stop() }; it.release() }
+        val track = synchronized(playbackLock) {
+            nonBlockingPlayback.clear()
+            playbackTrack.getAndSet(null)
+        }
+        track?.let { runCatching { it.stop() }; it.release() }
 
         audioManager.mode = AudioManager.MODE_NORMAL
         Log.i(TAG, "AudioEngine stopped")
@@ -178,6 +193,29 @@ class AudioEngine(
      */
     fun setSending(value: Boolean) {
         sending.set(value)
+        if (!value) {
+            synchronized(voiceActivityLock) { voiceActivityDetector.reset() }
+            updateVoiceActivity(false)
+        }
+    }
+
+    /** Enables energy-based VAD while retaining capture and Bluetooth routing. */
+    fun setVoiceActivationEnabled(value: Boolean) {
+        if (voiceActivationEnabled.getAndSet(value) != value) {
+            synchronized(voiceActivityLock) { voiceActivityDetector.reset() }
+            updateVoiceActivity(false)
+        }
+    }
+
+    /**
+     * Drops speaker PCM while another system audio owner has the call muted.
+     * Clearing the queue is intentional: replaying speech after an interruption
+     * is both confusing and worse than a short gap.
+     */
+    fun setPlaybackMuted(value: Boolean) {
+        if (playbackMuted.getAndSet(value) != value && value) {
+            synchronized(playbackLock) { nonBlockingPlayback.clear() }
+        }
     }
 
     /**
@@ -209,11 +247,40 @@ class AudioEngine(
 
     /** Feed one decoded 20 ms / 960-sample / 48 kHz mono frame from plnt-core to the speaker/headset. */
     fun onPlaybackFrame(samples: FloatArray) {
+        if (playbackMuted.get()) return
         val track = playbackTrack.get() ?: return
         if (samples.size != CORE_FRAME_SAMPLES) {
             Log.w(TAG, "onPlaybackFrame: got ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
         }
-        track.write(samples, 0, samples.size, AudioTrack.WRITE_NON_BLOCKING)
+        synchronized(playbackLock) {
+            // A route change may have swapped the track between the fast-path
+            // read above and this lock acquisition. Do not feed queued PCM to
+            // a retired track.
+            if (playbackMuted.get() || playbackTrack.get() !== track) return@synchronized
+
+            val outcome = nonBlockingPlayback.offer(samples) { pcm, offset, size ->
+                runCatching {
+                    track.write(pcm, offset, size, AudioTrack.WRITE_NON_BLOCKING)
+                }.getOrElse { error ->
+                    Log.w(TAG, "AudioTrack.write threw", error)
+                    AudioTrack.ERROR_INVALID_OPERATION
+                }
+            }
+            outcome.errorCode?.let { code ->
+                if (playbackWriteErrorReported.compareAndSet(false, true)) {
+                    val error = IllegalStateException("AudioTrack.write returned $code")
+                    Log.e(TAG, "playback write unavailable", error)
+                    onAudioError("playback", error)
+                }
+            }
+            if (outcome.droppedSamples > 0) {
+                Log.w(
+                    TAG,
+                    "playback back-pressure dropped ${outcome.droppedSamples} stale samples; " +
+                        "${outcome.bufferedSamples} remain queued",
+                )
+            }
+        }
     }
 
     // ---- device rehoming --------------------------------------------------
@@ -283,12 +350,25 @@ class AudioEngine(
                 if (n <= 0) continue
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->
-                    // Capture never stops; only forwarding is gated by PTT.
-                    if (sending.get()) onCaptureFrame(frame)
+                    // Capture never stops. PTT/open-mic only gate forwarding;
+                    // VAD adds a short hangover so it does not clip word endings.
+                    val forwards = shouldForwardCaptureFrame(frame)
+                    updateVoiceActivity(voiceActivationEnabled.get() && forwards)
+                    if (forwards) onCaptureFrame(frame)
                 }
             }
         }
         return true
+    }
+
+    private fun shouldForwardCaptureFrame(frame: FloatArray): Boolean {
+        if (!sending.get()) return false
+        if (!voiceActivationEnabled.get()) return true
+        return synchronized(voiceActivityLock) { voiceActivityDetector.process(frame) }
+    }
+
+    private fun updateVoiceActivity(value: Boolean) {
+        if (voiceActivity.getAndSet(value) != value) onVoiceActivityChanged(value)
     }
 
     private fun reopenCapture(): Boolean {
@@ -355,9 +435,18 @@ class AudioEngine(
     // ---- playback -------------------------------------------------------------
 
     private fun openPlaybackTrack(reopen: Boolean = false) {
-        val old = if (reopen) playbackTrack.getAndSet(null) else playbackTrack.get()
+        var alreadyOpen = false
+        var old: AudioTrack? = null
+        synchronized(playbackLock) {
+            if (!reopen && playbackTrack.get() != null) {
+                alreadyOpen = true
+            } else if (reopen) {
+                nonBlockingPlayback.clear()
+                old = playbackTrack.getAndSet(null)
+            }
+        }
+        if (alreadyOpen) return
         old?.let { runCatching { it.stop() }; it.release() }
-        if (!reopen && playbackTrack.get() != null) return
 
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -371,8 +460,11 @@ class AudioEngine(
         val minBuf = AudioTrack.getMinBufferSize(CORE_SAMPLE_RATE_HZ, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
         // Same unchecked-acquisition problem as capture (#3290 item 8), and
         // the worse half of it: a failure here means the call is connected and
-        // the user hears nothing at all.
+        // the user hears nothing at all. Do not turn an error code into a
+        // plausible buffer size — that would construct a silent dead track.
+        var opened: AudioTrack? = null
         val track = try {
+            check(minBuf > 0) { "AudioTrack has no usable min buffer: $minBuf" }
             AudioTrack(
                 attrs,
                 format,
@@ -380,19 +472,28 @@ class AudioEngine(
                 AudioTrack.MODE_STREAM,
                 AudioManager.AUDIO_SESSION_ID_GENERATE,
             ).also {
+                opened = it
+                check(it.state == AudioTrack.STATE_INITIALIZED) { "AudioTrack did not initialize" }
                 // Same reasoning as buildAudioRecord(): Automatic leaves this untouched.
                 preferredOutputKey?.let { key ->
                     findDevice(AudioManager.GET_DEVICES_OUTPUTS, key)?.let(it::setPreferredDevice)
                 }
                 it.play()
+                check(it.playState == AudioTrack.PLAYSTATE_PLAYING) { "AudioTrack did not enter play state" }
             }
         } catch (t: Throwable) {
+            opened?.let { runCatching { it.stop() }; it.release() }
             playbackTrack.set(null)
             Log.e(TAG, "playback unavailable", t)
             onAudioError("playback", t)
             return
         }
-        playbackTrack.set(track)
+        synchronized(playbackLock) {
+            // Route changes must not leak old-device PCM into the new track.
+            nonBlockingPlayback.clear()
+            playbackWriteErrorReported.set(false)
+            playbackTrack.set(track)
+        }
     }
 
     private fun findDevice(flags: Int, key: String): AudioDeviceInfo? =
