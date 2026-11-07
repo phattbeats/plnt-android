@@ -233,6 +233,40 @@ Also confirm while capturing:
 - [ ] Toggling mute from the notification updates the on-screen mute circle
       and your own row's MIC pill (service → UI state listener).
 
+## 8. Identity import from a `.ini` (#4116, device round-trip)
+
+The importer ships compiled and covered by host tests, including a cross-check
+against an independent C implementation of the format — but it has **never run
+on a device**. This section is the missing half.
+
+Needs a `.ini` exported from the official TeamSpeak client. If you don't have
+one handy, the repo ships an equivalent fixture at
+`core/tests/fixtures/c-generated.ini` (written by TSIdentityTool) — it is a
+valid export and exercises the same path, but a genuine official-client export
+is the more meaningful check.
+
+- [ ] Settings → Identity → Import identity shows **both** a "Choose identity
+      file…" button and the paste field. Neither replaced the other.
+- [ ] Choosing a file opens the system picker. Android's own file manager
+      offers `.ini` files — the picker is launched with a broad mime set
+      because a real export is often typed `application/octet-stream`.
+- [ ] Picking the file shows a preview line ("Found an identity in this
+      file — …") **before** anything is replaced.
+- [ ] The preview shows nickname and level, and never the key material.
+- [ ] Importing persists, the sheet closes, and Export identity now shows the
+      imported string.
+- [ ] Disconnect + reconnect. The client appears on the server as the
+      **imported** identity — same Unique ID, same groups and permissions. A
+      fresh Unique ID here means the import silently failed.
+- [ ] Force-stop the app and relaunch; the identity survives (it is persisted
+      in `EncryptedSharedPreferences`, not held in memory).
+- [ ] Picking a file that is *not* an identity (say a text file) says so
+      plainly and leaves the existing identity untouched — check this by
+      exporting, attempting the bad import, then exporting again.
+- [ ] Importing while **connected**: the new identity should only take effect
+      on the next connect. Confirm that is what happens, and that it is
+      communicated — silently swapping keys mid-session would be wrong.
+
 ## Report format
 
 For each numbered section above, report pass/fail + a one-line note per
