@@ -5,20 +5,16 @@ by PHATT TECH
 The test candidate supports importing an exported TeamSpeak identity in Settings → Identity.
 This is offline key-file import. myTeamSpeak account sign-in and synced bookmark import are not implemented yet.
 
-# plnt-android
-
-PLNT Android client: a voice-only TeamSpeak 3/6 client built on
+A TeamSpeak 3/6 Android client built on
 [`ReSpeak/tsclientlib`](https://github.com/ReSpeak/tsclientlib) (pinned to
 commit `ee3bc6f`) and a Kotlin/Compose UI. This repo packages the Rust
 core as Android loadable libraries (`.so` files) via
 [`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) and exposes it to
 Kotlin through [UniFFI](https://github.com/mozilla/uniffi-rs).
 
-Goal of #3074: `./build.sh` produces an installable `app-debug.apk`
-on a clean machine. Voice scope only — connect, channel tree,
-who-is-talking, join channel, push-to-talk / open mic, mute/deafen,
-Bluetooth headsets. No chat, no streams, no file transfer, no
-TS6-only features.
+The canonical build entry point is `./build.sh`, which produces `app-debug.apk`.
+The app supports Android 8 or newer on ARM64 and x86_64 devices. It includes
+voice, channel navigation, chat, and TeamSpeak 6 screen sharing.
 
 ## Status
 
