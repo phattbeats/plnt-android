@@ -1,8 +1,11 @@
 # myTeamSpeak native protocol recovery (PHA-4350)
 
-This completes the bounded protocol-recovery stage. Relay still has no account
-sign-in UI or demonstrated account import. The next stage is implementation and
-owner-authorized testing, including 2FA and real synced data.
+This completes the bounded protocol-recovery stage. The importer built on it is
+read-only: it signs in, honours 2FA, and downloads synced servers and their
+identities. Successful live-account sign-in, a real synced-item download, and
+the imported voice connection still need owner-authorized testing. See
+[ACCOUNT-TEST.md](ACCOUNT-TEST.md) for the device test steps and the remaining
+limitations.
 
 ## Evidence boundary
 
@@ -188,7 +191,7 @@ Identity fields are `unique_identity`, `id_name`, nickname, phonetic nickname,
 and `is_default`. Resolve the bookmark's identity reference against imported
 identity records. The synthetic identity contains a placeholder; it proves
 protobuf mapping, **not** that `unique_identity` is a valid private identity or
-that Relay's exported-identity parser accepts its encoding. Key-format and
+that Chlorophone's exported-identity parser accepts its encoding. Key-format and
 voice-connection validation remain implementation acceptance tests. Never
 silently replace a missing or invalid referenced identity with a newly generated
 identity.

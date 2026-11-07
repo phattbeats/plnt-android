@@ -1,9 +1,11 @@
-# Relay for Teamspeak
+# plnt-android
 
 by PHATT TECH
 
-The test candidate supports importing an exported TeamSpeak identity in Settings → Identity.
-This is offline key-file import. myTeamSpeak account sign-in and synced bookmark import are not implemented yet.
+The app ships as **Chlorophone**. The test candidate supports importing an
+exported TeamSpeak identity in Settings → Identity (offline key-file import),
+and signing in with a myTeamSpeak account in Settings → myTeamSpeak to
+download synced servers and their identities.
 
 A TeamSpeak 3/6 Android client built on
 [`ReSpeak/tsclientlib`](https://github.com/ReSpeak/tsclientlib) (pinned to
@@ -171,7 +173,9 @@ library failed to load it reads `unavailable: <exception>` instead.
 - **Kotlin audio** uses `VOICE_COMMUNICATION` stream type.
 - **Foreground service** with `FOREGROUND_SERVICE_MICROPHONE` for
   background voice.
-- **Compose UI** in TeamSpeak branding with a Discord-style layout (PHA-3072 rebrand, 2026-10-10); the PLNT name, plant mark and palette appear only on Settings → About.
+- **Compose UI** in TeamSpeak branding with a Discord-style layout
+  (PHA-3072 rebrand, 2026-10-10), renamed to **Chlorophone** with the mark 02
+  launcher icon (PHA-4341).
 
 The build pipeline delivers the bridge for those features. Voice-session
 APIs (connect, channel tree, PTT) are scheduled for follow-up tickets —
