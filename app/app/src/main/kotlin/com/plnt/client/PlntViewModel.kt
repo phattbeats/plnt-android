@@ -133,6 +133,128 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.sendRawCommand(name, args) }
     }
     private var ownChannelId: Long? = null
+
+    // PHA-4864: durable chat history, raw-reply correlation for file commands, pokes.
+    val chatHistory = com.plnt.client.files.ChatHistory(
+        com.plnt.client.files.FileChatHistoryStore(java.io.File(app.filesDir, "chat-history.tsv")),
+    )
+    val fileReplies = com.plnt.client.files.RawReplyCorrelator()
+
+    private fun conversationId(target: ChatMessageTarget, peer: Long) = when (target) {
+        ChatMessageTarget.Channel -> "channel:${ownChannelId ?: 0}"
+        is ChatMessageTarget.Direct -> "private:$peer"
+    }
+
+    private fun persist(target: ChatMessageTarget, peer: Long, from: String, isSelf: Boolean, text: String) {
+        runCatching {
+            chatHistory.append(
+                com.plnt.client.files.StoredMessage(conversationId(target, peer), System.currentTimeMillis(), from, isSelf, text),
+            )
+        }
+    }
+    // PHA-4864: file browser. Transfers run on IO; results hop back through _state.
+    private var connectedHost: String = ""
+    private var transferRunner: com.plnt.client.files.TransferRunner? = null
+    private val fileBrowser = com.plnt.client.files.FileBrowser(
+        fileReplies,
+        { name, args -> runOnService { it.sendRawCommand(name, args) } },
+        { grant -> com.plnt.client.files.TcpDataConnection.open(connectedHost, grant) },
+    )
+    private val filesCid get() = ownChannelId ?: 0L
+    private fun filesUi(f: (com.plnt.client.model.FilesUiState) -> com.plnt.client.model.FilesUiState) =
+        _state.update { it.copy(files = f(it.files)) }
+    private fun failText(r: com.plnt.client.files.FileResult.Failed) =
+        if (r.permissionDenied) "You don't have access to files in this channel." else r.message.ifBlank { "Error ${r.code}" }
+
+    private fun openFiles() { filesUi { it.copy(dir = "/", entries = emptyList(), error = null, notice = null) }; refreshFiles("/") }
+
+    fun refreshFiles(dir: String = _state.value.files.dir) {
+        filesUi { it.copy(busy = true, error = null) }
+        fileBrowser.list(filesCid, "", dir) { res ->
+            when (res) {
+                is com.plnt.client.files.FileResult.Ok -> filesUi {
+                    it.copy(dir = dir, busy = false, entries = res.value.sortedWith(compareByDescending<com.plnt.client.files.RemoteFile> { f -> f.isDir }.thenBy { f -> f.name.lowercase() }))
+                }
+                is com.plnt.client.files.FileResult.Failed -> filesUi { it.copy(busy = false, error = failText(res)) }
+            }
+        }
+    }
+
+    fun openDir(name: String) { com.plnt.client.files.FilePaths.child(_state.value.files.dir, name)?.let { refreshFiles(it) } }
+    fun upDir() {
+        val d = _state.value.files.dir
+        refreshFiles(if (d == "/") "/" else d.substringBeforeLast('/').ifEmpty { "/" })
+    }
+
+    private fun simple(op: (String, (com.plnt.client.files.FileResult<Unit>) -> Unit) -> Unit, done: String) {
+        val dir = _state.value.files.dir
+        filesUi { it.copy(busy = true, error = null) }
+        op(dir) { res ->
+            when (res) {
+                is com.plnt.client.files.FileResult.Ok -> { filesUi { it.copy(notice = done) }; refreshFiles(dir) }
+                is com.plnt.client.files.FileResult.Failed -> filesUi { it.copy(busy = false, error = failText(res)) }
+            }
+        }
+    }
+    fun newFolder(name: String) = simple({ d, cb -> fileBrowser.mkdir(filesCid, "", d, name, cb) }, "Folder created")
+    fun deleteFile(name: String) = simple({ d, cb -> fileBrowser.delete(filesCid, "", d, name, cb) }, "Deleted")
+    fun renameFile(old: String, new: String) = simple({ d, cb -> fileBrowser.rename(filesCid, "", d, old, new, cb) }, "Renamed")
+
+    fun downloadFile(file: com.plnt.client.files.RemoteFile) {
+        val dir = _state.value.files.dir
+        val folder = java.io.File(getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "chlorophone").apply { mkdirs() }
+        val local = java.io.File(folder, com.plnt.client.files.FilePaths.uniqueName(
+            com.plnt.client.files.FilePaths.safeLocalName(file.name), folder.list()?.toSet().orEmpty()))
+        val runner = com.plnt.client.files.TransferRunner().also { transferRunner = it }
+        filesUi { it.copy(busy = true, error = null, progress = 0f) }
+        viewModelScope.launch(Dispatchers.IO) {
+            fileBrowser.download(filesCid, "", dir, file, { local.outputStream() }, runner,
+                { done, total -> filesUi { it.copy(progress = if (total > 0) done.toFloat() / total else null) } }) { res ->
+                if (res is com.plnt.client.files.FileResult.Failed) local.delete()
+                finishTransfer(res, "Saved to ${local.name}")
+            }
+        }
+    }
+
+    fun uploadFile(uri: android.net.Uri) {
+        val dir = _state.value.files.dir
+        val cr = getApplication<Application>().contentResolver
+        val runner = com.plnt.client.files.TransferRunner().also { transferRunner = it }
+        filesUi { it.copy(busy = true, error = null, progress = 0f) }
+        viewModelScope.launch(Dispatchers.IO) {
+            var name = "upload"; var size = -1L
+            cr.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) }
+                    c.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = c.getLong(it) }
+                }
+            }
+            val input = cr.openInputStream(uri)
+            if (input == null || size < 0) {
+                filesUi { it.copy(busy = false, progress = null, error = "Could not read that file.") }
+                return@launch
+            }
+            input.use {
+                fileBrowser.upload(filesCid, "", dir, com.plnt.client.files.FilePaths.safeLocalName(name), size, it, runner,
+                    { done, total -> filesUi { s -> s.copy(progress = if (total > 0) done.toFloat() / total else null) } }) { res ->
+                    finishTransfer(res, "Uploaded")
+                }
+            }
+            refreshFiles(dir)
+        }
+    }
+
+    fun cancelTransfer() { transferRunner?.cancel() }
+
+    private fun finishTransfer(res: com.plnt.client.files.FileResult<Unit>, ok: String) = filesUi {
+        when (res) {
+            is com.plnt.client.files.FileResult.Ok -> it.copy(busy = false, progress = null, notice = ok)
+            is com.plnt.client.files.FileResult.Failed -> it.copy(busy = false, progress = null, error = failText(res))
+        }
+    }
+
+    fun clearFilesMessage() = filesUi { it.copy(error = null, notice = null) }
+
     private var streamPollJob: kotlinx.coroutines.Job? = null
 
     private val connection = object : ServiceConnection {
@@ -269,7 +391,13 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         // the last enumeration. With no call running there is no AudioEngine device
         // callback to push an update, so re-read on the way in (#3282).
         if (screen == Screen.Settings) refreshAudioDevices()
-        _state.update { it.copy(screen = screen) }
+        if (screen == Screen.Chat) {
+            // Opening chat reads everything and acknowledges pokes.
+            listOf("channel:${ownChannelId ?: 0}").forEach { chatHistory.markRead(it) }
+            chatHistory.ackPokes()
+        }
+        if (screen == Screen.Files) openFiles()
+        _state.update { it.copy(screen = screen, unreadChat = chatHistory.totalUnread(), pokes = chatHistory.pendingPokes()) }
     }
 
     fun addOrUpdateBookmark(bookmark: Bookmark) {
@@ -405,6 +533,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun startConnect(bookmark: Bookmark) {
         if (changingIdentity) return
+        connectedHost = bookmark.address
         if (bindingStatus.failed) {
             requestVoiceBinding()
             if (bindingStatus.failed) return
@@ -767,6 +896,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             )
         }
+        persist(target, (target as? ChatMessageTarget.Direct)?.clientId ?: 0L, clientsById[ownId]?.name ?: "you", true, trimmed)
         runOnService { it.sendTextMessage(target, trimmed) }
     }
 
@@ -1149,14 +1279,22 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             }
             is CoreEvent.RawCommand -> {
                 if (ev.name == "error" && onAdminReply(ev.args)) return
-                if (streams.onRaw(ev)) rebuildTree()
+                if (ev.name == "notifyclientpoke") {
+                    chatHistory.poke(ev.args["invokername"].orEmpty(), ev.args["msg"].orEmpty())
+                    _state.update { it.copy(pokes = chatHistory.pendingPokes()) }
+                } else if (fileReplies.onRaw(ev.name, ev.args)) {
+                    // consumed by a pending file command
+                } else if (streams.onRaw(ev)) rebuildTree()
             }
             is CoreEvent.TalkStatus -> {
                 talking[ev.clientId] = ev.talking
                 rebuildTree()
             }
-            is CoreEvent.TextMessage -> _state.update {
+            is CoreEvent.TextMessage -> {
+                persist(ev.target, ev.fromClientId, ev.fromName, false, ev.text)
+                _state.update {
                 it.copy(
+                    unreadChat = if (it.screen == Screen.Chat) 0 else chatHistory.totalUnread(),
                     chatMessages = it.chatMessages + ChatMessage(
                         id = UUID.randomUUID().toString(),
                         fromClientId = ev.fromClientId,
@@ -1166,6 +1304,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                         text = ev.text,
                     ),
                 )
+                }
             }
         }
     }
