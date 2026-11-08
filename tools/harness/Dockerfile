@@ -30,9 +30,14 @@ ENV PATH=/opt/cargo/bin:/opt/gradle/bin:/opt/android-sdk/cmdline-tools/latest/bi
 
 RUN apt-get update -qq && apt-get install -yq --no-install-recommends \
       openjdk-17-jdk-headless ca-certificates curl git unzip file python3 \
-      build-essential cmake pkg-config libopus-dev libasound2-dev \
+      build-essential python3-pip pkg-config libopus-dev libasound2-dev \
       libegl1 libgl1 libglvnd0 iproute2 \
     && rm -rf /var/lib/apt/lists/*
+
+# CMake 3.31 to match the GitHub runner: Ubuntu's 3.28 rejects
+# CMAKE_SYSTEM_PROCESSOR=aarch64 for Android, which audiopus_sys passes.
+# From PyPI because Kitware's tarballs live on GitHub releases (503s from RAID).
+RUN pip install --no-cache-dir --break-system-packages cmake==3.31.6 && cmake --version
 
 # Gradle comes from the official image: its GitHub-hosted zip 504s often.
 COPY --from=gradle /opt/gradle /opt/gradle
