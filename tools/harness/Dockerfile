@@ -25,7 +25,7 @@ ENV PATH=/opt/cargo/bin:/opt/gradle/bin:/opt/android-sdk/cmdline-tools/latest/bi
 
 RUN apt-get update -qq && apt-get install -yq --no-install-recommends \
       openjdk-17-jdk-headless ca-certificates curl git unzip file python3 \
-      build-essential pkg-config libopus-dev libasound2-dev \
+      build-essential cmake pkg-config libopus-dev libasound2-dev \
       libegl1 libgl1 libglvnd0 iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
