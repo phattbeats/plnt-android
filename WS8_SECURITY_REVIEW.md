@@ -46,6 +46,30 @@ PocketTS (GPLv3) was used as reference only. No code was taken from it.
 * **TeamSpeak server authenticity**: the protocol has no CA, and tsclientlib does not pin a server's key across connects (no TOFU). An on-path attacker on the *first* connect is not detectable. This is open, and it is a protocol and core-library limitation, not something WS8 changed.
 * **Deep links**: `ts3server`/`tsserver`/`teamspeak` and `tmspk.gg` filters have no `autoVerify`. Note that the `tmspk.gg` filter uses `android.intent.DEFAULT`/`android.intent.BROWSABLE` as category names instead of `android.intent.category.*`, so it likely never matches a browser VIEW intent. That is a functional bug from PHA-4849, outside WS8. Pasting a link still works.
 
+## Reviewed after merging main: files and chat (PHA-4864, PR #41)
+
+PR #41 landed on main while WS8 was in review and was merged into this branch.
+Its new code was read for the concerns above; nothing in it changed the
+WS8 behaviour, and nothing here was changed by WS8.
+
+* **Chat history** (`FileChatHistoryStore`) writes `files/chat-history.tsv`
+  in app-private storage. It holds message text and sender names, not
+  secrets, and it is **not** excluded from cloud backup or device transfer,
+  so it travels with the user like bookmarks do. If the owner wants chat to
+  stay on the phone, add `<exclude domain="file" path="chat-history.tsv"/>`
+  to both rule files; `BackupRulesTest` only tracks encrypted stores and the
+  diagnostics files, so it will not flag this on its own.
+* **File transfer** (`TcpDataConnection`) is a plain TCP socket to the
+  server's file-transfer port, as the TeamSpeak 3 protocol specifies: the
+  transfer is authorised by a one-time key from the encrypted control
+  channel, but the bytes themselves are not encrypted in transit. That is a
+  protocol property, not a WS8 regression. The connection has connect and
+  read timeouts, so a stalled server cannot hang the app.
+* Neither the files code nor the chat code writes to `Diag`, so chat text
+  and file names cannot reach the diagnostic trace. `StreamSenderSession`
+  and `StreamViewerSession` do write to it, and those lines go through
+  `DiagRedactor` like every other.
+
 ## Update trust
 
 There is no in-app updater. APKs reach testers as GitHub Actions artifacts signed with one shared key held in repo secrets (`PLNT_KEYSTORE_B64`). Trust therefore rests on the `phattbeats` GitHub account and that secret. No key was rotated in WS8.
