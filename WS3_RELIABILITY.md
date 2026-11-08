@@ -5,6 +5,51 @@ This sandbox has no Android device, JDK, Gradle or cargo, so nothing below was r
 Recovery behaviour is taken from `VoiceService.kt` and `FOREGROUND_SERVICE.md`;
 every row in the results tables is empty on purpose.
 
+## 0. What the WS3 branch changes in the app (PHA-4851)
+
+- **Partial writes** (`PlaybackWriter`): `AudioTrack.write(WRITE_NON_BLOCKING)` acknowledges
+  samples, not frames. Only the accepted prefix leaves the queue, newer frames never overtake a
+  tail, and the queue is capped at 200 ms so an unhealthy device cannot make remote speech stale.
+  A negative result gets up to three reopen attempts, then output is disabled and reported once
+  through the existing audio-error path. `PlaybackWriterTest` covers these cases on the JVM.
+- **Voice activation** (`VoiceActivityGate`, `PttMode.VOICE_ACTIVATION`): a third talk mode next
+  to push-to-talk and open mic. Energy gate with hysteresis (open 0.015 RMS, close 0.010) and a
+  300 ms hangover so word endings are kept. Capture and the Bluetooth route stay open exactly as
+  with PTT; only forwarding is gated. The gate state drives the connected-screen label and the
+  notification. Thresholds are a starting point: microphone gain and the platform noise suppressor
+  differ per device, so the matrix below tunes them.
+- **Call interruption / audio focus** (`AudioFocusController`): focus is requested with
+  `USAGE_VOICE_COMMUNICATION` for the life of the call. A transient loss (phone call, navigation
+  prompt) pauses send and playback while leaving capture open so SCO does not drop; regain rehomes
+  the route and resumes. Ducking is ignored on purpose. Permanent loss pauses and re-asks for focus.
+  The notification reads "paused by another call" meanwhile.
+- **Loss / jitter / simultaneous talkers** (`VoiceLinkHarnessTest`): a JVM harness that drives
+  `PlaybackWriter` with configurable loss, jitter and talker count and counts late drops. It is the
+  repeatable half of the evidence; the on-network half is section 1b.
+- **Noise suppression**: only the platform `NoiseSuppressor` / `AcousticEchoCanceler`, queried with
+  `isAvailable` first. No third-party DSP is bundled; see `WS3_LICENSE_AUDIT.md`.
+
+Not implemented, and why: **whisper targets** (the core has only ordinary channel voice send),
+**per-user volume** (the core emits one mixed frame with client id 0, so Kotlin has no per-user PCM
+to scale; needs a core-surface change first, see section 2), **floating PTT overlay** (the
+connected-screen PTT and the lock-screen notification action remain the controls).
+
+### 1b. Loss and jitter on a real link
+
+Use a real TeamSpeak test server and two sender clients. For every route in the matrix, run each
+profile for at least five minutes with logcat filtered to `plnt.audio` and `plnt.voice` plus the
+server-side packet counters. Do not call a profile passed from a synthetic local callback alone.
+
+| Profile | Direction | Expected evidence |
+| --- | --- | --- |
+| Baseline | both | zero AudioTrack errors; continuous speech |
+| 1% random loss | receive and send | jitter buffer masks isolated losses; no reconnect |
+| 5% random loss | receive and send | intelligible output; loss metrics recorded |
+| 50 ms / 100 ms jitter | receive and send | no growing playback queue or stale replay |
+| 30–40 s UDP blackhole | both | TemporaryDisconnect then Resumed; banner clears |
+| Wi-Fi to LTE | both | network callback reconnects to the same channel |
+| Full radio loss, 10 min | both | "Waiting for network"; no retry storm; reconnect on available |
+
 ## 1. Recovery scenarios (expected behaviour, to be verified on device)
 
 | Scenario | Mechanism in code | Pass criterion |

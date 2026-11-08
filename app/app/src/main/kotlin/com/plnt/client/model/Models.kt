@@ -102,7 +102,12 @@ data class ChatMessage(
     val text: String,
 )
 
-enum class PttMode { PUSH_TO_TALK, OPEN_MIC }
+/**
+ * How the microphone reaches the channel. `VOICE_ACTIVATION` (PHA-4851) keeps
+ * capture open like open mic but only sends frames the energy gate accepts,
+ * plus a short hangover so word endings are not clipped.
+ */
+enum class PttMode { PUSH_TO_TALK, OPEN_MIC, VOICE_ACTIVATION }
 
 /**
  * One selectable entry in the Settings audio input/output pickers — a single
