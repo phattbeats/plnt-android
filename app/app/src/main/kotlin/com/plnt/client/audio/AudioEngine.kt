@@ -206,6 +206,13 @@ class AudioEngine(
         sending.set(value)
     }
 
+    @Volatile private var vadGate: VoiceActivityGate? = null
+
+    /** Open-mic voice activity detection: when on, silent frames are not sent. */
+    fun setVadEnabled(enabled: Boolean) {
+        vadGate = if (enabled) VoiceActivityGate() else null
+    }
+
     /**
      * User-initiated override of the auto-priority chain (#3282: pick a specific
      * mic; supersedes #3132's coarser route-category override). `null` restores
@@ -311,7 +318,10 @@ class AudioEngine(
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->
                     // Capture never stops; only forwarding is gated by PTT.
-                    if (sending.get() && !interrupted) onCaptureFrame(frame)
+                    if (sending.get() && !interrupted) {
+                        val g = vadGate
+                        if (g == null || g.accept(frame)) onCaptureFrame(frame)
+                    } else vadGate?.reset()
                 }
             }
         }
