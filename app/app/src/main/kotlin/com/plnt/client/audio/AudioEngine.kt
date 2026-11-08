@@ -60,6 +60,18 @@ class AudioEngine(
      * call that looks connected and carries no audio.
      */
     private val onAudioError: (stage: String, error: Throwable) -> Unit = { _, _ -> },
+    /**
+     * Fires only when the voice-activation gate opens or closes the send
+     * path (PHA-4851). Called from the capture thread; the receiver must hop
+     * to its own thread. Never fires in push-to-talk or open-mic mode.
+     */
+    private val onVoiceActivityChanged: (Boolean) -> Unit = {},
+    /**
+     * Fires when a phone call or another app takes audio focus (`true`) and
+     * when the interruption ends (`false`), so the service can say so in the
+     * notification instead of looking connected while silent.
+     */
+    private val onInterruptionChanged: (Boolean) -> Unit = {},
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -114,10 +126,14 @@ class AudioEngine(
         onPause = { reason ->
             Log.i(TAG, "audio interrupted: $reason")
             interrupted = true
+            // Pausing the send path also ends any voice-activation burst.
+            updateVoiceActivity(false)
+            onInterruptionChanged(true)
         },
         onResume = {
             Log.i(TAG, "audio interruption ended")
             interrupted = false
+            onInterruptionChanged(false)
             // A call can leave the route/SCO link and streams stale.
             rehome("audio focus regained")
         },
@@ -204,13 +220,28 @@ class AudioEngine(
      */
     fun setSending(value: Boolean) {
         sending.set(value)
+        if (!value) {
+            vadGate?.reset()
+            updateVoiceActivity(false)
+        }
     }
 
     @Volatile private var vadGate: VoiceActivityGate? = null
+    /** Whether the voice-activation gate is currently letting frames through. */
+    private val voiceActive = AtomicBoolean(false)
 
-    /** Open-mic voice activity detection: when on, silent frames are not sent. */
+    /**
+     * Voice activation (PHA-4851 / PHA-4868): when on, only frames the energy
+     * gate accepts — plus its hangover tail — are sent. Capture and the
+     * Bluetooth route stay up throughout, exactly as with PTT.
+     */
     fun setVadEnabled(enabled: Boolean) {
         vadGate = if (enabled) VoiceActivityGate() else null
+        if (!enabled) updateVoiceActivity(false)
+    }
+
+    private fun updateVoiceActivity(active: Boolean) {
+        if (voiceActive.getAndSet(active) != active) onVoiceActivityChanged(active)
     }
 
     /**
@@ -320,8 +351,17 @@ class AudioEngine(
                     // Capture never stops; only forwarding is gated by PTT.
                     if (sending.get() && !interrupted) {
                         val g = vadGate
-                        if (g == null || g.accept(frame)) onCaptureFrame(frame)
-                    } else vadGate?.reset()
+                        if (g == null) {
+                            onCaptureFrame(frame)
+                        } else {
+                            val open = g.accept(frame)
+                            updateVoiceActivity(open)
+                            if (open) onCaptureFrame(frame)
+                        }
+                    } else {
+                        vadGate?.reset()
+                        updateVoiceActivity(false)
+                    }
                 }
             }
         }
