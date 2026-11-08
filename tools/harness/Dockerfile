@@ -45,6 +45,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
     && cargo install --locked "cargo-ndk@${CARGO_NDK_VERSION}" \
     && rm -rf /opt/cargo/registry /opt/cargo/git
 
+# The nvidia runtime injects libEGL_nvidia but not its glvnd vendor file;
+# without it EGL resolves to Mesa and `emulator -gpu host` gets no GPU.
+COPY 10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 COPY entrypoint.sh /usr/local/bin/harness-entrypoint
 WORKDIR /work
 # adb server on 5037, all interfaces inside the container; the host side

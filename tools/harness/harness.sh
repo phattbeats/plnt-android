@@ -66,7 +66,7 @@ test_suites() {
 
 gpu_check() {
   in_c 'nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total --format=csv
-        echo "--- EGL vendor ICDs"; ls /usr/share/glvnd/egl_vendor.d/ 2>/dev/null
+        echo "--- EGL vendor ICDs"; ls /usr/share/glvnd/egl_vendor.d/; test -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json || { echo "missing 10_nvidia.json" >&2; exit 1; }
         echo "--- NVIDIA EGL libs"; ls /usr/lib/x86_64-linux-gnu/ | grep -E "^libEGL_nvidia|^libGLX_nvidia|^libnvidia-eglcore" || { echo "missing NVIDIA EGL libs" >&2; exit 1; }'
 }
 
