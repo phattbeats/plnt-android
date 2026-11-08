@@ -37,6 +37,14 @@ checkout() {
   git -C "$SRC" fetch -q origin '+refs/heads/*:refs/remotes/origin/*' '+refs/pull/*/head:refs/remotes/origin/pr/*'
   git -C "$SRC" checkout -q --force --detach "$ref"
   git -C "$SRC" submodule update -q --init --recursive
+  # plnt-android commits no Gradle wrapper; build.sh would bootstrap one by
+  # downloading the 8.10.2 dist from GitHub releases, which 504s from RAID.
+  # Use the image's /opt/gradle (same 8.10.2) instead. Untracked, so the
+  # next checkout leaves it alone, and a real committed wrapper wins.
+  if ! git -C "$SRC" ls-files --error-unmatch app/gradlew >/dev/null 2>&1; then
+    printf '#!/bin/sh\n# harness shim (tools/harness/harness.sh)\nexec /opt/gradle/bin/gradle "$@"\n' > "$SRC/app/gradlew"
+    chmod +x "$SRC/app/gradlew"
+  fi
   echo "harness: at $(git -C "$SRC" rev-parse --short HEAD) ($ref)"
 }
 
