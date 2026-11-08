@@ -236,8 +236,14 @@ class AudioEngine(
      * Bluetooth route stay up throughout, exactly as with PTT.
      */
     fun setVadEnabled(enabled: Boolean) {
-        vadGate = if (enabled) VoiceActivityGate() else null
-        if (!enabled) updateVoiceActivity(false)
+        if (enabled) {
+            // Idempotent: the service re-applies its gate on every mute or
+            // mode change, and a mid-word re-apply must not reset the hangover.
+            if (vadGate == null) vadGate = VoiceActivityGate()
+        } else {
+            vadGate = null
+            updateVoiceActivity(false)
+        }
     }
 
     private fun updateVoiceActivity(active: Boolean) {
