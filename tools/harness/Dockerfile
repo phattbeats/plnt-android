@@ -34,10 +34,17 @@ RUN apt-get update -qq && apt-get install -yq --no-install-recommends \
       libegl1 libgl1 libglvnd0 iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
-# CMake 3.31 to match the GitHub runner: Ubuntu's 3.28 rejects
-# CMAKE_SYSTEM_PROCESSOR=aarch64 for Android, which audiopus_sys passes.
-# From PyPI because Kitware's tarballs live on GitHub releases (503s from RAID).
-RUN pip install --no-cache-dir --break-system-packages cmake==3.31.6 && cmake --version
+# audiopus_sys builds Opus with the `cmake` crate, which on its own passes
+# CMAKE_SYSTEM_PROCESSOR=aarch64 (CMake's Android module rejects it) and no
+# ANDROID_ABI. So: per-triple toolchain wrappers that pin the ABI and defer to
+# the NDK, plus CMake 4's CMAKE_POLICY_VERSION_MINIMUM so Opus's ancient
+# cmake_minimum_required doesn't turn off CMP0057, which the NDK needs.
+# CMake comes from PyPI because Kitware's tarballs are on GitHub releases (503s from RAID).
+RUN pip install --no-cache-dir --break-system-packages cmake==4.1.2 && cmake --version
+COPY android-arm64-v8a.cmake android-x86_64.cmake /opt/harness/cmake/
+ENV CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    CMAKE_TOOLCHAIN_FILE_aarch64_linux_android=/opt/harness/cmake/android-arm64-v8a.cmake \
+    CMAKE_TOOLCHAIN_FILE_x86_64_linux_android=/opt/harness/cmake/android-x86_64.cmake
 
 # Gradle comes from the official image: its GitHub-hosted zip 504s often.
 COPY --from=gradle /opt/gradle /opt/gradle
