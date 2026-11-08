@@ -17,8 +17,10 @@ NAME=chlorophone-android-harness
 ROOT=${HARNESS_ROOT:-/mnt/cache/appdata/$NAME}
 REPO_URL=${REPO_URL:-https://github.com/phattbeats/plnt-android.git}
 LAN_IP=${LAN_IP:-10.0.0.100}
-# TS3 test server for core/tests/two_client_audio.rs.
-PLNT_TS3_ADDR=${PLNT_TS3_ADDR:-$LAN_IP:9987}
+# TS3 test server for core/tests/two_client_audio.rs. Use its bridge IP: UDP
+# from one bridge container to the host's own published 9987 doesn't hairpin.
+TS3_IP=$(docker inspect -f '{{.NetworkSettings.IPAddress}}' chlorophone-ts3-test 2>/dev/null || true)
+PLNT_TS3_ADDR=${PLNT_TS3_ADDR:-${TS3_IP:-$LAN_IP}:9987}
 SRC=$ROOT/work/plnt-android
 # Image context: this script's own directory (installed copy of tools/harness),
 # so `up` never depends on which ref the work tree has checked out.

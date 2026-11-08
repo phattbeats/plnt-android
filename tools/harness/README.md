@@ -75,4 +75,4 @@ The emulator itself also needs `/dev/kvm`, which RAID won't have until SVM is en
 - 9988/tcp
 - 30033/tcp (file transfer)
 
-The host suite's `PLNT_TS3_ADDR` defaults to `10.0.0.100:9987`.
+`harness.sh` sets the host suite's `PLNT_TS3_ADDR` to the TS3 container's bridge IP, because UDP from the harness to RAID's own published 9987 doesn't hairpin. Clients outside Docker use `10.0.0.100:9987`.
