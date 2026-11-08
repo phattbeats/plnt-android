@@ -21,6 +21,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NDK_VERSION=${NDK_VERSION} \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=all
+# audiopus_sys builds Opus with CMake, whose Android platform module finds the
+# NDK only via these (the GitHub runner image exports them; we must too).
+ENV ANDROID_NDK=/opt/android-sdk/ndk/${NDK_VERSION} \
+    ANDROID_NDK_HOME=/opt/android-sdk/ndk/${NDK_VERSION} \
+    ANDROID_NDK_ROOT=/opt/android-sdk/ndk/${NDK_VERSION}
 ENV PATH=/opt/cargo/bin:/opt/gradle/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/emulator:$PATH
 
 RUN apt-get update -qq && apt-get install -yq --no-install-recommends \
