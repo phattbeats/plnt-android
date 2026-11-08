@@ -25,9 +25,13 @@ use audiopus::{Application, Channels, SampleRate};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use futures::prelude::*;
+use std::borrow::Cow;
+
 use tsclientlib::audio::AudioHandler;
-use tsclientlib::messages::c2s::{OutClientMoveMessage, OutClientMovePart};
-use tsclientlib::prelude::M2BClientUpdateExt;
+use tsclientlib::messages::c2s::{
+    OutClientMoveMessage, OutClientMovePart, OutPrivilegeKeyUseMessage, OutPrivilegeKeyUsePart,
+};
+use tsclientlib::prelude::{M2BClientMoveExt, M2BClientUpdateExt};
 use tsclientlib::{ChannelId, OutCommandExt};
 use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
 use tsproto::connection::Event as RawEvent;
@@ -35,8 +39,10 @@ use tsproto_packets::packets::{AudioData, CodecType, Direction, Flags, OutAudio,
 
 #[cfg(target_os = "android")]
 mod android_ctx;
+mod identity_file;
 mod udl_types;
 
+pub use identity_file::import_from_ini;
 pub use udl_types::{Channel, ChatTarget, ClientInfo, ConnEvent, ConnectionState, DisconnectCause};
 
 /// Build version string, surfaced to the Kotlin side for the settings screen
@@ -164,9 +170,14 @@ fn owns_connection(state: &ClientState, generation: u64) -> bool {
     state.connection.as_ref().map(|h| h.generation) == Some(generation)
 }
 
+#[derive(Debug)]
 enum ControlCommand {
     Disconnect,
     JoinChannel { channel_id: u64, password: Option<String> },
+    /// PHA-4849: spend a privilege key (a token the server's admin issued)
+    /// on the live connection. Used once — the server's answer is an `error`
+    /// command carrying `return_code=token`.
+    UsePrivilegeKey(String),
     SetInputMuted(bool),
     SetOutputMuted(bool),
     SendPcmFrame(Vec<f32>),
@@ -201,6 +212,17 @@ impl Client {
 
     /// Connect to a TeamSpeak 3 server and wait until the first `BookEvents` batch
     /// has been received (the server has accepted us and sent the initial state).
+    ///
+    /// PHA-4849: [channel] is the channel an invite asked us to land in — a
+    /// `/`-separated path of names (`Movies/Lobby`) or a numeric channel id
+    /// (`42`). [channel_password] is that channel's password, and
+    /// [privilege_key] is a token from the server's admin, spent once right
+    /// after the session is up.
+    ///
+    /// The channel password is hashed by tsclientlib before it reaches the
+    /// wire (`base64(sha1(password))`, TeamSpeak's own encoding) — the plain
+    /// text never leaves the device, and neither password is ever logged.
+    #[allow(clippy::too_many_arguments)]
     pub fn connect(
         &self,
         address: String,
@@ -208,15 +230,40 @@ impl Client {
         nickname: String,
         identity_pem: String,
         password: Option<String>,
+        channel: Option<String>,
+        channel_password: Option<String>,
+        privilege_key: Option<String>,
     ) -> Result<(), PlntError> {
         let id = parse_identity(&identity_pem)?;
+        // PHA-4849: a privilege key is checked before the connection is made,
+        // so a malformed one fails here instead of after a successful login.
+        let privilege_key = privilege_key.as_deref().map(validate_privilege_key).transpose()?;
 
-        let address_str = format!("{address}:{port}");
+        // PHA-4849: port 0 means "no port was given". The address then goes
+        // to the resolver as it is, so the server's own DNS entry decides:
+        // the `_ts3._udp.` SRV record, or TSDNS. Forcing 9987 there breaks
+        // any server whose SRV record names a different port — and a
+        // nickname, whose address and port come from myTeamSpeak.
+        let address_str = if port == 0 {
+            address.clone()
+        } else {
+            format!("{address}:{port}")
+        };
         let mut opts = Connection::build(address_str)
             .identity(id)
             .name(nickname);
-        if let Some(pwd) = password.as_deref() {
+        if let Some(pwd) = password.as_deref().filter(|p| !p.is_empty()) {
             opts = opts.password(pwd.to_string());
+        }
+        // PHA-4849: an invite names a channel to land in. `default_channel`
+        // takes a path of channel names or `/<id>`; the server ignores it if
+        // the channel does not exist or the password is wrong, and leaves us
+        // in the default channel.
+        if let Some(path) = channel.as_deref().and_then(normalize_channel_path) {
+            opts = opts.channel(path);
+        }
+        if let Some(pwd) = channel_password.as_deref().filter(|p| !p.is_empty()) {
+            opts = opts.channel_password(pwd.to_string());
         }
 
         let mut con = opts
@@ -259,6 +306,17 @@ impl Client {
             .as_ref()
             .cloned()
             .expect("sink installed at construction");
+
+        // PHA-4849: spend the privilege key. The server answers with an
+        // `error` command carrying `return_code=token` (id=0 means the key
+        // was accepted) — that reaches the app through the raw listener as a
+        // `RawCommand`, so the user learns whether it worked.
+        if let Some(key) = privilege_key.as_deref() {
+            let cmd = build_privilege_key_use(key);
+            if let Err(e) = cmd.send(&mut con) {
+                sink_for_task.on_event(ConnEvent::Error(format!("privilegekeyuse: {e}")));
+            }
+        }
         install_raw_listener(&mut con, Arc::clone(&sink_for_task));
         let state_for_task = Arc::clone(&self.state);
         let initial_channel_tree = channel_tree.clone();
@@ -360,10 +418,17 @@ impl Client {
 
     /// Move the own client to a channel by id. The channel's current name is
     /// resolved from the cached tree.
+    ///
+    /// PHA-4849: [password] is the channel's password, for a channel that has
+    /// one. It used to be dropped on the floor here (`_password` and
+    /// `password: None`), so a password-protected channel could never be
+    /// entered — the request went out without a password and the server
+    /// refused the move. The password is hashed before it reaches the wire
+    /// (see [build_client_move]) and is never logged.
     pub fn join_channel(
         &self,
         channel_id: u64,
-        _password: Option<String>,
+        password: Option<String>,
     ) -> Result<(), PlntError> {
         // Validate the id exists before sending the command.
         {
@@ -374,7 +439,18 @@ impl Client {
                 )));
             }
         }
-        self.send_cmd(ControlCommand::JoinChannel { channel_id, password: None })
+        // An empty password is no password: TeamSpeak reads `cpw` as absent
+        // rather than as an empty credential.
+        self.send_cmd(Self::join_command(channel_id, password))
+    }
+
+    /// PHA-4849: spend a privilege key — a token the server's admin issued —
+    /// on the live connection. A key works once; the server's answer is an
+    /// `error` command carrying `return_code=token` (id=0 means it was
+    /// accepted), which reaches the app as a `RawCommand`.
+    pub fn use_privilege_key(&self, token: String) -> Result<(), PlntError> {
+        let token = validate_privilege_key(&token)?;
+        self.send_cmd(ControlCommand::UsePrivilegeKey(token))
     }
 
     /// Send a text message to the current channel or to a specific client (a
@@ -441,6 +517,21 @@ impl Client {
 }
 
 impl Client {
+    /// The command a channel join turns into.
+    ///
+    /// Split out of [`Client::join_channel`] so the trip from the API
+    /// boundary to the wire can be asserted in a test: PHA-4849's bug was
+    /// exactly this value being dropped between the two.
+    fn join_command(channel_id: u64, password: Option<String>) -> ControlCommand {
+        // An empty password is no password: TeamSpeak reads `cpw` as absent
+        // rather than as an empty credential. A password that is *not* empty
+        // is passed through byte for byte — TeamSpeak passwords may
+        // legitimately begin or end with a space, and trimming one would
+        // turn a right answer into "invalid password".
+        let password = password.filter(|p| !p.is_empty());
+        ControlCommand::JoinChannel { channel_id, password }
+    }
+
     /// Queue a command for the connection loop without ever blocking the
     /// caller (often Kotlin's main or audio thread). A full queue means the
     /// loop is behind: PCM is dropped silently, anything else is an error.
@@ -499,17 +590,83 @@ impl IdentityObj {
     /// `base64(key.to_short())`, which is what tsproto's own `Serialize` impl
     /// writes and what `EccKeyPrivP256::import_str` reads back.
     pub fn export(&self) -> String {
-        format!(
-            "{}V{}",
-            self.inner.counter(),
-            BASE64_STANDARD.encode(self.inner.key().to_short()),
-        )
+        export_identity(&self.inner)
     }
 
     /// Current security level (8 by default).
     pub fn level(&self) -> u8 {
         self.inner.level()
     }
+}
+
+/// PHA-4849: the identity's security level — the hash-cash level TeamSpeak
+/// checks. Level 8 is what a fresh identity gets; servers ask for more.
+#[uniffi::export]
+pub fn identity_level(identity: String) -> Result<u8, PlntError> {
+    Ok(parse_identity(&identity)?.level())
+}
+
+/// PHA-4849: raise the identity's security level to at least `target`.
+///
+/// TeamSpeak's security level is a hash-cash property of the identity: the
+/// level is the number of leading zero bits in `sha1(public key + counter)`.
+/// Raising it means finding a counter whose hash has more leading zeros —
+/// pure CPU work, no server involved, and the identity's key does not change.
+///
+/// This is slow by design: level 16 takes a moment, level 20 takes minutes,
+/// level 24 takes hours. The caller runs it off the UI thread and can stop by
+/// simply not asking for a higher level again.
+///
+/// Returns the new export string — the counter moved, so the export changed
+/// and the caller has to persist it or the work is lost.
+#[uniffi::export]
+pub fn upgrade_identity_level(identity: String, target: u8) -> Result<String, PlntError> {
+    if target == 0 || target > 30 {
+        return Err(PlntError::Invalid(format!(
+            "security level target {target} is out of range (1..=30)"
+        )));
+    }
+    let mut id = parse_identity(&identity)?;
+    if id.level() < target {
+        id.upgrade_level(target);
+    }
+    Ok(export_identity(&id))
+}
+
+/// The portable export form of an identity: `"<counter>V<base64-key>"`.
+fn export_identity(id: &Identity) -> String {
+    format!(
+        "{}V{}",
+        id.counter(),
+        BASE64_STANDARD.encode(id.key().to_short()),
+    )
+}
+
+/// Import from a TeamSpeak identity `.ini` file's contents (PHA-4116).
+///
+/// This is the path for a user who exports an identity from the official client
+/// on another machine. It is entirely offline — no myTeamSpeak account, no
+/// network, no official-client secret.
+///
+/// Takes the file's *text*, not a path: on Android the user picks the file
+/// through the Storage Access Framework, so the caller reads the content URI and
+/// hands us the string.
+///
+/// Returns the portable identity string to persist — the same form
+/// [`IdentityObj::export`] writes and `Client::connect` accepts.
+#[uniffi::export]
+pub fn import_identity_ini(contents: String) -> Result<String, PlntError> {
+    Ok(identity_file::import_from_ini(&contents)?.export())
+}
+
+/// Inspect a `.ini` without importing it — for the import UI to show what the
+/// file actually holds (nickname, security level) before the user commits.
+///
+/// Returns a human-readable summary of public metadata only. It never includes
+/// key material, so it is safe to log.
+#[uniffi::export]
+pub fn describe_identity_ini(contents: String) -> Result<String, PlntError> {
+    Ok(identity_file::import_from_ini(&contents)?.describe())
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +695,100 @@ fn parse_identity(s: &str) -> Result<Identity, PlntError> {
             .map_err(|e| PlntError::Identity(format!("malformed identity JSON: {e}")));
     }
     Identity::new_from_str(s).map_err(|e| PlntError::Identity(format!("{e:?}")))
+}
+
+/// The TS3 `clientmove` command that moves a client into a channel.
+///
+/// The channel password is **hashed** before it goes on the wire: TeamSpeak
+/// expects `cpw = base64(sha1(password))`, never the password itself. A
+/// client that sends the plain text is refused with "invalid password" even
+/// when the password is right — which is what this code did before PHA-4849
+/// (it put the raw password straight into `cpw`).
+///
+/// Pure on purpose — no connection, no side effects — so a test can assert
+/// what actually goes on the wire without a server.
+pub fn build_client_move(
+    client_id: tsclientlib::ClientId,
+    channel_id: u64,
+    password: Option<&str>,
+) -> OutCommand {
+    let mut part = OutClientMovePart {
+        client_id,
+        channel_id: ChannelId(channel_id),
+        channel_password: None,
+    };
+    if let Some(pwd) = password.filter(|p| !p.is_empty()) {
+        // tsclientlib's own encoder: base64(sha1(password)).
+        part = part.set_password(pwd);
+    }
+    OutClientMoveMessage::new(&mut std::iter::once(part))
+}
+
+/// The TS3 `privilegekeyuse` command.
+///
+/// `return_code=token` asks the server to tag its answer with
+/// `return_code=token`, so the reply — an `error` command, where id=0 means
+/// the key was accepted — can be told apart from other traffic.
+pub fn build_privilege_key_use(token: &str) -> OutCommand {
+    let mut cmd = OutPrivilegeKeyUseMessage::new(&mut std::iter::once(OutPrivilegeKeyUsePart {
+        token: Cow::Borrowed(token),
+    }));
+    cmd.write_arg("return_code", &"token");
+    cmd
+}
+
+/// Normalise a channel path from a link into the form TeamSpeak's
+/// `client_default_channel` takes: a `/`-separated path of channel *names*
+/// (`Movies/Lobby`).
+///
+/// A bare number is a channel *id*, and it is deliberately not turned into a
+/// path: the server's `client_default_channel` only understands names, and
+/// silently sending it an id leaves the client in the default channel with no
+/// explanation. An id is used with `clientmove` instead — see
+/// [`Client::join_channel`] — which takes the id directly. The app resolves
+/// an id to a channel after the channel tree arrives and joins it that way.
+///
+/// Pure on purpose — no connection, no side effects — so a test can assert
+/// what actually goes on the wire without a server.
+pub fn normalize_channel_path(path: &str) -> Option<String> {
+    let trimmed = path.trim().trim_start_matches('/').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.bytes().all(|b| b.is_ascii_digit()) {
+        // A channel id, not a name.
+        return None;
+    }
+    let parts: Vec<&str> = trimmed
+        .split('/')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
+/// Check a privilege key before it goes on the wire.
+///
+/// The key is an opaque token the server's admin issued. We only check that
+/// it is safe to put in a command — never what it says — and it is never
+/// logged.
+pub fn validate_privilege_key(key: &str) -> Result<String, PlntError> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(PlntError::Invalid("privilege key is empty".into()));
+    }
+    if key.len() > 4096 {
+        return Err(PlntError::Invalid("privilege key is too long".into()));
+    }
+    if key.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(PlntError::Invalid(
+            "privilege key contains whitespace or control characters".into(),
+        ));
+    }
+    Ok(key.to_string())
 }
 
 /// Snapshot the channel tree into a `HashMap<id, Channel>`. ts-bookkeeping's
@@ -706,14 +957,14 @@ async fn run_connection_loop(
                 ControlCommand::JoinChannel { channel_id, password } => {
                     let own_client = con.get_state().ok().map(|s| s.own_client);
                     if let Some(own) = own_client {
-                        let pwd = password.unwrap_or_default();
-                        let mut parts = std::iter::once(OutClientMovePart {
-                            client_id: own,
-                            channel_id: ChannelId(channel_id),
-                            channel_password: if pwd.is_empty() { None } else { Some(pwd.into()) },
-                        });
-                        let cmd = OutClientMoveMessage::new(&mut parts);
+                        let cmd = build_client_move(own, channel_id, password.as_deref());
                         let _ = cmd.send(&mut con);
+                    }
+                }
+                ControlCommand::UsePrivilegeKey(token) => {
+                    let cmd = build_privilege_key_use(&token);
+                    if let Err(e) = cmd.send(&mut con) {
+                        sink.on_event(ConnEvent::Error(format!("privilegekeyuse: {e}")));
                     }
                 }
                 ControlCommand::SetInputMuted(muted) => {
@@ -1075,7 +1326,7 @@ fn install_raw_listener(con: &mut Connection, sink: Arc<dyn EventSink>) {
         if let RawEvent::ReceivePacket(p) = ev {
             if p.header().packet_type().is_command() {
                 let text = String::from_utf8_lossy(p.content());
-                if let Some(ev) = raw_command_event(&text) {
+                for ev in raw_command_events(&text) {
                     sink.on_event(ev);
                 }
             }
@@ -1087,17 +1338,51 @@ fn install_raw_listener(con: &mut Connection, sink: Arc<dyn EventSink>) {
 /// Only the first `|`-separated part is surfaced; every stream notification
 /// seen in the wild is single-part.
 fn raw_command_event(text: &str) -> Option<ConnEvent> {
+    raw_command_events(text).into_iter().next()
+}
+
+/// PHA-4864: like [`raw_command_event`], but a file listing arrives as one
+/// `|`-separated command with an entry per part, so every part is surfaced as
+/// its own event under the same name. A poke (`notifyclientpoke`) is also
+/// surfaced here — it carries `invokerid`, `invokername`, `msg` — so the app
+/// needs no new event variant (and no binding regeneration) to show it.
+fn raw_command_events(text: &str) -> Vec<ConnEvent> {
     let name = text.split(|c| c == ' ' || c == '|').next().unwrap_or("");
+    if name == "notifyclientpoke"
+        || name.starts_with("notifyfilelist")
+        || name == "notifystartupload"
+        || name == "notifystartdownload"
+        || name == "notifystatusfiletransfer"
+    {
+        let multi = name.starts_with("notifyfilelist");
+        let parts: Vec<&str> = if multi { text.split('|').collect() } else { vec![text] };
+        return parts
+            .iter()
+            .enumerate()
+            .map(|(i, part)| {
+                // Only the first part carries the command name.
+                let owned;
+                let line = if i == 0 {
+                    *part
+                } else {
+                    owned = format!("{name} {part}");
+                    &owned
+                };
+                let (n, args) = parse_command(line);
+                ConnEvent::RawCommand { name: n, args }
+            })
+            .collect();
+    }
     let wanted = name.starts_with("notifystream")
         || name == "notifyjoinstreamrequest"
         || name == "notifyrespondjoinstreamrequest"
         || name == "notifyremovedfromstream"
         || (name == "error" && text.contains(" return_code="));
     if !wanted {
-        return None;
+        return Vec::new();
     }
     let (name, args) = parse_command(text);
-    Some(ConnEvent::RawCommand { name, args })
+    vec![ConnEvent::RawCommand { name, args }]
 }
 
 /// Split `name k=v k=v` (first part only) into its name and unescaped args.
@@ -1175,7 +1460,6 @@ mod raw_command_tests {
         let s = "a b|c/d\\e\nf";
         assert_eq!(ts_unescape(&ts_escape(s)), s);
     }
-
     #[test]
     fn parses_stream_notification() {
         let (name, args) = parse_command(
@@ -1193,6 +1477,23 @@ mod raw_command_tests {
         assert!(raw_command_event("error id=0 msg=ok return_code=60001").is_some());
         assert!(raw_command_event("error id=0 msg=ok").is_none());
         assert!(raw_command_event("notifytextmessage targetmode=2 msg=hi").is_none());
+        match raw_command_event("notifyclientpoke invokerid=5 invokername=Bob msg=hey\\sthere") {
+            Some(ConnEvent::RawCommand { name, args }) => {
+                assert_eq!(name, "notifyclientpoke");
+                assert_eq!(args["invokername"], "Bob");
+                assert_eq!(args["msg"], "hey there");
+            }
+            other => panic!("poke not surfaced: {other:?}"),
+        }
+        let list = raw_command_events("notifyfilelist cid=1 path=\\/ name=a size=3|cid=1 path=\\/ name=b size=4");
+        assert_eq!(list.len(), 2);
+        match &list[1] {
+            ConnEvent::RawCommand { name, args } => {
+                assert_eq!(name, "notifyfilelist");
+                assert_eq!(args["name"], "b");
+            }
+            _ => panic!(),
+        }
         assert!(raw_command_event("notifyclientmoved clid=1 ctid=2").is_none());
     }
 }
@@ -1210,4 +1511,58 @@ fn tree_signature(tree: &HashMap<u64, Channel>) -> u64 {
         }
     }
     hasher.finish()
+}
+
+// ---------------------------------------------------------------------------
+// PHA-4849 — connection correctness
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod connection_correctness_tests {
+    use super::*;
+
+    /// The password must survive the trip from the API boundary to the
+    /// command the connection loop turns into a packet. PHA-4849's bug was
+    /// this value being dropped right here.
+    #[test]
+    fn the_join_command_keeps_the_password() {
+        match Client::join_command(7, Some("hunter2".into())) {
+            ControlCommand::JoinChannel { channel_id, password } => {
+                assert_eq!(channel_id, 7);
+                assert_eq!(password.as_deref(), Some("hunter2"));
+            }
+            other => panic!("expected a join command, got {other:?}"),
+        }
+    }
+
+    /// An empty password is no password at all: the packet must not carry a
+    /// `cpw` for it.
+    #[test]
+    fn an_empty_password_is_no_password() {
+        match Client::join_command(7, Some(String::new())) {
+            ControlCommand::JoinChannel { password, .. } => {
+                assert!(password.is_none(), "empty password became {password:?}");
+            }
+            other => panic!("expected a join command, got {other:?}"),
+        }
+        match Client::join_command(7, None) {
+            ControlCommand::JoinChannel { password, .. } => assert!(password.is_none()),
+            other => panic!("expected a join command, got {other:?}"),
+        }
+    }
+
+    /// A password is passed through byte for byte. TeamSpeak passwords may
+    /// legitimately begin or end with a space, and trimming one would turn a
+    /// right answer into "invalid password".
+    #[test]
+    fn a_password_is_never_altered() {
+        for exact in ["  secret  ", " secret", "secret ", "s e c r e t", "1234"] {
+            match Client::join_command(7, Some(exact.into())) {
+                ControlCommand::JoinChannel { password, .. } => {
+                    assert_eq!(password.as_deref(), Some(exact));
+                }
+                other => panic!("expected a join command, got {other:?}"),
+            }
+        }
+    }
 }

@@ -76,6 +76,13 @@ class PlntDataStore(private val context: Context) {
                         port = o.getInt("port"),
                         nickname = o.getString("nickname"),
                         serverPassword = o.optString("password", "").ifEmpty { null },
+                        // PHA-4849: optional, so an install written by an
+                        // older build reads back unchanged.
+                        channel = o.optString("channel", "").ifEmpty { null },
+                        channelPassword = o.optString("channelpassword", "").ifEmpty { null },
+                        privilegeKey = o.optString("privilegekey", "").ifEmpty { null },
+                        // Absent in stores written before account import existed.
+                        folder = o.optString("folder", "").ifEmpty { null },
                     )
                 }
             }
@@ -92,7 +99,14 @@ class PlntDataStore(private val context: Context) {
                     .put("address", b.address)
                     .put("port", b.port)
                     .put("nickname", b.nickname)
-                    .put("password", b.serverPassword ?: ""),
+                    .put("password", b.serverPassword ?: "")
+                    // PHA-4849: the invited channel, its password, and a
+                    // privilege key. Secrets like the server password above —
+                    // PHA-4856 (WS8) moves this blob into an encrypted store.
+                    .put("channel", b.channel ?: "")
+                    .put("channelpassword", b.channelPassword ?: "")
+                    .put("privilegekey", b.privilegeKey ?: "")
+                    .put("folder", b.folder ?: ""),
             )
         }
         context.plntDataStore.edit { it[Keys.BOOKMARKS] = arr.toString() }

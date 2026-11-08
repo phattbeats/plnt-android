@@ -1,6 +1,16 @@
 package com.plnt.client.model
 
 /** A saved server (#3076 screen 1: bookmarks list with add/edit). */
+/**
+ * The id prefix every server imported from a myTeamSpeak account carries.
+ * It marks the entry as account-backed, so the right identity is used at
+ * connect time and so a sign-out knows which servers to remove.
+ */
+const val ACCOUNT_IMPORT_ID_PREFIX = "myts:"
+
+/** True for bookmarks this app imported from a myTeamSpeak account. */
+fun Bookmark.isAccountImport(): Boolean = id.startsWith(ACCOUNT_IMPORT_ID_PREFIX)
+
 data class Bookmark(
     val id: String,
     val label: String,
@@ -8,6 +18,32 @@ data class Bookmark(
     val port: Int,
     val nickname: String,
     val serverPassword: String? = null,
+    /**
+     * PHA-4849: the channel to land in when connecting — a `/`-separated path
+     * of channel names (`Movies/Lobby`) or a channel id (`42`). Empty means
+     * "wherever the server puts us".
+     */
+    val channel: String? = null,
+    /**
+     * PHA-4849: that channel's password. A secret, exactly like
+     * [serverPassword] — and stored the same way, which PHA-4856 (WS8) is
+     * going to move into an encrypted store.
+     */
+    val channelPassword: String? = null,
+    /**
+     * PHA-4849: a privilege key — rights the server's admin handed out. It is
+     * good for one use and is spent on the connection it comes with.
+     */
+    val privilegeKey: String? = null,
+    /**
+     * The myTeamSpeak folder this server came from, when it was imported from
+     * an account. The sync payload only carries the folder's server-side id
+     * (Item_Data.parent) and the importer deliberately fetches only the
+     * bookmark and identity classes, so no folder *name* is available — the
+     * reference is kept so the grouping is not silently lost. Null for servers
+     * the user added by hand.
+     */
+    val folder: String? = null,
 )
 
 /**
@@ -113,6 +149,8 @@ sealed class Screen {
     data object Connected : Screen()
     data object Settings : Screen()
     data object Chat : Screen()
+    /** PHA-4864: channel file browser. */
+    data object Files : Screen()
     /** The one place the PLNT name and mark still appear (PHA-3072 rebrand). */
     data object About : Screen()
     /** PHA-3289: full-screen viewer for one screen share. */
@@ -132,11 +170,22 @@ data class AppState(
     val lastError: String? = null,
     val settings: Settings = Settings(),
     val identityExport: String? = null,
+    /**
+     * PHA-4849: the identity's security level — the hash-cash level
+     * TeamSpeak checks. Null when the identity cannot be read.
+     */
+    val identityLevel: Int? = null,
+    /** PHA-4849: a level raise is running. It is slow work, so the UI waits. */
+    val identityLevelRaising: Boolean = false,
     /** Input devices the hardware offers right now — refreshed on plug/unplug and on entering Settings. */
     val availableInputDevices: List<AudioDeviceOption> = emptyList(),
     /** Output devices the hardware offers right now. Same refresh rules as [availableInputDevices]. */
     val availableOutputDevices: List<AudioDeviceOption> = emptyList(),
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** PHA-4864: file browser state and unread/poke badges. */
+    val files: FilesUiState = FilesUiState(),
+    val unreadChat: Int = 0,
+    val pokes: List<Pair<String, String>> = emptyList(),
     /**
      * False while the call is connected but the OS has not granted the
      * microphone — see `VoiceState.microphoneActive` (#3290). Renders as a
@@ -160,8 +209,22 @@ data class AppState(
      * about to connect them before any network call.
      */
     val pendingInvite: ServerLink? = null,
+    /**
+     * PHA-4849: a password-protected channel the user tapped, waiting for the
+     * password. Null when there is nothing to ask about. The join is not sent
+     * until the password is in — sending it without one is what the server
+     * refuses.
+     */
+    val pendingChannelPassword: ChannelNode? = null,
     /** PHA-3289: our own outgoing screen share; IDLE when not sharing. */
     val streamSend: com.plnt.client.stream.StreamSendState = com.plnt.client.stream.StreamSendState(),
+    /**
+     * PHA-4854: a destructive admin operation (kick, ban, delete channel)
+     * waiting for the user to confirm. Nothing is sent until they do.
+     */
+    val pendingAdmin: com.plnt.client.admin.AdminOp? = null,
+    /** PHA-4854: the server accepted the last admin operation. Failures go to [lastError]. */
+    val adminNotice: String? = null,
 ) {
     val phase: ConnectionPhase get() = connectionStatus.phase
 }
@@ -191,4 +254,14 @@ fun AppState.withVoiceBindingFailure(reason: String): AppState = copy(
     channelTree = emptyList(),
     screen = Screen.Bookmarks,
     lastError = reason,
+)
+
+/** PHA-4864: what the file browser screen shows. [progress] is 0..1 for the running transfer, null if none. */
+data class FilesUiState(
+    val dir: String = "/",
+    val entries: List<com.plnt.client.files.RemoteFile> = emptyList(),
+    val busy: Boolean = false,
+    val error: String? = null,
+    val notice: String? = null,
+    val progress: Float? = null,
 )

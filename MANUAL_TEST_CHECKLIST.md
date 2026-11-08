@@ -9,6 +9,37 @@ For each row: perform the action, then confirm the two callouts (what you
 should hear, what logcat should show). Check `adb logcat -s plnt.audio
 plnt.voice` while testing.
 
+## 0. Connection correctness (PHA-4849)
+
+These need a TeamSpeak server with a **password-protected** channel. On the
+server, through the server query interface:
+
+    login serveradmin <password from the server log>
+    use sid=1
+    channelcreate channel_name=Protected channel_password=*** channel_flag_permanent=1
+
+- [ ] Connect to that server. Tap the protected channel. A password prompt
+      appears (the channel row shows a padlock).
+- [ ] Type the **wrong** password and tap Join. The channel is *not* entered
+      and no crash or hang happens.
+- [ ] Tap it again, type the **right** password, tap Join. The channel is
+      entered — your own row shows up under it and the channel becomes the
+      one in the voice panel.
+- [ ] `adb logcat -s plnt.voice` shows no password, and neither does
+      `adb logcat` in general: the password is hashed before it reaches the
+      wire and is never written to a log.
+- [ ] Open a `ts3server://host?port=9987&channel=Protected&channelpassword=…`
+      link (paste it into the app from any chat app). The Join/Save sheet
+      appears; tap Join and the app lands in the protected channel.
+- [ ] Open a `tmspk.gg/<code>` invite link. The sheet says "TeamSpeak
+      invite"; tap Join and the app connects to the server the invite names,
+      and into the channel it names.
+- [ ] Settings → Identity → Security level. The level is shown; raising it
+      to 12 is instant, and the number goes up. The app stays usable while a
+      higher level is being worked out.
+- [ ] A bookmark with the port field left empty connects to a server whose
+      `_ts3._udp.` SRV record names a non-default port.
+
 ## 1. Wired headset (3.5 mm or USB-C)
 
 - [ ] Connect with the wired headset already plugged in. Speak — the other
@@ -232,6 +263,40 @@ Also confirm while capturing:
       polling.
 - [ ] Toggling mute from the notification updates the on-screen mute circle
       and your own row's MIC pill (service → UI state listener).
+
+## 8. Identity import from a `.ini` (#4116, device round-trip)
+
+The importer ships compiled and covered by host tests, including a cross-check
+against an independent C implementation of the format — but it has **never run
+on a device**. This section is the missing half.
+
+Needs a `.ini` exported from the official TeamSpeak client. If you don't have
+one handy, the repo ships an equivalent fixture at
+`core/tests/fixtures/c-generated.ini` (written by TSIdentityTool) — it is a
+valid export and exercises the same path, but a genuine official-client export
+is the more meaningful check.
+
+- [ ] Settings → Identity → Import identity shows **both** a "Choose identity
+      file…" button and the paste field. Neither replaced the other.
+- [ ] Choosing a file opens the system picker. Android's own file manager
+      offers `.ini` files — the picker is launched with a broad mime set
+      because a real export is often typed `application/octet-stream`.
+- [ ] Picking the file shows a preview line ("Found an identity in this
+      file — …") **before** anything is replaced.
+- [ ] The preview shows nickname and level, and never the key material.
+- [ ] Importing persists, the sheet closes, and Export identity now shows the
+      imported string.
+- [ ] Disconnect + reconnect. The client appears on the server as the
+      **imported** identity — same Unique ID, same groups and permissions. A
+      fresh Unique ID here means the import silently failed.
+- [ ] Force-stop the app and relaunch; the identity survives (it is persisted
+      in `EncryptedSharedPreferences`, not held in memory).
+- [ ] Picking a file that is *not* an identity (say a text file) says so
+      plainly and leaves the existing identity untouched — check this by
+      exporting, attempting the bad import, then exporting again.
+- [ ] Importing while **connected**: the new identity should only take effect
+      on the next connect. Confirm that is what happens, and that it is
+      communicated — silently swapping keys mid-session would be wrong.
 
 ## Report format
 

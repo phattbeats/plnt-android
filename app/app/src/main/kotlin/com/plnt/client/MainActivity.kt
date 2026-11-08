@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.plnt.client.model.ChannelNode
 import com.plnt.client.model.ClientRow
 import com.plnt.client.model.Screen
+import com.plnt.client.model.isAccountImport
 import com.plnt.client.ui.AboutScreen
 import com.plnt.client.ui.BookmarksScreen
 import com.plnt.client.ui.ChatScreen
@@ -102,6 +103,18 @@ class MainActivity : ComponentActivity() {
                             pttIsPushToTalk = state.settings.pttMode == com.plnt.client.model.PttMode.PUSH_TO_TALK,
                             lastError = state.lastError,
                             onJoinChannel = viewModel::joinChannel,
+                            // PHA-4854: long-press admin actions.
+                            onAdmin = viewModel::requestAdmin,
+                            pendingAdmin = state.pendingAdmin,
+                            onAdminConfirm = viewModel::confirmAdmin,
+                            onAdminDismiss = viewModel::dismissAdmin,
+                            adminNotice = state.adminNotice,
+                            onAdminNoticeDismiss = viewModel::dismissAdminNotice,
+                            // PHA-4849: a protected channel asks for its
+                            // password before the move is sent.
+                            pendingChannelPassword = state.pendingChannelPassword,
+                            onChannelPasswordSubmit = viewModel::submitChannelPassword,
+                            onChannelPasswordDismiss = viewModel::dismissChannelPassword,
                             onToggleMute = { viewModel.setMuted(!state.inputMuted) },
                             onToggleDeafen = { viewModel.setDeafened(!state.outputDeafened) },
                             onPttPress = viewModel::pttPress,
@@ -109,6 +122,9 @@ class MainActivity : ComponentActivity() {
                             onDisconnect = viewModel::disconnect,
                             onOpenSettings = { viewModel.navigate(Screen.Settings) },
                             onOpenChat = { viewModel.navigate(Screen.Chat) },
+                            onOpenFiles = { viewModel.navigate(Screen.Files) },
+                            unreadChat = state.unreadChat,
+                            pokes = state.pokes,
                             onWatchStream = viewModel::watchStream,
                             shareState = state.streamSend,
                             onShareScreen = ::launchScreenCapture,
@@ -129,10 +145,27 @@ class MainActivity : ComponentActivity() {
                             onSend = viewModel::sendChatMessage,
                             onBack = { viewModel.navigate(Screen.Connected) },
                         )
+                        Screen.Files -> com.plnt.client.ui.FilesScreen(
+                            state = state.files,
+                            onOpenDir = viewModel::openDir,
+                            onUp = viewModel::upDir,
+                            onBack = { viewModel.navigate(Screen.Connected) },
+                            onDownload = viewModel::downloadFile,
+                            onUpload = viewModel::uploadFile,
+                            onNewFolder = viewModel::newFolder,
+                            onDelete = viewModel::deleteFile,
+                            onCancel = viewModel::cancelTransfer,
+                        )
                         Screen.About -> AboutScreen(onBack = { viewModel.navigate(Screen.Settings) })
                         Screen.Settings -> SettingsScreen(
                             settings = state.settings,
                             identityExport = state.identityExport,
+                            // PHA-4849: the identity's security level.
+                            identityLevel = state.identityLevel,
+                            identityLevelRaising = state.identityLevelRaising,
+                            onRaiseIdentityLevel = viewModel::raiseIdentityLevel,
+                            identityChangeAllowed = state.phase == com.plnt.client.model.ConnectionPhase.DISCONNECTED ||
+                                state.phase == com.plnt.client.model.ConnectionPhase.ERROR,
                             availableInputDevices = state.availableInputDevices,
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,
@@ -144,7 +177,13 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
+                            onImportAccount = viewModel::importAccountEntries,
+                            onSignOutAccount = viewModel::signOutAccount,
+                            existingServers = state.bookmarks,
+                            hasAccountImport = state.bookmarks.any { it.isAccountImport() },
                             onImportIdentity = viewModel::importIdentity,
+                            onImportIdentityIni = viewModel::importIdentityFromIni,
+                            onDescribeIdentityIni = viewModel::describeIdentityIni,
                             onCreateIdentity = viewModel::createNewIdentity,
                             onOpenAbout = { viewModel.navigate(Screen.About) },
                             onBack = {

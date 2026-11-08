@@ -85,6 +85,13 @@ ndk-context = "0.1"
 [build-dependencies]
 uniffi = { version = "0.27", features = ["build"] }
 
+[dev-dependencies]
+# PHA-4849: the known-answer test for TeamSpeak's password encoding computes
+# base64(sha1(password)) itself, independently of tsclientlib's own encoder —
+# so a change in either one is caught here rather than as "invalid password"
+# against a real server. `sha-1` is the package; it imports as `sha1`.
+sha-1 = "0.10"
+
 [features]
 # Default features: audiopus + default-tls, mirroring tsclientlib.
 default = ["audio"]

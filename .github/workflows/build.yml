@@ -169,11 +169,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: "Test: Android JVM unit suite"
+      - name: "Test: Android host unit suite"
         working-directory: app
-        run: |
-          ./gradlew --no-daemon :app:testDebugUnitTest
-          grep -h '<testsuite ' app/build/test-results/testDebugUnitTest/TEST-*.xml
+        run: ./gradlew --no-daemon testDebugUnitTest
 
       # Deliberately last: a red test must not cost us the APK artifact, which
       # is what on-device verification runs against.
@@ -190,3 +188,9 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libopus-dev
           cargo test -p plnt-core --target x86_64-unknown-linux-gnu -- --nocapture
+
+      - name: "Test: Kotlin JVM unit tests"
+        working-directory: app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon testDebugUnitTest

@@ -10,8 +10,14 @@ import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.plnt.client.account.AccountImportOutcome
+import com.plnt.client.model.isAccountImport
+import com.plnt.client.admin.AdminCommands
+import com.plnt.client.admin.AdminInvalid
+import com.plnt.client.admin.AdminOp
 import com.plnt.client.audio.AudioDevices
 import com.plnt.client.core.ChatMessageTarget
+import com.plnt.client.core.CoreBridge
 import com.plnt.client.core.CoreEvent
 import com.plnt.client.core.DisconnectCause
 import com.plnt.client.data.IdentityStore
@@ -64,6 +70,7 @@ import java.util.UUID
  */
 class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val identityStore = IdentityStore(app)
+    private val accountStore = com.plnt.client.account.AccountStore(app)
     private val dataStore = PlntDataStore(app)
     private val sessionStore = SessionStore(app)
     private val powerManager = app.getSystemService(PowerManager::class.java)
@@ -71,6 +78,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state
 
+    private var changingIdentity = false
     private var voiceService: VoiceService? = null
     private var bindingStatus = VoiceServiceBindingStatus()
     private var bindingRegistered = false
@@ -92,9 +100,31 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     // channelId -> talk-power-flat list of client ids we've observed there.
     private val roster = HashMap<Long, MutableSet<Long>>()
     private val talking = HashMap<Long, Boolean>()
+
+    /**
+     * PHA-4849: the passwords of protected channels we have already been
+     * given, so a second tap on the same channel does not ask again. Per
+     * connection — the channel ids of one server mean nothing on another.
+     */
+    private val knownChannelPasswords = HashMap<Long, String>()
+
+    /**
+     * PHA-4849: the passwords we have *tried* for a channel, and not yet
+     * confirmed. A password is only remembered once the server has put us in
+     * the channel: a refused password must not be remembered, or the next tap
+     * on that channel would retry it silently and fail the same way.
+     */
+    private val triedChannelPasswords = HashMap<Long, String>()
     private val channelsById = HashMap<Long, com.plnt.client.core.CoreChannel>()
     // clientId -> last roster snapshot entry, for nicknames and peer mute state.
     private val clientsById = HashMap<Long, com.plnt.client.core.CoreClientInfo>()
+
+    /**
+     * PHA-4849: the channel an invite asked us to land in, resolved against
+     * the channel tree once that tree arrives.
+     */
+    private var pendingChannelSpec: String? = null
+    private var pendingChannelPassword: String? = null
 
     // PHA-3289: who in our channel is screen-sharing. Polled on every roster
     // change and on a slow timer, because `notifystreamstarted` pushes can be
@@ -103,6 +133,128 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         runOnService { it.sendRawCommand(name, args) }
     }
     private var ownChannelId: Long? = null
+
+    // PHA-4864: durable chat history, raw-reply correlation for file commands, pokes.
+    val chatHistory = com.plnt.client.files.ChatHistory(
+        com.plnt.client.files.FileChatHistoryStore(java.io.File(app.filesDir, "chat-history.tsv")),
+    )
+    val fileReplies = com.plnt.client.files.RawReplyCorrelator()
+
+    private fun conversationId(target: ChatMessageTarget, peer: Long) = when (target) {
+        ChatMessageTarget.Channel -> "channel:${ownChannelId ?: 0}"
+        is ChatMessageTarget.Direct -> "private:$peer"
+    }
+
+    private fun persist(target: ChatMessageTarget, peer: Long, from: String, isSelf: Boolean, text: String) {
+        runCatching {
+            chatHistory.append(
+                com.plnt.client.files.StoredMessage(conversationId(target, peer), System.currentTimeMillis(), from, isSelf, text),
+            )
+        }
+    }
+    // PHA-4864: file browser. Transfers run on IO; results hop back through _state.
+    private var connectedHost: String = ""
+    private var transferRunner: com.plnt.client.files.TransferRunner? = null
+    private val fileBrowser = com.plnt.client.files.FileBrowser(
+        fileReplies,
+        { name, args -> runOnService { it.sendRawCommand(name, args) } },
+        { grant -> com.plnt.client.files.TcpDataConnection.open(connectedHost, grant) },
+    )
+    private val filesCid get() = ownChannelId ?: 0L
+    private fun filesUi(f: (com.plnt.client.model.FilesUiState) -> com.plnt.client.model.FilesUiState) =
+        _state.update { it.copy(files = f(it.files)) }
+    private fun failText(r: com.plnt.client.files.FileResult.Failed) =
+        if (r.permissionDenied) "You don't have access to files in this channel." else r.message.ifBlank { "Error ${r.code}" }
+
+    private fun openFiles() { filesUi { it.copy(dir = "/", entries = emptyList(), error = null, notice = null) }; refreshFiles("/") }
+
+    fun refreshFiles(dir: String = _state.value.files.dir) {
+        filesUi { it.copy(busy = true, error = null) }
+        fileBrowser.list(filesCid, "", dir) { res ->
+            when (res) {
+                is com.plnt.client.files.FileResult.Ok -> filesUi {
+                    it.copy(dir = dir, busy = false, entries = res.value.sortedWith(compareByDescending<com.plnt.client.files.RemoteFile> { f -> f.isDir }.thenBy { f -> f.name.lowercase() }))
+                }
+                is com.plnt.client.files.FileResult.Failed -> filesUi { it.copy(busy = false, error = failText(res)) }
+            }
+        }
+    }
+
+    fun openDir(name: String) { com.plnt.client.files.FilePaths.child(_state.value.files.dir, name)?.let { refreshFiles(it) } }
+    fun upDir() {
+        val d = _state.value.files.dir
+        refreshFiles(if (d == "/") "/" else d.substringBeforeLast('/').ifEmpty { "/" })
+    }
+
+    private fun simple(op: (String, (com.plnt.client.files.FileResult<Unit>) -> Unit) -> Unit, done: String) {
+        val dir = _state.value.files.dir
+        filesUi { it.copy(busy = true, error = null) }
+        op(dir) { res ->
+            when (res) {
+                is com.plnt.client.files.FileResult.Ok -> { filesUi { it.copy(notice = done) }; refreshFiles(dir) }
+                is com.plnt.client.files.FileResult.Failed -> filesUi { it.copy(busy = false, error = failText(res)) }
+            }
+        }
+    }
+    fun newFolder(name: String) = simple({ d, cb -> fileBrowser.mkdir(filesCid, "", d, name, cb) }, "Folder created")
+    fun deleteFile(name: String) = simple({ d, cb -> fileBrowser.delete(filesCid, "", d, name, cb) }, "Deleted")
+    fun renameFile(old: String, new: String) = simple({ d, cb -> fileBrowser.rename(filesCid, "", d, old, new, cb) }, "Renamed")
+
+    fun downloadFile(file: com.plnt.client.files.RemoteFile) {
+        val dir = _state.value.files.dir
+        val folder = java.io.File(getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "chlorophone").apply { mkdirs() }
+        val local = java.io.File(folder, com.plnt.client.files.FilePaths.uniqueName(
+            com.plnt.client.files.FilePaths.safeLocalName(file.name), folder.list()?.toSet().orEmpty()))
+        val runner = com.plnt.client.files.TransferRunner().also { transferRunner = it }
+        filesUi { it.copy(busy = true, error = null, progress = 0f) }
+        viewModelScope.launch(Dispatchers.IO) {
+            fileBrowser.download(filesCid, "", dir, file, { local.outputStream() }, runner,
+                { done, total -> filesUi { it.copy(progress = if (total > 0) done.toFloat() / total else null) } }) { res ->
+                if (res is com.plnt.client.files.FileResult.Failed) local.delete()
+                finishTransfer(res, "Saved to ${local.name}")
+            }
+        }
+    }
+
+    fun uploadFile(uri: android.net.Uri) {
+        val dir = _state.value.files.dir
+        val cr = getApplication<Application>().contentResolver
+        val runner = com.plnt.client.files.TransferRunner().also { transferRunner = it }
+        filesUi { it.copy(busy = true, error = null, progress = 0f) }
+        viewModelScope.launch(Dispatchers.IO) {
+            var name = "upload"; var size = -1L
+            cr.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) }
+                    c.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = c.getLong(it) }
+                }
+            }
+            val input = cr.openInputStream(uri)
+            if (input == null || size < 0) {
+                filesUi { it.copy(busy = false, progress = null, error = "Could not read that file.") }
+                return@launch
+            }
+            input.use {
+                fileBrowser.upload(filesCid, "", dir, com.plnt.client.files.FilePaths.safeLocalName(name), size, it, runner,
+                    { done, total -> filesUi { s -> s.copy(progress = if (total > 0) done.toFloat() / total else null) } }) { res ->
+                    finishTransfer(res, "Uploaded")
+                }
+            }
+            refreshFiles(dir)
+        }
+    }
+
+    fun cancelTransfer() { transferRunner?.cancel() }
+
+    private fun finishTransfer(res: com.plnt.client.files.FileResult<Unit>, ok: String) = filesUi {
+        when (res) {
+            is com.plnt.client.files.FileResult.Ok -> it.copy(busy = false, progress = null, notice = ok)
+            is com.plnt.client.files.FileResult.Failed -> it.copy(busy = false, progress = null, error = failText(res))
+        }
+    }
+
+    fun clearFilesMessage() = filesUi { it.copy(error = null, notice = null) }
+
     private var streamPollJob: kotlinx.coroutines.Job? = null
 
     private val connection = object : ServiceConnection {
@@ -191,11 +343,15 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val settings = dataStore.loadSettings()
             batteryPromptShown = dataStore.batteryPromptShown()
+            val identity = identityStore.loadOrCreate()
             _state.update {
                 it.copy(
                     bookmarks = dataStore.loadBookmarks(),
                     settings = settings,
-                    identityExport = identityStore.loadOrCreate(),
+                    identityExport = identity,
+                    // PHA-4849: the identity's security level, so Settings can
+                    // show it and offer to raise it.
+                    identityLevel = CoreBridge.identityLevel(identity),
                     batteryOptimizationExempt = isIgnoringBatteryOptimizations(),
                 )
             }
@@ -258,7 +414,13 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         // the last enumeration. With no call running there is no AudioEngine device
         // callback to push an update, so re-read on the way in (#3282).
         if (screen == Screen.Settings) refreshAudioDevices()
-        _state.update { it.copy(screen = screen) }
+        if (screen == Screen.Chat) {
+            // Opening chat reads everything and acknowledges pokes.
+            listOf("channel:${ownChannelId ?: 0}").forEach { chatHistory.markRead(it) }
+            chatHistory.ackPokes()
+        }
+        if (screen == Screen.Files) openFiles()
+        _state.update { it.copy(screen = screen, unreadChat = chatHistory.totalUnread(), pokes = chatHistory.pendingPokes()) }
     }
 
     fun addOrUpdateBookmark(bookmark: Bookmark) {
@@ -281,6 +443,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      * already have is still offered — the user may want to reconnect or re-save
      * with the invite's channel — but [ServerLink.find] tolerates a whole
      * message, so sharing "join me: ts3server://…" works. No-ops on junk.
+     *
+     * PHA-4849: a `tmspk.gg/<code>` invite names a code, not a server. It is
+     * still offered here; the sheet's Join resolves it.
      */
     fun handleServerLink(raw: String?) {
         val link = com.plnt.client.model.ServerLink.find(raw) ?: return
@@ -300,6 +465,58 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun acceptInvite(save: Boolean) {
         val link = _state.value.pendingInvite ?: return
+        if (link.isInvite) {
+            // PHA-4849: an invite code has to be looked up before it names a
+            // server. TeamSpeak's own invite service is the one that knows.
+            resolveInvite(link, save)
+            return
+        }
+        connectWithLink(link, save)
+    }
+
+    /**
+     * PHA-4849: ask TeamSpeak's invite service where an invite code points.
+     * A code that is not known any more — an invite expires after 30 days —
+     * says so rather than failing silently.
+     */
+    private fun resolveInvite(link: com.plnt.client.model.ServerLink, save: Boolean) {
+        val code = link.inviteCode ?: return
+        viewModelScope.launch {
+            val invite = withContext(Dispatchers.IO) {
+                runCatching { com.plnt.client.model.TeamSpeakInviteService.lookup(code) }.getOrNull()
+            }
+            if (invite == null) {
+                _state.update {
+                    it.copy(
+                        pendingInvite = null,
+                        lastError = "That TeamSpeak invite could not be found. It may have expired.",
+                    )
+                }
+                return@launch
+            }
+            val resolved = com.plnt.client.model.ServerLink(
+                // No port in the invite's address means the server's own DNS
+                // entry decides — the SRV record, or TSDNS.
+                address = invite.host,
+                port = invite.explicitPort ?: 0,
+                nickname = link.nickname,
+                channel = link.channel ?: invite.channelId?.let { "/$it" },
+                channelPassword = link.channelPassword,
+                privilegeKey = link.privilegeKey,
+                label = invite.name ?: link.label,
+            )
+            connectWithLink(resolved, save)
+        }
+    }
+
+    /**
+     * PHA-4849: build the bookmark an invite describes and connect to it.
+     *
+     * The privilege key is *not* saved with the bookmark: it is good for one
+     * use, and it is spent on this connection. A bookmark that kept it would
+     * spend it again on the next reconnect and be quietly refused.
+     */
+    private fun connectWithLink(link: com.plnt.client.model.ServerLink, save: Boolean) {
         val existing = _state.value.bookmarks.firstOrNull {
             it.address.equals(link.address, ignoreCase = true) && it.port == link.port
         }
@@ -312,8 +529,12 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         )).copy(
             nickname = link.nickname ?: existing?.nickname ?: com.plnt.client.data.NicknameGenerator.random(),
             serverPassword = link.serverPassword ?: existing?.serverPassword,
+            // PHA-4849: the channel the invite names, and its password.
+            channel = link.channel ?: link.channelId?.let { "/$it" } ?: existing?.channel,
+            channelPassword = link.channelPassword ?: existing?.channelPassword,
+            privilegeKey = link.privilegeKey,
         )
-        if (save) addOrUpdateBookmark(bookmark)
+        if (save) addOrUpdateBookmark(bookmark.copy(privilegeKey = null))
         _state.update { it.copy(pendingInvite = null) }
         connect(bookmark)
     }
@@ -324,6 +545,8 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startConnect(bookmark: Bookmark) {
+        if (changingIdentity) return
+        connectedHost = bookmark.address
         if (bindingStatus.failed) {
             requestVoiceBinding()
             if (bindingStatus.failed) return
@@ -341,6 +564,14 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         talking.clear()
         channelsById.clear()
         clientsById.clear()
+        // PHA-4849: channel ids belong to one server; a new connection is a
+        // new server as far as the passwords we know go.
+        knownChannelPasswords.clear()
+        triedChannelPasswords.clear()
+        // The channel an invite asked for, resolved once the channel tree is
+        // here — see [joinPendingChannel].
+        pendingChannelSpec = bookmark.channel
+        pendingChannelPassword = bookmark.channelPassword
         _state.update {
             it.copy(
                 connectionStatus = it.connectionStatus.start(bookmark.id),
@@ -352,7 +583,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         try {
-            val identity = _state.value.identityExport ?: identityStore.loadOrCreate()
+            val (connectionBookmark, identity) = accountStore.resolve(bookmark) {
+                _state.value.identityExport ?: identityStore.loadOrCreate()
+            }
             val app = getApplication<Application>()
             ContextCompat.startForegroundService(app, Intent(app, VoiceService::class.java))
             runOnService { svc ->
@@ -364,7 +597,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     ServerTapAction.IGNORE -> onServiceSnapshot(svc.currentConnectionSnapshot())
                     ServerTapAction.CONNECT -> try {
-                        svc.connect(bookmark, identity)
+                        svc.connect(connectionBookmark, identity)
                     } catch (t: Throwable) {
                         svc.failConnectionStart(t.message ?: t.javaClass.simpleName)
                     }
@@ -428,8 +661,162 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * PHA-4849: join a channel.
+     *
+     * A channel with a password needs that password, or the server refuses
+     * the move and the user is left in the channel they were already in,
+     * with nothing to show for the tap. So the password is asked for first.
+     */
     fun joinChannel(channelId: Long) {
-        runOnService { it.joinChannel(channelId, null) }
+        val node = findChannel(channelId)
+        val known = knownChannelPasswords[channelId]
+        if (node != null && node.hasPassword && known == null) {
+            _state.update { it.copy(pendingChannelPassword = node) }
+            return
+        }
+        runOnService { it.joinChannel(channelId, known) }
+    }
+
+    /** The password for the pending protected channel; joins with it. */
+    fun submitChannelPassword(password: String) {
+        val node = _state.value.pendingChannelPassword ?: return
+        _state.update { it.copy(pendingChannelPassword = null) }
+        // PHA-4849: remembered only once the server has put us in the
+        // channel — a refused password is forgotten rather than retried.
+        if (password.isNotEmpty()) triedChannelPasswords[node.id] = password
+        runOnService { it.joinChannel(node.id, password.ifEmpty { null }) }
+    }
+
+    /** The user backed out of the password prompt. */
+    fun dismissChannelPassword() {
+        _state.update { it.copy(pendingChannelPassword = null) }
+    }
+
+    // ---- PHA-4854: administration ------------------------------------------
+
+    private var nextAdminRequestId = 1
+    /** In-flight admin operations by request id, so a reply is described in terms of what was asked. */
+    private val pendingAdminOps = HashMap<Int, AdminOp>()
+
+    /**
+     * Run an admin operation. Destructive ones (kick, ban, delete channel) are
+     * parked in state first and only sent by [confirmAdmin]. The server decides
+     * whether the caller may; its answer arrives in [onAdminReply].
+     */
+    fun requestAdmin(op: AdminOp) {
+        if (op.needsConfirmation) {
+            _state.update { it.copy(pendingAdmin = op, adminNotice = null) }
+        } else {
+            sendAdmin(op)
+        }
+    }
+
+    /** The user confirmed the parked operation, optionally with a [reason] for a kick or ban. */
+    fun confirmAdmin(reason: String = "") {
+        val op = _state.value.pendingAdmin ?: return
+        _state.update { it.copy(pendingAdmin = null) }
+        sendAdmin(
+            when (op) {
+                is AdminOp.Kick -> op.copy(reason = reason.trim())
+                is AdminOp.Ban -> op.copy(reason = reason.trim())
+                else -> op
+            },
+        )
+    }
+
+    fun dismissAdmin() {
+        _state.update { it.copy(pendingAdmin = null) }
+    }
+
+    fun dismissAdminNotice() {
+        _state.update { it.copy(adminNotice = null) }
+    }
+
+    private fun sendAdmin(op: AdminOp) {
+        val id = nextAdminRequestId++
+        val cmd = try {
+            AdminCommands.build(op, id)
+        } catch (e: AdminInvalid) {
+            _state.update { it.copy(lastError = "Can't ${op.label}: ${e.message}.", adminNotice = null) }
+            return
+        }
+        pendingAdminOps[id] = op
+        _state.update { it.copy(lastError = null, adminNotice = null) }
+        runOnService { it.sendRawCommand(cmd.name, cmd.args) }
+    }
+
+    /**
+     * An `error` reply tagged with our return code. True when it was ours.
+     * The tree and roster refresh on their own from the server's own
+     * notifications (a moved client, a created or deleted channel); this only
+     * reports the outcome.
+     */
+    private fun onAdminReply(args: Map<String, String>): Boolean {
+        val id = AdminCommands.requestIdOf(args["return_code"]) ?: return false
+        val op = pendingAdminOps.remove(id) ?: return true
+        val result = AdminCommands.describe(op, args)
+        _state.update {
+            if (result.ok) it.copy(adminNotice = result.message, lastError = null)
+            else it.copy(lastError = result.message, adminNotice = null)
+        }
+        return true
+    }
+
+    /** The channel with this id, anywhere in the tree. */
+    private fun findChannel(channelId: Long): ChannelNode? {
+        fun walk(nodes: List<ChannelNode>): ChannelNode? {
+            for (node in nodes) {
+                if (node.id == channelId) return node
+                walk(node.children)?.let { return it }
+            }
+            return null
+        }
+        return walk(_state.value.channelTree)
+    }
+
+    /**
+     * PHA-4849: land in the channel an invite named.
+     *
+     * The connect-time channel only works with a path of *names* — the server
+     * ignores an id there, and the client lands in the default channel with
+     * nothing to show for it — so a channel named by id is joined here
+     * instead, once the channel tree has arrived and the id can be looked up.
+     *
+     * A path of names is joined here too: the connect-time channel already
+     * put us there if the server honoured it, and this move is then a no-op
+     * that also carries the password.
+     */
+    /**
+     * PHA-4849: a channel password we tried is remembered only once the server
+     * has put us in that channel. A refused password is never confirmed, so
+     * the next tap on that channel asks again instead of retrying a password
+     * the server has already turned down.
+     *
+     * Nothing is *forgotten* on a roster snapshot: a snapshot can arrive
+     * between the join request and the move, and dropping the password then
+     * would lose one the server was about to accept.
+     */
+    private fun confirmOrForgetTriedPasswords(clients: List<com.plnt.client.core.CoreClientInfo>) {
+        if (triedChannelPasswords.isEmpty()) return
+        val own = _state.value.ownClientId ?: return
+        val ourChannel = clients.firstOrNull { it.id == own }?.channelId ?: return
+        val confirmed = triedChannelPasswords[ourChannel] ?: return
+        // The server put us in the channel the password was tried for, so the
+        // password was accepted. Remember it, and drop the rest: a password
+        // that was refused is simply never confirmed, so the next tap on that
+        // channel asks again instead of retrying it silently.
+        knownChannelPasswords[ourChannel] = confirmed
+        triedChannelPasswords.clear()
+    }
+
+    private fun joinPendingChannel() {
+        val spec = pendingChannelSpec ?: return
+        val node = com.plnt.client.model.ChannelPath.resolve(spec, _state.value.channelTree) ?: return
+        pendingChannelSpec = null
+        val password = pendingChannelPassword
+        if (password != null) triedChannelPasswords[node.id] = password
+        runOnService { it.joinChannel(node.id, password) }
     }
 
     /**
@@ -514,6 +901,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             )
         }
+        persist(target, (target as? ChatMessageTarget.Direct)?.clientId ?: 0L, clientsById[ownId]?.name ?: "you", true, trimmed)
         runOnService { it.sendTextMessage(target, trimmed) }
     }
 
@@ -598,17 +986,141 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun importIdentity(pem: String): Boolean {
-        if (!identityStore.import(pem)) return false
-        _state.update { it.copy(identityExport = pem) }
-        return true
+    /** Explicit local import only; account data was already verified in the preview. */
+    suspend fun importAccountEntries(entries: List<com.plnt.client.account.AccountEntry>): AccountImportOutcome? {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR) || entries.isEmpty()) return null
+        changingIdentity = true
+        return try {
+            // A server this phone already has is never added a second time:
+            // importing it again would leave two entries for one host.
+            val duplicates = com.plnt.client.account.duplicateServers(entries, _state.value.bookmarks)
+            val fresh = entries.filterNot { it.bookmark.id in duplicates }
+            if (fresh.isEmpty()) return AccountImportOutcome(0, duplicates.size)
+            val ids = fresh.map { it.bookmark.id }.toSet()
+            val next = _state.value.bookmarks.filterNot { it.id in ids } + fresh.map { it.bookmark }
+            withContext(Dispatchers.IO) {
+                accountStore.save(fresh)
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            AccountImportOutcome(fresh.size, duplicates.size)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { null
+        } finally { changingIdentity = false }
+    }
+
+    /**
+     * Forgets the myTeamSpeak account on this phone: the imported identities
+     * and server passwords are erased, the imported servers are removed from
+     * the list, and the device id is dropped so the next sign-in registers as
+     * a new device.
+     *
+     * The server side is not touched — this build cannot write to the account.
+     * The owner has to revoke the device in the official client; the UI says
+     * so instead of implying the session was cancelled.
+     */
+    suspend fun signOutAccount(): Boolean {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return false
+        changingIdentity = true
+        return try {
+            val next = _state.value.bookmarks.filterNot { it.isAccountImport() }
+            withContext(Dispatchers.IO) {
+                accountStore.clearImported()
+                sessionStore.forgetAccountSession()
+                dataStore.saveBookmarks(next)
+            }
+            _state.update { it.copy(bookmarks = next) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) { false
+        } finally { changingIdentity = false }
+    }
+
+    suspend fun importIdentity(pem: String): Boolean = replaceIdentity {
+        if (identityStore.import(pem)) pem else null
+    } != null
+
+    private suspend fun replaceIdentity(import: () -> String?): String? {
+        if (changingIdentity || initialConnect != null ||
+            _state.value.phase !in setOf(ConnectionPhase.DISCONNECTED, ConnectionPhase.ERROR)) return null
+        changingIdentity = true
+        return try {
+            val pem = withContext(Dispatchers.IO) { import() } ?: return null
+            _state.update {
+                it.copy(identityExport = pem, identityLevel = CoreBridge.identityLevel(pem))
+            }
+            pem
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Provider and keystore exceptions can include sensitive values.
+            null
+        } finally {
+            changingIdentity = false
+        }
     }
 
     /** Replaces the on-device identity with a freshly generated one. */
     fun createNewIdentity() {
-        val pem = identityStore.createNew()
-        _state.update { it.copy(identityExport = pem) }
+        viewModelScope.launch { replaceIdentity { identityStore.createNew() } }
     }
+
+    /**
+     * PHA-4849: raise the identity's security level to at least [target].
+     *
+     * A TeamSpeak security level is a hash-cash property of the identity:
+     * the level is how many leading zero bits `sha1(public key + counter)`
+     * has to have, so every level doubles the work. Level 12 is instant, 16
+     * takes a moment, 20 takes minutes — which is why this runs off the UI
+     * thread and the button says it is working.
+     */
+    fun raiseIdentityLevel(target: Int) {
+        if (_state.value.identityLevelRaising) return
+        val pem = _state.value.identityExport ?: identityStore.loadOrCreate()
+        _state.update { it.copy(identityLevelRaising = true) }
+        viewModelScope.launch {
+            val raised = withContext(Dispatchers.Default) {
+                CoreBridge.upgradeIdentityLevel(pem, target)
+            }
+            if (raised == null) {
+                _state.update {
+                    it.copy(
+                        identityLevelRaising = false,
+                        lastError = "The identity's security level could not be raised.",
+                    )
+                }
+                return@launch
+            }
+            identityStore.import(raised)
+            _state.update {
+                it.copy(
+                    identityExport = raised,
+                    identityLevel = CoreBridge.identityLevel(raised),
+                    identityLevelRaising = false,
+                )
+            }
+        }
+    }
+
+    /**
+     * Import an identity from an exported TeamSpeak `.ini` file (PHA-4116).
+     *
+     * Takes the file's text, not a path: Android hands back a Storage Access
+     * Framework content URI, so the caller reads the stream and gives us the
+     * string. Returns the persisted identity, or null if the file wasn't a
+     * readable export — the stored identity is left alone on failure.
+     */
+    suspend fun importIdentityFromIni(contents: String): String? =
+        replaceIdentity { identityStore.importIni(contents) }
+
+    /**
+     * What an exported `.ini` contains, without importing it — so the UI can
+     * show the user what they are about to replace their identity with before
+     * they commit. Public metadata only; never key material.
+     */
+    fun describeIdentityIni(contents: String): String? = identityStore.describeIni(contents)
 
     /**
      * What to show after a disconnect, or null when there is nothing to
@@ -666,6 +1178,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 channelsById.clear()
                 clientsById.clear()
                 streams.clear()
+                pendingAdminOps.clear()
                 ownChannelId = null
                 _state.update {
                     it.copy(
@@ -747,6 +1260,9 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 channelsById.clear()
                 ev.channels.forEach { channelsById[it.id] = it }
                 rebuildTree()
+                // PHA-4849: now that the tree is here, the channel an invite
+                // named can be found.
+                joinPendingChannel()
             }
             is CoreEvent.ClientList -> {
                 // Whole-roster snapshot: rebuild both maps rather than merging,
@@ -759,6 +1275,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 rebuildTree()
                 refreshStreams()
+                confirmOrForgetTriedPasswords(ev.clients)
             }
             is CoreEvent.ClientMoved -> {
                 roster.values.forEach { it.remove(ev.clientId) }
@@ -768,14 +1285,23 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 refreshStreams()
             }
             is CoreEvent.RawCommand -> {
-                if (streams.onRaw(ev)) rebuildTree()
+                if (ev.name == "error" && onAdminReply(ev.args)) return
+                if (ev.name == "notifyclientpoke") {
+                    chatHistory.poke(ev.args["invokername"].orEmpty(), ev.args["msg"].orEmpty())
+                    _state.update { it.copy(pokes = chatHistory.pendingPokes()) }
+                } else if (fileReplies.onRaw(ev.name, ev.args)) {
+                    // consumed by a pending file command
+                } else if (streams.onRaw(ev)) rebuildTree()
             }
             is CoreEvent.TalkStatus -> {
                 talking[ev.clientId] = ev.talking
                 rebuildTree()
             }
-            is CoreEvent.TextMessage -> _state.update {
+            is CoreEvent.TextMessage -> {
+                persist(ev.target, ev.fromClientId, ev.fromName, false, ev.text)
+                _state.update {
                 it.copy(
+                    unreadChat = if (it.screen == Screen.Chat) 0 else chatHistory.totalUnread(),
                     chatMessages = it.chatMessages + ChatMessage(
                         id = UUID.randomUUID().toString(),
                         fromClientId = ev.fromClientId,
@@ -785,6 +1311,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                         text = ev.text,
                     ),
                 )
+                }
             }
         }
     }
