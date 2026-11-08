@@ -19,12 +19,15 @@ class VoiceActivityGate(
     /** True if this 20 ms frame should be transmitted. */
     fun accept(frame: FloatArray): Boolean {
         val rms = rms(frame)
-        when {
-            rms >= openThreshold -> hang = hangoverFrames
-            rms >= closeThreshold && hang > 0 -> hang = hangoverFrames
-            hang > 0 -> hang--
+        if (rms >= openThreshold || (rms >= closeThreshold && hang > 0)) {
+            hang = hangoverFrames
+            return true
         }
-        return hang > 0
+        // Quiet frame: transmit it while hangover remains, so exactly
+        // hangoverFrames quiet frames pass before the gate closes.
+        if (hang == 0) return false
+        hang--
+        return true
     }
 
     fun reset() { hang = 0 }
