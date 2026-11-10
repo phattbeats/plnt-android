@@ -284,6 +284,9 @@ class AudioEngine(
             while (running.get() && capturing.get() && record === rec) {
                 val n = rec.read(nativeBuf, 0, nativeBuf.size, AudioRecord.READ_BLOCKING)
                 if (n <= 0) continue
+                // PHA-4920: PTT up or muted — keep draining the recorder but
+                // skip resampling/framing nobody will hear.
+                if (!sending.get()) continue
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->
                     // Capture never stops; only forwarding is gated by PTT.
