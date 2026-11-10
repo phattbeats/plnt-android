@@ -60,6 +60,18 @@ class AudioEngine(
      * call that looks connected and carries no audio.
      */
     private val onAudioError: (stage: String, error: Throwable) -> Unit = { _, _ -> },
+    /**
+     * Fires only when the voice-activation gate opens or closes the send
+     * path (PHA-4851). Called from the capture thread; the receiver must hop
+     * to its own thread. Never fires in push-to-talk or open-mic mode.
+     */
+    private val onVoiceActivityChanged: (Boolean) -> Unit = {},
+    /**
+     * Fires when a phone call or another app takes audio focus (`true`) and
+     * when the interruption ends (`false`), so the service can say so in the
+     * notification instead of looking connected while silent.
+     */
+    private val onInterruptionChanged: (Boolean) -> Unit = {},
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -104,6 +116,30 @@ class AudioEngine(
     private val scoRouter = BluetoothScoRouter(context, audioManager)
 
     /**
+     * True while a phone call or another app holds audio focus. Capture stays
+     * open (so SCO does not drop) but no frames are sent or played.
+     */
+    @Volatile private var interrupted = false
+
+    private val focus = AudioFocusController(
+        audioManager,
+        onPause = { reason ->
+            Log.i(TAG, "audio interrupted: $reason")
+            interrupted = true
+            // Pausing the send path also ends any voice-activation burst.
+            updateVoiceActivity(false)
+            onInterruptionChanged(true)
+        },
+        onResume = {
+            Log.i(TAG, "audio interruption ended")
+            interrupted = false
+            onInterruptionChanged(false)
+            // A call can leave the route/SCO link and streams stale.
+            rehome("audio focus regained")
+        },
+    )
+
+    /**
      * Starts playback and, when [withCapture] is true, capture — on whatever
      * route Android currently has active.
      *
@@ -117,6 +153,7 @@ class AudioEngine(
         if (!running.compareAndSet(false, true)) return
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        focus.acquire()
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
         emitDeviceLists()
         // Route to the preferred device *before* opening the streams —
@@ -156,6 +193,8 @@ class AudioEngine(
         capturing.set(false)
 
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
+        focus.release()
+        interrupted = false
         scoRouter.release()
         captureThread?.join(500)
         captureThread = null
@@ -181,6 +220,34 @@ class AudioEngine(
      */
     fun setSending(value: Boolean) {
         sending.set(value)
+        if (!value) {
+            vadGate?.reset()
+            updateVoiceActivity(false)
+        }
+    }
+
+    @Volatile private var vadGate: VoiceActivityGate? = null
+    /** Whether the voice-activation gate is currently letting frames through. */
+    private val voiceActive = AtomicBoolean(false)
+
+    /**
+     * Voice activation (PHA-4851 / PHA-4868): when on, only frames the energy
+     * gate accepts — plus its hangover tail — are sent. Capture and the
+     * Bluetooth route stay up throughout, exactly as with PTT.
+     */
+    fun setVadEnabled(enabled: Boolean) {
+        if (enabled) {
+            // Idempotent: the service re-applies its gate on every mute or
+            // mode change, and a mid-word re-apply must not reset the hangover.
+            if (vadGate == null) vadGate = VoiceActivityGate()
+        } else {
+            vadGate = null
+            updateVoiceActivity(false)
+        }
+    }
+
+    private fun updateVoiceActivity(active: Boolean) {
+        if (voiceActive.getAndSet(active) != active) onVoiceActivityChanged(active)
     }
 
     /**
@@ -216,6 +283,7 @@ class AudioEngine(
             Log.w(TAG, "onPlaybackFrame: got ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
         }
         // Rejection is explicit in PlaybackWriter (bounded overflow or failed output).
+        if (interrupted) return
         playbackWriter?.offer(samples)
     }
 
@@ -290,7 +358,19 @@ class AudioEngine(
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->
                     // Capture never stops; only forwarding is gated by PTT.
-                    if (sending.get()) onCaptureFrame(frame)
+                    if (sending.get() && !interrupted) {
+                        val g = vadGate
+                        if (g == null) {
+                            onCaptureFrame(frame)
+                        } else {
+                            val open = g.accept(frame)
+                            updateVoiceActivity(open)
+                            if (open) onCaptureFrame(frame)
+                        }
+                    } else {
+                        vadGate?.reset()
+                        updateVoiceActivity(false)
+                    }
                 }
             }
         }

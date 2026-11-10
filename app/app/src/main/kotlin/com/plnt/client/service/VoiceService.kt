@@ -248,6 +248,8 @@ class VoiceService : Service() {
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
+    /** True while a phone call or another app holds audio focus (PHA-4866). */
+    private var audioInterrupted = false
     // #3282. Held here rather than only on the AudioEngine because the engine is
     // released on a real teardown and while parked waiting for a network — the pin
     // has to survive that without the ViewModel having to re-push it.
@@ -768,14 +770,35 @@ class VoiceService : Service() {
 
     fun setPttMode(mode: PttMode) {
         pttMode = mode
+        // Open mic is transmitting the moment it is selected. Voice activation
+        // starts quiet: the engine reports the gate opening asynchronously
+        // through onVoiceActivityChanged, and `transmitting` follows that.
         transmitting = mode == PttMode.OPEN_MIC
         applySendingGate()
         emitState()
     }
 
+    /**
+     * `setSending` is the engine's capture-forwarding gate. PTT drives it
+     * from the button; open mic and voice activation leave it open while
+     * unmuted, and voice activation adds the energy gate on top.
+     */
     private fun applySendingGate() {
         val engine = audioEngine ?: return
-        engine.setSending(!inputMuted && transmitting)
+        val modeAllowsSend = when (pttMode) {
+            PttMode.PUSH_TO_TALK -> transmitting
+            PttMode.OPEN_MIC, PttMode.VOICE_ACTIVATION -> true
+        }
+        engine.setVadEnabled(pttMode == PttMode.VOICE_ACTIVATION)
+        engine.setSending(!inputMuted && modeAllowsSend)
+    }
+
+    /** Capture-thread report from the engine's voice-activation gate. */
+    private fun onVoiceActivity(active: Boolean) {
+        if (pttMode != PttMode.VOICE_ACTIVATION || transmitting == active) return
+        transmitting = active
+        updateNotification()
+        emitState()
     }
 
     /**
@@ -1173,6 +1196,14 @@ class VoiceService : Service() {
                 }
             },
             onAudioError = { stage, error -> mainHandler.post { reportAudioFailure(stage, error) } },
+            onVoiceActivityChanged = { active -> mainHandler.post { onVoiceActivity(active) } },
+            onInterruptionChanged = { paused ->
+                mainHandler.post {
+                    audioInterrupted = paused
+                    updateNotification()
+                    emitState()
+                }
+            },
         )
         engine.setPreferredInputDevice(preferredInputDeviceKey)
         engine.setPreferredOutputDevice(preferredOutputDeviceKey)
@@ -1506,6 +1537,9 @@ class VoiceService : Service() {
             awaitingNetwork -> "Waiting for network…"
             reconnecting -> "Reconnecting…"
             connectionParams == null -> "Idle"
+            // A phone call or another app holds audio focus: still connected,
+            // deliberately silent both ways until it ends (PHA-4866).
+            audioInterrupted -> "$label — paused by another call"
             // The user is connected but cannot be heard — the one call state
             // that looks fine and isn't.
             audioEngine?.isCaptureActive() == false -> "$label — no microphone"

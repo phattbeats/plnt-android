@@ -197,6 +197,8 @@ fun SettingsScreen(
                 ChoiceRow("Push to talk", "Hold the button, or a hardware trigger, to speak", settings.pttMode == PttMode.PUSH_TO_TALK) { onPttModeChange(PttMode.PUSH_TO_TALK) }
                 RowDivider()
                 ChoiceRow("Open mic", "Always transmitting while unmuted", settings.pttMode == PttMode.OPEN_MIC) { onPttModeChange(PttMode.OPEN_MIC) }
+                RowDivider()
+                ChoiceRow("Voice activation", "Transmit when you speak, with a short tail so word endings are not cut", settings.pttMode == PttMode.VOICE_ACTIVATION) { onPttModeChange(PttMode.VOICE_ACTIVATION) }
             }
 
             Section("Push-to-talk triggers", Icons.Outlined.Mic) {
