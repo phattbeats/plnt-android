@@ -56,3 +56,11 @@ app/app/.cxx/
 ios/build/
 ios/Chlorophone.xcodeproj/
 ios/*.xcworkspace/
+# Signing material — see SIGNING.md. These must never be committed.
+# Losing the keystore forces every user to uninstall before upgrading,
+# so a staged keystore is an incident, not a slipped gitignore rule.
+*.p12
+*.jks
+*.keystore
+keystore.properties
+plnt-release-credentials.txt
