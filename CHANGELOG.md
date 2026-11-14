@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Relay for Teamspeak. Format follows
+All notable changes to Chlorophone for TeamSpeak. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 semantic-ish versioning where `versionCode` is the bump that matters for
 Android installs.
