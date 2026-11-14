@@ -70,6 +70,20 @@ WS8 behaviour, and nothing here was changed by WS8.
   and `StreamViewerSession` do write to it, and those lines go through
   `DiagRedactor` like every other.
 
+## Reviewed: camera share permissions (PHA-4852, PR #42)
+
+PR #42 adds `CAMERA` and `FOREGROUND_SERVICE_CAMERA`, so both were added to
+the `tools/audit_apk.py` allowlist.
+
+* `CAMERA` is a runtime permission. `MainActivity.launchCameraShare` asks for
+  it only when the user taps camera share, never at install or launch. If the
+  user refuses, the share does not start.
+* `VoiceService.foregroundTypes` adds the `camera` foreground-service type
+  only while `cameraActive` is true, so the service holds no camera claim
+  unless a share is running.
+* `android.hardware.camera` is declared `required="false"`, so devices
+  without a camera can still install the app.
+
 ## Update trust
 
 There is no in-app updater. APKs reach testers as GitHub Actions artifacts signed with one shared key held in repo secrets (`PLNT_KEYSTORE_B64`). Trust therefore rests on the `phattbeats` GitHub account and that secret. No key was rotated in WS8.
