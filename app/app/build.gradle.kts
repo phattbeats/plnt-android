@@ -12,8 +12,8 @@ android {
         applicationId = "com.plnt.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.2-account-test"
+        versionCode = 4
+        versionName = "0.2.0-dev"
         ndk {
             // JNA bundles other ABIs; only advertise the ones our core ships.
             abiFilters += setOf("arm64-v8a", "x86_64")

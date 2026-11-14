@@ -5,6 +5,41 @@ All notable changes to Relay for Teamspeak. Format follows
 semantic-ish versioning where `versionCode` is the bump that matters for
 Android installs.
 
+## [0.2.0-dev] - 2026-11-14 - Test candidate
+
+`versionCode` 4. Debug build signed with the shared key, so it installs over
+earlier test builds.
+
+### Added
+
+- Voice activation talk mode alongside push-to-talk and open mic (#49).
+- Audio focus handling: a phone call or another app taking audio pauses the
+  call, and audio resumes when focus comes back. Bluetooth SCO routing is
+  restored after the interruption (#49, PHA-4866).
+- Camera share with front/back switch. The camera permission is requested
+  only when you tap share (#42).
+- Picture-in-picture when leaving the app while watching a stream (#42).
+- Optional user-supplied TURN relay for stream peers. There is no default
+  relay (#42).
+- Administration: move, kick, ban, channel create/edit/delete, server info,
+  and clear errors when the server denies an action (#43).
+- myTeamSpeak sign-in and verified server import (#24).
+
+### Fixed
+
+- Playback stays in order across partial writes and track failures (#39).
+- Closing the app ends the call, and idle capture work is skipped (#46).
+
+### Security
+
+- Encrypted bookmark secrets, redacted diagnostics, and an APK manifest
+  audit in CI (#45). See `WS8_SECURITY_REVIEW.md`.
+
+### Not verified yet
+
+- Real-device checks for call interruption, Bluetooth connect/disconnect
+  mid-call, and audio focus loss to another app.
+
 ## [0.1.1-dev] - Test candidate
 
 - Apply Relay for Teamspeak branding with the by PHATT TECH byline.
