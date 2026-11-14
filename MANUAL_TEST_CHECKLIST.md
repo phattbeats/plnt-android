@@ -1,5 +1,7 @@
 # #3077 — manual device test checklist
 
+> Scope/status update (2026-11-01): [ROADMAP.md](ROADMAP.md) and [README.md](README.md) supersede the original voice-only exclusions. This document retains implementation and historical verification detail; planned camera/files/admin/TeamSpeakID work is not a claim of released or device-verified functionality.
+
 Run on a real Android device (minSdk 26+) against a real TeamSpeak server,
 with a second client (desktop TS client, or another PLNT device) in the same
 channel to talk to. None of this is exercisable on the emulator (no

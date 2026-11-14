@@ -1,44 +1,54 @@
-# plnt-android
+# Chlorophone for TeamSpeak
 
-by PHATT TECH
+**by PHATT TECH**
 
-The app ships as **Chlorophone**. The test candidate supports importing an
-exported TeamSpeak identity in Settings → Identity (offline key-file import),
-and signing in with a myTeamSpeak account in Settings → myTeamSpeak to
-download synced servers and their identities.
+An independent mobile TeamSpeak client: native Android UI/audio, a shared Rust protocol/voice core, and an iOS companion implementation. The repository and Android application ID retain their historical PLNT names; the product is **Chlorophone**.
 
-A TeamSpeak 3/6 Android client built on
+The Rust core is built on
 [`ReSpeak/tsclientlib`](https://github.com/ReSpeak/tsclientlib) (pinned to
-commit `ee3bc6f`) and a Kotlin/Compose UI. This repo packages the Rust
-core as Android loadable libraries (`.so` files) via
-[`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) and exposes it to
-Kotlin through [UniFFI](https://github.com/mozilla/uniffi-rs).
+commit `ee3bc6f`), packaged as Android loadable libraries (`.so` files) via
+[`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) and exposed to Kotlin
+through [UniFFI](https://github.com/mozilla/uniffi-rs).
 
 The canonical build entry point is `./build.sh`, which produces `app-debug.apk`.
-The app supports Android 8 or newer on ARM64 and x86_64 devices. It includes
-voice, channel navigation, chat, and TeamSpeak 6 screen sharing.
+The app supports Android 8 or newer on ARM64 and x86_64 devices. Identity import
+(Settings → Identity) and myTeamSpeak sign-in with synced server import
+(Settings → myTeamSpeak) are in the test candidate.
 
-## Status
+## Product scope and status — 2026-11-01
 
-| Phase | Status |
-|---|---|
-| #3073 voice spike (Rust core → TS6 server, 4 s of 440 Hz) | **PASS** — spike write-up + voicespike harness: <https://nextcloud.phatt.vip/s/MgjsSdgkA8M2q9S/download> |
-| #3074 toolchain (this repo) | **SCAFFOLD COMPLETE + CI WIRED** — Cargo workspace + `plnt-core` (verified `cargo build`/`cargo test` clean host-side) + UniFFI bindings (generated, committed at `app/app/src/main/kotlin/com/plnt/client/uniffi/plnt_core/plnt_core.kt`) + Gradle/Compose app + `build.sh` + `.github/workflows/build.yml` (CI runs on Ubuntu 24.04). Live APK build needs a CI runner with Rust + JDK 17 + Android SDK 34 + NDK 27 — wired in the workflow. |
-| #3075 voice client core | `Client`/`EventSink`/`ConnEvent`/`IdentityObj` over tsclientlib, 20 ms PCM frame API (`sendPcmFrame`/`PcmFrame`) — see `core/src/lib.rs`. |
-| #3077 Android audio engine | **CODE WRITTEN, UNVERIFIED** — `AudioEngine` (VOICE_COMMUNICATION capture/playback, AEC/NS, Bluetooth SCO routing, `AudioDeviceCallback` rehoming, PTT gates send not capture) + `VoiceService` (foreground service owning it). See `AUDIO_ENGINE.md` for exactly what's verified vs. blocked on a real toolchain, and `MANUAL_TEST_CHECKLIST.md` for the device round. |
-| #3078 foreground service wiring, reconnect, identity/bookmark storage | **CODE WRITTEN, UNVERIFIED** — `VoiceService` is now actually wired to `PlntViewModel` (previously dead code; the ViewModel bypassed it entirely, so no captured audio ever reached plnt-core). Adds `ConnectivityManager`-driven reconnect with exponential backoff (capped 30 s) that rejoins the last channel, notification mute/talk/disconnect actions, a partial wake lock while connected, `MediaSessionCompat` headset-button PTT, `EncryptedSharedPreferences` identity, and DataStore bookmarks/settings. See `FOREGROUND_SERVICE.md` for exactly what's verified vs. blocked, and the new "Network handoff / reconnect" section of `MANUAL_TEST_CHECKLIST.md`. |
+The original voice-only milestone is historical, not the current product limit. Approved scope includes **TeamSpeakID/myTeamSpeak account import, camera and screen sharing, files, chat/history, administration, a cleaner interface, and production-quality voice/security/release behavior**. See [ROADMAP.md](ROADMAP.md) and [PHA-4848](https://paperclip.phatt.vip/issues/PHA-4848), under the Android app epic [PHA-3072](https://paperclip.phatt.vip/issues/PHA-3072).
 
-## Installing (friends)
+Implementation is not the same as delivery or device acceptance:
 
-1. On your phone, turn on install-from-unknown-sources for your browser
-   (Settings -> Apps -> your browser -> Install unknown apps).
-2. Download `app-debug.apk` from the `v0.1-invite-links` release page.
-3. Tap the downloaded file and confirm "Install". Open plnt, add your server,
-   tap the invite link, and hold the mic button to talk.
+| Area | Current main source | Remaining acceptance / scope |
+| --- | --- | --- |
+| Voice/connections | Rust/tsclientlib + Opus, channel tree, PTT/open mic, mute/deafen, routing, foreground service, reconnect/session recovery | Hardware/network matrix, partial-playback-write fix, protected-channel passwords and invite targets; VAD, whisper, overlay PTT and call interruption |
+| Chat | Android channel/private send and receive | Persistent history, unread/pokes and richer media workflows |
+| Screen sharing | Android send screen + playback audio and watch TS6 WebRTC streams | TURN/NAT coverage, PiP/overlay, camera sharing and lifecycle/permission acceptance; see [STREAMING.md](STREAMING.md) |
+| TeamSpeakID / myTeamSpeak | Separate account sign-in/import candidate in [PR #24](https://github.com/phattbeats/plnt-android/pull/24), not merged main | Test APK recorded in PHA-4344; owner real-account login/OTP, sync/import and imported-identity voice acceptance remain unverified. Reuse PHA-4109/4116/4350 recovery |
+| Files/admin | No complete user-facing workflows in audited main | File browser/transfers/manage operations and permission-aware user/channel administration are approved |
+| iOS | SwiftUI/shared Rust core, connection/channel/chat paths and unsigned build pipeline | Physical-device acceptance PHA-4553; no iOS streaming parity claim. See [ios/README.md](ios/README.md) |
+| Releases/privacy | Debug APK workflow and historical prerelease | Signed production delivery, signing-key continuity, opt-in/redacted diagnostics, encrypted bookmark secrets and backup policy |
 
-It is a debug-signed build — sideloading works, Play Store distribution does
-not. These steps are the ones the round-1 device test actually ran. See
-`CHANGELOG.md` for what is in it and how far it has been tested.
+The source audit is pinned to main commit 3e49c75. It is not a claim that every feature passed on a real phone. PocketTS was reviewed as a comparison reference; its GPLv3 code is not copied into this project's license.
+
+## Installing and testing
+
+- Android main requires Android 8.0+ (API 26). Development builds are sideloaded APKs.
+- Latest public GitHub prerelease at this update: v0.1-invite-links (October 9), a debug-signed historical build. Do not assume it includes current-main or account-sign-in candidate features.
+- Account-import testing must use the exact build/instructions recorded in PHA-4344. Export existing identities first. Never put credentials, recovery keys or private identities in logs/bug reports.
+- iOS requires iOS 16+ and a sideload/signing workflow; see its README.
+- Release signing changes, production publishing, real-account tests and service mutations are separately gated; a successful build alone does not approve them.
+
+## Architecture
+
+- Kotlin/Jetpack Compose Android UI and service-owned audio/session lifecycle.
+- Rust plnt-core wrapping pinned tsclientlib and audiopus, bridged with UniFFI.
+- Android WebRTC streaming alongside the protocol core.
+- SwiftUI iOS client reusing the Rust core; platform features tracked separately.
+
+Retain the foundation and deliver incremental tested slices rather than a wholesale protocol rewrite. [AUDIO_ENGINE.md](AUDIO_ENGINE.md), [FOREGROUND_SERVICE.md](FOREGROUND_SERVICE.md) and [MANUAL_TEST_CHECKLIST.md](MANUAL_TEST_CHECKLIST.md) retain implementation/historical verification details; use this current status and the roadmap when early milestone notes describe narrower scope.
 
 ## Layout
 
@@ -163,24 +173,9 @@ About**: the last line there is `core_version()`, rendered straight from the
 Rust core, e.g. `plnt-core 0.1.0 (tsclientlib@ee3bc6f …)`. If the native
 library failed to load it reads `unavailable: <exception>` instead.
 
-## Architecture decisions (locked from the spike)
+## Historical spike scope
 
-- **Voice only.** Connect, channel tree, who-is-talking, join channel,
-  push-to-talk / open mic, mute/deafen, Bluetooth headsets that
-  actually work. No chat, no streams, no file transfer, no TS6-only
-  features.
-- **Rust core** wraps `tsclientlib` + `audiopus` (Opus encoder/decoder).
-- **Kotlin audio** uses `VOICE_COMMUNICATION` stream type.
-- **Foreground service** with `FOREGROUND_SERVICE_MICROPHONE` for
-  background voice.
-- **Compose UI** in TeamSpeak branding with a Discord-style layout
-  (PHA-3072 rebrand, 2026-10-10), renamed to **Chlorophone** with the mark 02
-  launcher icon (PHA-4341).
-
-The build pipeline delivers the bridge for those features. Voice-session
-APIs (connect, channel tree, PTT) are scheduled for follow-up tickets —
-they need a real-device test plan and Bluetooth headset validation
-beyond what `build.sh` produces.
+The September voice-only spike established the core architecture, not a permanent restriction. Its exclusions are superseded by ROADMAP.md. Android source includes voice (push-to-talk, open mic, voice activation), chat, file transfer core, server administration, TS6 screen sharing and camera share; see ROADMAP.md for what is still partial or unverified on devices.
 
 ## Identity policy
 
