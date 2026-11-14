@@ -147,6 +147,11 @@ data class Settings(
     val streamResolution: Int = 0,
     val streamFps: Int = 0,
     val streamBitrateKbps: Int = 0,
+    // PHA-4852: the user's own TURN relay for streams. Empty = direct/STUN only;
+    // we never ship or host a default relay.
+    val turnUrl: String = "",
+    val turnUsername: String = "",
+    val turnCredential: String = "",
 )
 
 sealed class Screen {

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -105,6 +106,7 @@ fun SettingsScreen(
     onOutputDeviceChange: (String?) -> Unit,
     onShareAudioChange: (Boolean) -> Unit,
     onStreamQualityChange: (resolution: Int, fps: Int, bitrateKbps: Int) -> Unit,
+    onTurnServerChange: (url: String, username: String, credential: String) -> Unit,
     onImportAccount: suspend (List<com.plnt.client.account.AccountEntry>) -> com.plnt.client.account.AccountImportOutcome?,
     onSignOutAccount: suspend () -> Boolean,
     existingServers: List<com.plnt.client.model.Bookmark>,
@@ -124,6 +126,7 @@ fun SettingsScreen(
     var showExport by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
+    var showTurn by remember { mutableStateOf(false) }
     var showLevelPicker by remember { mutableStateOf(false) }
     var qualityPicker by remember { mutableStateOf<QualityKnob?>(null) }
     var importPreview by remember { mutableStateOf<String?>(null) }
@@ -231,6 +234,18 @@ fun SettingsScreen(
                     "Automatic shares at full quality (1080p, 60 fps, 8 Mbps) on Wi-Fi and at 720p, 30 fps, 2.5 Mbps on mobile data. " +
                         "Changes apply to the next share. Your voice still goes through the call. " +
                         "Apps that block recording, like most paid video apps, share silence.",
+                )
+            }
+
+            Section("Relay (TURN)", Icons.Outlined.Headset) {
+                NavRow(
+                    "TURN server",
+                    settings.turnUrl.ifBlank { "None — direct connection only" },
+                ) { showTurn = true }
+                Footnote(
+                    "Optional. Use your own TURN server so streams still connect when this phone and the other side " +
+                        "cannot reach each other directly (mobile data, strict NAT). Chlorophone never provides a relay. " +
+                        "Applies to the next stream.",
                 )
             }
 
@@ -398,6 +413,32 @@ fun SettingsScreen(
                     showCreate = false
                 })
             }
+        }
+    }
+
+    if (showTurn) {
+        var url by remember { mutableStateOf(settings.turnUrl) }
+        var user by remember { mutableStateOf(settings.turnUsername) }
+        var cred by remember { mutableStateOf(settings.turnCredential) }
+        val urlOk = url.isBlank() || com.plnt.client.stream.IceServerConfig.isValidTurnUrl(url)
+        SettingsSheet(title = "TURN server", onDismiss = { showTurn = false }) {
+            PlntTextField("URL", url, { url = it }, placeholder = "turn:relay.example.org:3478")
+            if (!urlOk) {
+                Text(
+                    "Start with turn: or turns:, e.g. turn:relay.example.org:3478",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            PlntTextField("Username", user, { user = it })
+            Spacer(modifier = Modifier.height(14.dp))
+            PlntTextField("Credential", cred, { cred = it }, visualTransformation = PasswordVisualTransformation())
+            Spacer(modifier = Modifier.height(20.dp))
+            PrimaryButton("Save", enabled = urlOk, modifier = Modifier.fillMaxWidth(), onClick = {
+                onTurnServerChange(url, user, cred)
+                showTurn = false
+            })
         }
     }
 

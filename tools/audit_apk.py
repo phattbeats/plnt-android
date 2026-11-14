@@ -38,6 +38,9 @@ ALLOWED_PERMISSIONS = {
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.WAKE_LOCK",
     "android.permission.ACCESS_WIFI_STATE",
+    # PHA-4852 camera share; see WS8_SECURITY_REVIEW.md.
+    "android.permission.CAMERA",
+    "android.permission.FOREGROUND_SERVICE_CAMERA",
     # androidx.core adds this signature-level permission for its own
     # unexported receivers on API 33+.
     "com.plnt.client.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",

@@ -51,6 +51,21 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK && data != null) viewModel.startScreenShare(data)
     }
 
+    // PHA-4852: camera share. Denial surfaces an error and starts nothing; a
+    // permission revoked mid-share makes Android kill the process or the camera
+    // errors, which the sender session turns into an ended share.
+    private val requestCamera = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { ok -> if (ok) viewModel.startCameraShare() else viewModel.onCameraPermissionDenied() }
+
+    private fun launchCameraShare() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            viewModel.startCameraShare()
+        } else {
+            requestCamera.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     private fun launchScreenCapture() {
         // PHA-4176: a second tap while the system prompt is still coming up
         // used to queue a second prompt, and with it a second share.
@@ -130,6 +145,8 @@ class MainActivity : ComponentActivity() {
                             shareState = state.streamSend,
                             onShareScreen = ::launchScreenCapture,
                             onStopShare = viewModel::stopScreenShare,
+                            onShareCamera = ::launchCameraShare,
+                            onSwitchCamera = viewModel::switchShareCamera,
                             outputDevices = state.availableOutputDevices,
                             outputDeviceKey = state.settings.preferredOutputDeviceKey,
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
@@ -180,6 +197,7 @@ class MainActivity : ComponentActivity() {
                             onOutputDeviceChange = viewModel::setPreferredOutputDevice,
                             onShareAudioChange = viewModel::setShareAudio,
                             onStreamQualityChange = viewModel::setStreamQuality,
+                            onTurnServerChange = viewModel::setTurnServer,
                             onImportAccount = viewModel::importAccountEntries,
                             onSignOutAccount = viewModel::signOutAccount,
                             existingServers = state.bookmarks,
@@ -214,6 +232,25 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * PHA-4852: leaving the app (home/recents) while watching a stream shrinks
+     * the viewer into a PiP window instead of dropping back to a blank screen.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            viewModel.state.value.screen == Screen.StreamViewer
+        ) {
+            runCatching {
+                enterPictureInPictureMode(
+                    android.app.PictureInPictureParams.Builder()
+                        .setAspectRatio(android.util.Rational(16, 9))
+                        .build(),
+                )
             }
         }
     }

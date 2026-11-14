@@ -24,7 +24,10 @@ import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
+import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraVideoCapturer
 import org.webrtc.ScreenCapturerAndroid
+import org.webrtc.VideoCapturer
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
@@ -73,9 +76,13 @@ import org.webrtc.audio.JavaAudioDeviceModule
 class StreamSenderSession(
     private val context: Context,
     private val eglBase: EglBase,
-    private val permissionData: Intent,
+    /** MediaProjection grant for a screen share; null for a camera share. */
+    private val permissionData: Intent?,
+    /** Camera share (PHA-4852): start on the front camera? Ignored for a screen share. */
+    private val startFront: Boolean = true,
     /** Share the phone's playback audio too (Settings, on by default). */
     private val withAudio: Boolean,
+    private val iceServers: List<IceServerSpec> = IceServerConfig.STUN,
     private val ownClientId: () -> Long?,
     private val sendRaw: (name: String, args: Map<String, String>) -> Unit,
     private val onState: (StreamSendState) -> Unit,
@@ -83,7 +90,9 @@ class StreamSenderSession(
     private val tag = "StreamSender"
     private val main = Handler(Looper.getMainLooper())
     private val factory: PeerConnectionFactory
-    private var capturer: ScreenCapturerAndroid? = null
+    private var capturer: VideoCapturer? = null
+    private val isCamera: Boolean get() = permissionData == null
+    private var frontCamera = startFront
     private var textureHelper: SurfaceTextureHelper? = null
     private var source: VideoSource? = null
     private var track: VideoTrack? = null
@@ -169,38 +178,38 @@ class StreamSenderSession(
         check(capturer == null) { "already sharing" }
         maxFps = fps
         maxBitrateKbps = bitrateKbps
-        update(StreamSendState(phase = StreamSendPhase.STARTING, title = title))
-        val helper = SurfaceTextureHelper.create("ScreenShare", eglBase.eglBaseContext)
-        val src = factory.createVideoSource(/* isScreencast = */ true)
-        val cap = ScreenCapturerAndroid(
-            permissionData,
-            object : MediaProjection.Callback() {
-                override fun onStop() {
-                    // The user revoked it from the system UI / status bar chip.
-                    // Arrives on the capturer's thread, whose helper stop()
-                    // disposes; hop to main, and never let it throw there.
-                    main.post {
-                        try {
-                            stop("screen capture stopped")
-                        } catch (t: Throwable) {
-                            Log.w(tag, "stop after projection end failed", t)
+        update(StreamSendState(phase = StreamSendPhase.STARTING, title = title, camera = isCamera, frontCamera = startFront))
+        val helper = SurfaceTextureHelper.create(if (isCamera) "CameraShare" else "ScreenShare", eglBase.eglBaseContext)
+        val src = factory.createVideoSource(/* isScreencast = */ !isCamera)
+        val cap: VideoCapturer = if (isCamera) {
+            createCameraCapturer(startFront) ?: run {
+                failStart("no camera available", null, src, helper)
+                return
+            }
+        } else {
+            ScreenCapturerAndroid(
+                permissionData!!,
+                object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        // The user revoked it from the system UI / status bar chip.
+                        // Arrives on the capturer's thread, whose helper stop()
+                        // disposes; hop to main, and never let it throw there.
+                        main.post {
+                            try {
+                                stop("screen capture stopped")
+                            } catch (t: Throwable) {
+                                Log.w(tag, "stop after projection end failed", t)
+                            }
                         }
                     }
-                }
-            },
-        )
+                },
+            )
+        }
         runCatching {
             cap.initialize(helper, context.applicationContext, src.capturerObserver)
             cap.startCapture(width, height, fps)
         }.onFailure {
-            Log.e(tag, "capture start failed", it)
-            update(state.copy(phase = StreamSendPhase.FAILED, detail = "could not capture the screen: ${it.message}"))
-            runCatching { cap.dispose() }
-            src.dispose()
-            helper.dispose()
-            // Nothing else holds the factory now; a later stop() is a no-op.
-            closed = true
-            runCatching { factory.dispose() }
+            failStart("could not capture the ${if (isCamera) "camera" else "screen"}: ${it.message}", cap, src, helper)
             return
         }
         textureHelper = helper
@@ -209,7 +218,7 @@ class StreamSenderSession(
         captureWidth = width
         captureHeight = height
         track = factory.createVideoTrack("outgoing_video_track", src)
-        startAudio(cap)
+        (cap as? ScreenCapturerAndroid)?.let { startAudio(it) }
         trace("setupstream ${width}x$height ${fps}fps ${bitrateKbps}kbps audio=${audioTrack != null}")
         setupReturnCode = sendCommand(
             "setupstream",
@@ -262,6 +271,60 @@ class StreamSenderSession(
         }
     }
 
+    private fun failStart(detail: String, cap: VideoCapturer?, src: VideoSource, helper: SurfaceTextureHelper) {
+        Log.e(tag, "capture start failed: $detail")
+        update(state.copy(phase = StreamSendPhase.FAILED, detail = detail))
+        runCatching { cap?.dispose() }
+        src.dispose()
+        helper.dispose()
+        // Nothing else holds the factory now; a later stop() is a no-op.
+        closed = true
+        runCatching { factory.dispose() }
+    }
+
+    /**
+     * Camera capturer for the front or back camera, falling back to the other
+     * one. Revocation (permission pulled, camera taken by another app, device
+     * disconnect) ends the share through the events handler.
+     */
+    private fun createCameraCapturer(front: Boolean): VideoCapturer? {
+        val en = Camera2Enumerator(context.applicationContext)
+        val names = en.deviceNames
+        val name = names.firstOrNull { en.isFrontFacing(it) == front }
+            ?: names.firstOrNull { en.isBackFacing(it) == !front }
+            ?: names.firstOrNull() ?: return null
+        frontCamera = en.isFrontFacing(name)
+        val events = object : CameraVideoCapturer.CameraEventsHandler {
+            private fun end(why: String) {
+                main.post { runCatching { stop(why) } }
+            }
+            override fun onCameraError(errorDescription: String?) = end("camera error: $errorDescription")
+            override fun onCameraDisconnected() = end("camera disconnected")
+            override fun onCameraFreezed(errorDescription: String?) = end("camera froze: $errorDescription")
+            override fun onCameraOpening(cameraName: String?) {}
+            override fun onFirstFrameAvailable() {}
+            override fun onCameraClosed() {}
+        }
+        return en.createCapturer(name, events)
+    }
+
+    /** Camera share only: flip front/back without renegotiating. */
+    fun switchCamera() {
+        val cam = capturer as? CameraVideoCapturer ?: return
+        if (closed) return
+        cam.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFront: Boolean) {
+                main.post {
+                    if (closed) return@post
+                    frontCamera = isFront
+                    trace("camera switched, front=$isFront")
+                    update(state.copy(frontCamera = isFront))
+                }
+            }
+            override fun onCameraSwitchError(err: String?) = trace("camera switch failed: $err")
+        })
+    }
+
     private fun releaseAudio() {
         runCatching { audioTrack?.dispose() }
         audioTrack = null
@@ -279,7 +342,7 @@ class StreamSenderSession(
      */
     fun resize(width: Int, height: Int) {
         val cap = capturer ?: return
-        if (closed || (width == captureWidth && height == captureHeight)) return
+        if (isCamera || closed || (width == captureWidth && height == captureHeight)) return
         runCatching { cap.changeCaptureFormat(width, height, maxFps) }
             .onSuccess {
                 captureWidth = width
@@ -409,10 +472,7 @@ class StreamSenderSession(
         if (viewers.containsKey(clid)) return
         val t = track ?: return
         val config = PeerConnection.RTCConfiguration(
-            listOf(
-                PeerConnection.IceServer.builder("stun:turn.teamspeak.com:3478").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            ),
+            IceServerConfig.toWebRtc(iceServers),
         ).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
