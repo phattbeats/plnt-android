@@ -49,6 +49,13 @@ to `AudioEngine.onPlaybackFrame`.
 - **PTT gates sending, not capture**: `AudioEngine.setSending(Boolean)` only
   toggles whether captured frames are forwarded; the capture thread and
   `AudioRecord` never stop, so there's no SCO reconnect between PTT presses.
+- **WS3 reliability (PHA-4851)**: ordered, bounded playback across partial
+  `WRITE_NON_BLOCKING` writes lives in `PlaybackWriter`; call/other-app
+  interruptions in `AudioFocusController`; the voice-activation talk mode in
+  `VoiceActivityGate`. Verification status, the loss/jitter procedure, the
+  Rust-vs-Kotlin benchmark protocol and the device matrix are in
+  `WS3_RELIABILITY.md`; the noise-suppression licence position is in
+  `WS3_LICENSE_AUDIT.md`.
 
 ## What's NOT implemented here (explicitly out of scope for #3077)
 

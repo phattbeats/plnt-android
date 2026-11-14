@@ -6,7 +6,6 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Base64
 import android.util.Log
-import com.plnt.client.BuildConfig
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
@@ -23,14 +22,24 @@ import java.net.URL
  * moment the core's heartbeat stops.
  *
  * Nothing here is ever shown to the user or posted to a channel.
+ *
+ * PHA-4856 (WS8): off unless the user turns on Settings > Diagnostics, in any
+ * build type. Before WS8 it keyed off `BuildConfig.DEBUG` — and the debug APK
+ * is the one CI hands to testers, so every tester's phone shipped its trace
+ * without being asked. Every line is passed through [DiagRedactor] before it
+ * is written, and turning the switch off deletes the local trace.
  */
 object Diag {
     /**
-     * The one switch for this whole machinery: uploads, the stall watchdog and
-     * the diagnostic auto-join on open. Debug builds (what the tester runs)
-     * have it on; a release build has all of it off.
+     * The one switch for this whole machinery: the trace file, logcat lines,
+     * uploads and the stall watchdog. The user's choice, persisted in
+     * [PREFS]; false until [init] has read it.
      */
-    @JvmField val ENABLED: Boolean = BuildConfig.DEBUG
+    @Volatile var enabled: Boolean = false
+        private set
+
+    private const val PREFS = "plnt_diag"
+    private const val KEY_ENABLED = "share_diagnostics"
 
     private const val TAG = "plnt.diag"
     private var file: File? = null
@@ -58,15 +67,45 @@ object Diag {
     private var burstUntil = 0L
     private var lastUpload = 0L
 
-    fun init(dir: File) {
-        if (!ENABLED || file != null) return
-        file = File(dir, "plnt-diag.log")
+    private var loopStarted = false
+
+    /** Reads the user's choice; called from the service and the UI, whichever comes first. */
+    fun init(ctx: Context) {
+        val on = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
+        applyChoice(ctx, on)
+    }
+
+    fun isEnabled(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
+
+    /** Settings > Diagnostics. Off stops uploads at once and deletes the local trace. */
+    fun setEnabled(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on).commit()
+        applyChoice(ctx, on)
+    }
+
+    @Synchronized
+    private fun applyChoice(ctx: Context, on: Boolean) {
+        val f = File(ctx.applicationContext.filesDir, "plnt-diag.log")
+        enabled = on
+        if (!on) {
+            file = null
+            dirty = false
+            notable = false
+            runCatching { f.delete() }
+            return
+        }
+        if (file != null) return
+        file = f
         // The previous run's trace (if the process died) goes up first, then
         // a background loop ships the file on the cadence described above.
         uploadAsync("start")
+        if (loopStarted) return
+        loopStarted = true
         Thread({
             while (true) {
                 Thread.sleep(5_000)
+                if (!enabled) continue
                 if (watchdogDue()) {
                     add("WATCHDOG no core heartbeat for ${(System.currentTimeMillis() - lastBeat) / 1000}s\n" + threadDump())
                     openBurst()
@@ -94,7 +133,7 @@ object Diag {
     }
 
     fun uploadAsync(why: String) {
-        if (!ENABLED) return
+        if (!enabled) return
         Thread({ upload(why) }, "plnt-diag-upload-now").apply { isDaemon = true }.start()
     }
 
@@ -135,7 +174,7 @@ object Diag {
     }.getOrElse { "error: $it" }
 
     private fun upload(why: String) {
-        if (!ENABLED) return
+        if (!enabled) return
         val f = file ?: return
         runCatching {
             val bytes = tail(f) ?: return
@@ -175,7 +214,8 @@ object Diag {
 
     @Synchronized
     fun add(line: String) {
-        val stamped = "+${(System.currentTimeMillis() - start) / 1000}s $line"
+        if (!enabled) return
+        val stamped = "+${(System.currentTimeMillis() - start) / 1000}s ${DiagRedactor.redact(line)}"
         Log.w(TAG, stamped)
         file?.let { f ->
             runCatching {

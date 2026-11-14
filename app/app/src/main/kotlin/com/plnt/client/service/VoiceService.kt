@@ -232,6 +232,14 @@ class VoiceService : Service() {
     private var ownClientId: Long? = null
     private var lastChannelId: Long? = null
 
+    /**
+     * PHA-4849: the password of the channel we are in, when it had one.
+     * A reconnect comes back to that channel — and a protected channel needs
+     * its password again, or the move is refused and the user lands in the
+     * default channel with no idea why.
+     */
+    private var lastChannelPassword: String? = null
+
     /** `SystemClock.elapsedRealtime()` of the last successful connect, for [logLifecycle]. */
     private var connectedAtElapsedMs: Long? = null
 
@@ -240,6 +248,8 @@ class VoiceService : Service() {
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
+    /** True while a phone call or another app holds audio focus (PHA-4866). */
+    private var audioInterrupted = false
     // #3282. Held here rather than only on the AudioEngine because the engine is
     // released on a real teardown and while parked waiting for a network — the pin
     // has to survive that without the ViewModel having to re-push it.
@@ -248,6 +258,7 @@ class VoiceService : Service() {
     private var availableInputDevices: List<AudioDeviceOption> = emptyList()
     private var availableOutputDevices: List<AudioDeviceOption> = emptyList()
 
+    private var exitProcessOnDestroy = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     /** Latest onStartCommand id, so a hang-up only un-starts us if no newer start is pending. */
@@ -297,7 +308,7 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         logLifecycle("onCreate", "")
-        Diag.init(filesDir)
+        Diag.init(this)
         // Before any connect: the native DNS resolver needs the app Context
         // to resolve server hostnames on Android (PHA-3289).
         com.plnt.client.core.AndroidContext.ensure(this)
@@ -346,7 +357,7 @@ class VoiceService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE_MUTE -> setInputMuted(!inputMuted)
             ACTION_TOGGLE_TALK -> setPushToTalk(!transmitting)
-            ACTION_DISCONNECT -> disconnect("notification")
+            ACTION_DISCONNECT -> endAndExit("notification exit")
         }
         if (intent == null) restorePersistedSession()
         return START_STICKY
@@ -545,8 +556,20 @@ class VoiceService : Service() {
 
     fun joinChannel(channelId: Long, password: String?) {
         lastChannelId = channelId
+        // PHA-4849: keep the password so a reconnect can come back to a
+        // protected channel. It is never logged.
+        lastChannelPassword = password
         persistSession()
         runCatching { client?.joinChannel(channelId, password) }
+    }
+
+    /**
+     * PHA-4849: spend a privilege key on the live connection. Good for one
+     * use — the server's answer is an `error` command carrying
+     * `return_code=token`.
+     */
+    fun usePrivilegeKey(token: String) {
+        runCatching { client?.usePrivilegeKey(token) }
     }
 
     fun setInputMuted(muted: Boolean) {
@@ -747,14 +770,35 @@ class VoiceService : Service() {
 
     fun setPttMode(mode: PttMode) {
         pttMode = mode
+        // Open mic is transmitting the moment it is selected. Voice activation
+        // starts quiet: the engine reports the gate opening asynchronously
+        // through onVoiceActivityChanged, and `transmitting` follows that.
         transmitting = mode == PttMode.OPEN_MIC
         applySendingGate()
         emitState()
     }
 
+    /**
+     * `setSending` is the engine's capture-forwarding gate. PTT drives it
+     * from the button; open mic and voice activation leave it open while
+     * unmuted, and voice activation adds the energy gate on top.
+     */
     private fun applySendingGate() {
         val engine = audioEngine ?: return
-        engine.setSending(!inputMuted && transmitting)
+        val modeAllowsSend = when (pttMode) {
+            PttMode.PUSH_TO_TALK -> transmitting
+            PttMode.OPEN_MIC, PttMode.VOICE_ACTIVATION -> true
+        }
+        engine.setVadEnabled(pttMode == PttMode.VOICE_ACTIVATION)
+        engine.setSending(!inputMuted && modeAllowsSend)
+    }
+
+    /** Capture-thread report from the engine's voice-activation gate. */
+    private fun onVoiceActivity(active: Boolean) {
+        if (pttMode != PttMode.VOICE_ACTIVATION || transmitting == active) return
+        transmitting = active
+        updateNotification()
+        emitState()
     }
 
     /**
@@ -767,6 +811,20 @@ class VoiceService : Service() {
         // in-app button from the notification's action.
         Diag.add("hang-up from $source")
         shutdown(DisconnectCause.USER, "disconnected by user")
+    }
+
+    /**
+     * PHA-4920: the user closed the app (swiped it from Recents or tapped Exit
+     * on the notification). End the session, clear the persisted snapshot so
+     * nothing redials it, stop the service and let the process go. Unlike
+     * [disconnect] the process is also killed once the service is destroyed,
+     * so no cached process lingers.
+     */
+    fun endAndExit(source: String) {
+        exitProcessOnDestroy = true
+        disconnect(source)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     /** Initial setup failed before the asynchronous native connect was launched. */
@@ -863,6 +921,7 @@ class VoiceService : Service() {
         mediaSession.release()
         if (eglBaseLazy.isInitialized()) runCatching { eglBase.release() }
         super.onDestroy()
+        if (exitProcessOnDestroy) android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     // ---- session persistence (#3290 item 2) ----------------------------
@@ -905,8 +964,13 @@ class VoiceService : Service() {
                 val session = runCatching { sessionStore.load() }.getOrNull()
                 // peek(), not loadOrCreate(): an install whose identity is gone
                 // must not silently reconnect as a brand-new stranger.
-                val pem = session?.let { runCatching { identityStore.peek() }.getOrNull() }
-                if (session != null && pem != null) session to pem else null
+                session?.let {
+                    runCatching {
+                        val (bookmark, pem) = com.plnt.client.account.AccountStore(applicationContext)
+                            .resolve(it.bookmark) { identityStore.peek() }
+                        it.copy(bookmark = bookmark) to pem
+                    }.getOrNull()
+                }
             }
             if (!clientGeneration.accepts(restoreGeneration) || connectionParams != null) return@launch
             if (restored == null) {
@@ -955,6 +1019,9 @@ class VoiceService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         logLifecycle("onTaskRemoved", "task swiped from Recents")
+        // PHA-4920: closing the app ends the call. Backgrounding does not
+        // reach here; only removing the task does.
+        endAndExit("task removed")
         super.onTaskRemoved(rootIntent)
     }
 
@@ -1044,13 +1111,39 @@ class VoiceService : Service() {
 
         serviceScope.launch(Dispatchers.IO) {
             try {
+                // PHA-4849: only a path of channel *names* can be asked for at
+                // connect time — the server ignores a channel id there, and
+                // the client lands in the default channel with nothing to
+                // show for it. An id is joined after the channel tree arrives
+                // (PlntViewModel.joinPendingChannel).
+                val connectChannel =
+                    if (com.plnt.client.model.ChannelPath.isConnectTime(params.bookmark.channel)) {
+                        params.bookmark.channel
+                    } else {
+                        null
+                    }
                 c.connect(
                     params.bookmark.address,
                     params.bookmark.port,
                     params.bookmark.nickname,
                     params.identityPem,
                     params.bookmark.serverPassword,
+                    // PHA-4849: the channel an invite asked us to land in, its
+                    // password, and the privilege key that came with it.
+                    connectChannel,
+                    if (connectChannel != null) params.bookmark.channelPassword else null,
+                    params.bookmark.privilegeKey,
                 )
+                // PHA-4849: a privilege key is good for one use. Drop it from
+                // the params, so a later reconnect does not spend it a second
+                // time (and does not get quietly refused for it).
+                if (params.bookmark.privilegeKey != null) {
+                    mainHandler.post {
+                        connectionParams = connectionParams?.let {
+                            it.copy(bookmark = it.bookmark.copy(privilegeKey = null))
+                        }
+                    }
+                }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main) {
                     // A failed old attempt must never shut down a newer session.
@@ -1103,6 +1196,14 @@ class VoiceService : Service() {
                 }
             },
             onAudioError = { stage, error -> mainHandler.post { reportAudioFailure(stage, error) } },
+            onVoiceActivityChanged = { active -> mainHandler.post { onVoiceActivity(active) } },
+            onInterruptionChanged = { paused ->
+                mainHandler.post {
+                    audioInterrupted = paused
+                    updateNotification()
+                    emitState()
+                }
+            },
         )
         engine.setPreferredInputDevice(preferredInputDeviceKey)
         engine.setPreferredOutputDevice(preferredOutputDeviceKey)
@@ -1160,7 +1261,7 @@ class VoiceService : Service() {
                 reconnecting = false
                 reconnectAttempts = 0
                 reconnectBackoffMs = INITIAL_BACKOFF_MS
-                lastChannelId?.let { chan -> runCatching { client?.joinChannel(chan, null) } }
+                lastChannelId?.let { chan -> runCatching { client?.joinChannel(chan, lastChannelPassword) } }
                 acquireWakeLock()
                 mediaSession.isActive = true
                 mediaSession.setPlaybackState(
@@ -1436,6 +1537,9 @@ class VoiceService : Service() {
             awaitingNetwork -> "Waiting for network…"
             reconnecting -> "Reconnecting…"
             connectionParams == null -> "Idle"
+            // A phone call or another app holds audio focus: still connected,
+            // deliberately silent both ways until it ends (PHA-4866).
+            audioInterrupted -> "$label — paused by another call"
             // The user is connected but cannot be heard — the one call state
             // that looks fine and isn't.
             audioEngine?.isCaptureActive() == false -> "$label — no microphone"
@@ -1453,7 +1557,7 @@ class VoiceService : Service() {
         )
         val disconnectAction = NotificationCompat.Action(
             android.R.drawable.ic_menu_close_clear_cancel,
-            "Disconnect",
+            "Exit",
             servicePendingIntent(ACTION_DISCONNECT, 3),
         )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)

@@ -77,6 +77,26 @@
                 <data android:scheme="tsserver" />
                 <data android:scheme="teamspeak" />
             </intent-filter>
+
+            <!--
+                PHA-4849: TeamSpeak's own link host, `tmspk.gg`. The official
+                TeamSpeak app's "Create Invite" produces
+                `https://tmspk.gg/<code>` links, and `tmspk.gg/s=host?…` is
+                another spelling of a server link. No autoVerify: the domain
+                is not ours, so there is nothing to verify against — Android
+                offers Chlorophone in the "Open with" chooser rather than
+                routing the link here silently. A pasted `tmspk.gg/…` link
+                works either way: ServerLink.find reads it out of any text.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.DEFAULT" />
+                <category android:name="android.intent.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="tmspk.gg" />
+                <data android:host="www.tmspk.gg" />
+            </intent-filter>
         </activity>
 
         <!--
@@ -94,6 +114,7 @@
         <service
             android:name=".service.VoiceService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="microphone|mediaPlayback|mediaProjection" />
 
     </application>

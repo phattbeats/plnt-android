@@ -9,9 +9,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.plnt.client.model.Bookmark
 import com.plnt.client.model.PttMode
 import com.plnt.client.model.Settings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.coroutines.withContext
 
 private val Context.plntDataStore by preferencesDataStore(name = "plnt_settings")
 
@@ -19,9 +19,8 @@ private val Context.plntDataStore by preferencesDataStore(name = "plnt_settings"
  * Bookmarks + PTT settings, replacing #3079's raw-SharedPreferences
  * stopgap with Jetpack DataStore (identity stays out of here — that one's
  * sensitive enough to earn its own encrypted store, see [IdentityStore]).
- * Bookmarks are kept as one JSON blob (same on-disk shape as before, so an
- * existing install's data reads back without a migration step); settings get
- * their own keys.
+ * Bookmarks are kept as one JSON blob of their public fields; their secrets
+ * are in [KeystoreSecretVault] (PHA-4856). Settings get their own keys.
  */
 class PlntDataStore(private val context: Context) {
     private object Keys {
@@ -63,40 +62,23 @@ class PlntDataStore(private val context: Context) {
         val LEGACY_INPUT_ROUTE = stringPreferencesKey("input_route")
     }
 
-    suspend fun loadBookmarks(): List<Bookmark> {
-        val raw = context.plntDataStore.data.first()[Keys.BOOKMARKS] ?: return emptyList()
-        return runCatching {
-            JSONArray(raw).let { arr ->
-                (0 until arr.length()).map { i ->
-                    val o = arr.getJSONObject(i)
-                    Bookmark(
-                        id = o.getString("id"),
-                        label = o.getString("label"),
-                        address = o.getString("address"),
-                        port = o.getInt("port"),
-                        nickname = o.getString("nickname"),
-                        serverPassword = o.optString("password", "").ifEmpty { null },
-                    )
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
+    // PHA-4856 (WS8): the bookmark blob keeps only the public fields; the
+    // passwords and privilege keys go to an encrypted, backup-excluded vault.
+    private val bookmarkRepo = BookmarkRepository(
+        readPublic = { context.plntDataStore.data.first()[Keys.BOOKMARKS] },
+        writePublic = { raw -> context.plntDataStore.edit { it[Keys.BOOKMARKS] = raw } },
+        vault = KeystoreSecretVault(context),
+    )
 
-    suspend fun saveBookmarks(bookmarks: List<Bookmark>) {
-        val arr = JSONArray()
-        bookmarks.forEach { b ->
-            arr.put(
-                JSONObject()
-                    .put("id", b.id)
-                    .put("label", b.label)
-                    .put("address", b.address)
-                    .put("port", b.port)
-                    .put("nickname", b.nickname)
-                    .put("password", b.serverPassword ?: ""),
-            )
-        }
-        context.plntDataStore.edit { it[Keys.BOOKMARKS] = arr.toString() }
-    }
+    /** Also moves a pre-WS8 install's plaintext secrets into the vault, once. */
+    suspend fun loadBookmarks(): List<Bookmark> = withContext(Dispatchers.IO) { bookmarkRepo.load() }
+
+    /**
+     * False when the secrets could not be stored securely (the Keystore is
+     * unavailable). The bookmarks are saved without them then — never in the
+     * clear — and the user is asked for them again on the next connect.
+     */
+    suspend fun saveBookmarks(list: List<Bookmark>): Boolean = withContext(Dispatchers.IO) { bookmarkRepo.save(list) }
 
     suspend fun loadSettings(): Settings {
         val prefs = context.plntDataStore.data.first()

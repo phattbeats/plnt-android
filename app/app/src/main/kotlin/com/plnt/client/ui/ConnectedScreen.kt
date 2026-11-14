@@ -9,7 +9,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -45,15 +48,19 @@ import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -72,6 +79,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import android.media.AudioDeviceInfo
 import com.plnt.client.audio.keyDeviceType
@@ -106,8 +115,17 @@ fun ConnectedScreen(
     outputDeafened: Boolean,
     transmitting: Boolean,
     pttIsPushToTalk: Boolean,
+    /** PHA-4851: voice activation shares open mic's gesture-free control but its own label. */
+    voiceActivation: Boolean = false,
     lastError: String?,
     onJoinChannel: (Long) -> Unit,
+    /**
+     * PHA-4849: a protected channel the user tapped, waiting for its
+     * password. Null when nothing is waiting.
+     */
+    pendingChannelPassword: ChannelNode? = null,
+    onChannelPasswordSubmit: (String) -> Unit = {},
+    onChannelPasswordDismiss: () -> Unit = {},
     onToggleMute: () -> Unit,
     onToggleDeafen: () -> Unit,
     onPttPress: () -> Unit,
@@ -115,6 +133,9 @@ fun ConnectedScreen(
     onDisconnect: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenChat: () -> Unit,
+    onOpenFiles: () -> Unit = {},
+    unreadChat: Int = 0,
+    pokes: List<Pair<String, String>> = emptyList(),
     /** PHA-3289: tap a streaming client's row to watch. */
     onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit = {},
     /** PHA-3289 send side: our own share and its start/stop. */
@@ -125,7 +146,16 @@ fun ConnectedScreen(
     outputDevices: List<AudioDeviceOption> = emptyList(),
     outputDeviceKey: String? = null,
     onOutputDeviceChange: (String?) -> Unit = {},
+    /** PHA-4854: administration. Long-press a user or channel; the server decides who may. */
+    onAdmin: (com.plnt.client.admin.AdminOp) -> Unit = {},
+    pendingAdmin: com.plnt.client.admin.AdminOp? = null,
+    onAdminConfirm: (String) -> Unit = {},
+    onAdminDismiss: () -> Unit = {},
+    adminNotice: String? = null,
+    onAdminNoticeDismiss: () -> Unit = {},
 ) {
+    var adminTarget by remember { mutableStateOf<AdminTarget?>(null) }
+    var adminForm by remember { mutableStateOf<AdminForm?>(null) }
     // Collapse state is per-channel and sticky; channels with nothing in them
     // start collapsed, everything else starts open.
     val expandOverrides = remember { mutableStateMapOf<Long, Boolean>() }
@@ -195,6 +225,21 @@ fun ConnectedScreen(
                 }
             }
 
+            adminNotice?.let {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Speaking.copy(alpha = 0.18f))
+                        .clickable { onAdminNoticeDismiss() }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(it, color = TextNormal, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -208,21 +253,37 @@ fun ConnectedScreen(
                             current = row.node.id == selfChannel?.id,
                             onToggle = { expandOverrides[row.node.id] = !isExpanded(row.node) },
                             onJoin = { onJoinChannel(row.node.id) },
+                            onLongPress = { adminTarget = channelTarget(channelTree, row.node) },
                         )
-                        is TreeRow.Client -> ClientRowView(row.client, row.depth, onWatchStream)
+                        is TreeRow.Client -> ClientRowView(
+                            row.client,
+                            row.depth,
+                            onWatchStream,
+                            onLongPress = if (row.client.isSelf) null else ({ adminTarget = AdminTarget.User(row.client) }),
+                        )
                     }
                 }
             }
 
+            pokes.lastOrNull()?.let { (from, msg) ->
+                androidx.compose.material3.Text(
+                    "$from poked you${if (msg.isNotBlank()) ": $msg" else ""}",
+                    modifier = Modifier.fillMaxWidth().background(Brand).padding(12.dp),
+                    color = OnBrand,
+                )
+            }
             ControlBar(
                 phase = phase,
                 channelName = selfChannel?.name,
                 serverName = serverName,
                 onOpenChat = onOpenChat,
+                onOpenFiles = onOpenFiles,
+                unreadChat = unreadChat,
                 inputMuted = inputMuted,
                 outputDeafened = outputDeafened,
                 transmitting = transmitting,
                 pttIsPushToTalk = pttIsPushToTalk,
+                voiceActivation = voiceActivation,
                 onToggleMute = onToggleMute,
                 onToggleDeafen = onToggleDeafen,
                 onPttPress = onPttPress,
@@ -236,6 +297,118 @@ fun ConnectedScreen(
                 onOutputDeviceChange = onOutputDeviceChange,
             )
         }
+    }
+
+    adminTarget?.let { target ->
+        AdminMenuDialog(
+            target = target,
+            ownChannelId = selfChannel?.id,
+            onAdmin = onAdmin,
+            onForm = { adminForm = it },
+            onDismiss = { adminTarget = null },
+        )
+    }
+    adminForm?.let { form ->
+        AdminFormDialog(form = form, onAdmin = onAdmin, onDismiss = { adminForm = null })
+    }
+    pendingAdmin?.let { op ->
+        AdminConfirmDialog(
+            op = op,
+            targetName = adminTargetName(channelTree, op),
+            onConfirm = onAdminConfirm,
+            onDismiss = onAdminDismiss,
+        )
+    }
+
+    // PHA-4849: a password-protected channel needs its password before the
+    // move is worth sending.
+    pendingChannelPassword?.let { channel ->
+        ChannelPasswordDialog(
+            channel = channel,
+            onSubmit = onChannelPasswordSubmit,
+            onDismiss = onChannelPasswordDismiss,
+        )
+    }
+}
+
+/**
+ * PHA-4849: the password for a protected channel.
+ *
+ * The join is not sent until the password is in. A move without one is
+ * refused by the server, and the user stays in the channel they were already
+ * in with nothing to show for the tap.
+ */
+@Composable
+private fun ChannelPasswordDialog(
+    channel: ChannelNode,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember(channel.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        title = { Text("Channel password", color = TextNormal) },
+        text = {
+            Column {
+                Text(
+                    "\"${channel.name}\" is password protected.",
+                    color = TextMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(password) }) { Text("Join", color = Brand) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
+        },
+    )
+}
+
+/** Where [node] sits among its siblings, for the reorder actions. */
+private fun channelTarget(tree: List<ChannelNode>, node: ChannelNode): AdminTarget.Channel {
+    fun find(siblings: List<ChannelNode>, parentId: Long): AdminTarget.Channel? {
+        if (siblings.any { it.id == node.id }) {
+            return AdminTarget.Channel(node, parentId, siblings.lastOrNull()?.id, siblings.firstOrNull()?.id)
+        }
+        for (s in siblings) find(s.children, s.id)?.let { return it }
+        return null
+    }
+    return find(tree, 0L) ?: AdminTarget.Channel(node, 0L, null, null)
+}
+
+/** The display name of whoever or whatever a pending admin operation targets. */
+private fun adminTargetName(tree: List<ChannelNode>, op: com.plnt.client.admin.AdminOp): String {
+    fun channel(id: Long, nodes: List<ChannelNode>): ChannelNode? {
+        for (n in nodes) {
+            if (n.id == id) return n
+            channel(id, n.children)?.let { return it }
+        }
+        return null
+    }
+    fun client(id: Long, nodes: List<ChannelNode>): String? {
+        for (n in nodes) {
+            n.clients.firstOrNull { it.clientId == id }?.let { return it.name }
+            client(id, n.children)?.let { return it }
+        }
+        return null
+    }
+    return when (op) {
+        is com.plnt.client.admin.AdminOp.Kick -> client(op.clientId, tree) ?: "this user"
+        is com.plnt.client.admin.AdminOp.Ban -> client(op.clientId, tree) ?: "this user"
+        is com.plnt.client.admin.AdminOp.DeleteChannel -> channel(op.channelId, tree)?.name ?: "this channel"
+        else -> ""
     }
 }
 
@@ -277,6 +450,7 @@ private fun findSelfChannel(nodes: List<ChannelNode>): ChannelNode? {
  * Discord-style voice channel row: speaker glyph, name, and a lifted
  * background on the channel you're in. Tap joins; the chevron folds.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelRowView(
     node: ChannelNode,
@@ -285,6 +459,7 @@ private fun ChannelRowView(
     current: Boolean,
     onToggle: () -> Unit,
     onJoin: () -> Unit,
+    onLongPress: () -> Unit = {},
 ) {
     val isEmpty = node.clients.isEmpty() && node.children.isEmpty()
     val rotation by animateFloatAsState(if (expanded) 0f else -90f, label = "chevron")
@@ -295,7 +470,7 @@ private fun ChannelRowView(
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (current) SurfaceHigh else Color.Transparent)
-            .clickable { onJoin() }
+            .combinedClickable(onClick = onJoin, onLongClick = onLongPress)
             .padding(start = (2 + 16 * depth).dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -348,11 +523,13 @@ private fun ChannelRowView(
  * speaking, name, then muted/deafened glyphs and a red LIVE badge for a
  * screen share (tap the row to watch).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ClientRowView(
     client: ClientRow,
     depth: Int,
     onWatchStream: (com.plnt.client.stream.StreamInfo) -> Unit,
+    onLongPress: (() -> Unit)? = null,
 ) {
     val presence = client.presence
     val stream = client.streaming
@@ -364,7 +541,16 @@ private fun ClientRowView(
             .fillMaxWidth()
             .height(40.dp)
             .clip(RoundedCornerShape(8.dp))
-            .then(if (stream != null) Modifier.clickable { onWatchStream(stream) } else Modifier)
+            .then(
+                if (stream != null || onLongPress != null) {
+                    Modifier.combinedClickable(
+                        onClick = { if (stream != null) onWatchStream(stream) },
+                        onLongClick = onLongPress,
+                    )
+                } else {
+                    Modifier
+                },
+            )
             .padding(start = (30 + 16 * depth).dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -421,10 +607,13 @@ private fun ControlBar(
     channelName: String?,
     serverName: String,
     onOpenChat: () -> Unit,
+    onOpenFiles: () -> Unit = {},
+    unreadChat: Int = 0,
     inputMuted: Boolean,
     outputDeafened: Boolean,
     transmitting: Boolean,
     pttIsPushToTalk: Boolean,
+    voiceActivation: Boolean = false,
     onToggleMute: () -> Unit,
     onToggleDeafen: () -> Unit,
     onPttPress: () -> Unit,
@@ -527,6 +716,8 @@ private fun ControlBar(
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 when {
+                    voiceActivation && transmitting -> "Voice activation · talking"
+                    voiceActivation -> "Voice activation · listening"
                     !pttIsPushToTalk && transmitting -> "Open mic · live"
                     !pttIsPushToTalk -> "Open mic"
                     transmitting -> "Talking"
@@ -565,9 +756,15 @@ private fun ControlBar(
             )
             PanelButton(
                 icon = Icons.Outlined.ChatBubbleOutline,
-                description = "Chat",
-                active = false,
+                description = if (unreadChat > 0) "Chat, $unreadChat unread" else "Chat",
+                active = unreadChat > 0,
                 onClick = onOpenChat,
+            )
+            PanelButton(
+                icon = Icons.Filled.Folder,
+                description = "Files",
+                active = false,
+                onClick = onOpenFiles,
             )
             PanelButton(
                 icon = Icons.Filled.CallEnd,

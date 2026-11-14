@@ -4,6 +4,17 @@
 
 An independent mobile TeamSpeak client: native Android UI/audio, a shared Rust protocol/voice core, and an iOS companion implementation. The repository and Android application ID retain their historical PLNT names; the product is **Chlorophone**.
 
+The Rust core is built on
+[`ReSpeak/tsclientlib`](https://github.com/ReSpeak/tsclientlib) (pinned to
+commit `ee3bc6f`), packaged as Android loadable libraries (`.so` files) via
+[`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) and exposed to Kotlin
+through [UniFFI](https://github.com/mozilla/uniffi-rs).
+
+The canonical build entry point is `./build.sh`, which produces `app-debug.apk`.
+The app supports Android 8 or newer on ARM64 and x86_64 devices. Identity import
+(Settings → Identity) and myTeamSpeak sign-in with synced server import
+(Settings → myTeamSpeak) are in the test candidate.
+
 ## Product scope and status — 2026-11-01
 
 The original voice-only milestone is historical, not the current product limit. Approved scope includes **TeamSpeakID/myTeamSpeak account import, camera and screen sharing, files, chat/history, administration, a cleaner interface, and production-quality voice/security/release behavior**. See [ROADMAP.md](ROADMAP.md) and [PHA-4848](https://paperclip.phatt.vip/issues/PHA-4848), under the Android app epic [PHA-3072](https://paperclip.phatt.vip/issues/PHA-3072).
@@ -164,7 +175,7 @@ library failed to load it reads `unavailable: <exception>` instead.
 
 ## Historical spike scope
 
-The September voice-only spike established the core architecture, not a permanent restriction. Its exclusions are superseded by ROADMAP.md. Android source includes chat and TS6 screen sharing; camera, files and admin are approved work, not shipped-feature claims.
+The September voice-only spike established the core architecture, not a permanent restriction. Its exclusions are superseded by ROADMAP.md. Android source includes voice (push-to-talk, open mic, voice activation), chat, file transfer core, server administration, TS6 screen sharing and camera share; see ROADMAP.md for what is still partial or unverified on devices.
 
 ## Identity policy
 

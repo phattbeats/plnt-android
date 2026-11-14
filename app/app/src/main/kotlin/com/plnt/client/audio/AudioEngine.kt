@@ -21,7 +21,6 @@ import com.plnt.client.model.AudioDeviceOption
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
@@ -61,6 +60,18 @@ class AudioEngine(
      * call that looks connected and carries no audio.
      */
     private val onAudioError: (stage: String, error: Throwable) -> Unit = { _, _ -> },
+    /**
+     * Fires only when the voice-activation gate opens or closes the send
+     * path (PHA-4851). Called from the capture thread; the receiver must hop
+     * to its own thread. Never fires in push-to-talk or open-mic mode.
+     */
+    private val onVoiceActivityChanged: (Boolean) -> Unit = {},
+    /**
+     * Fires when a phone call or another app takes audio focus (`true`) and
+     * when the interruption ends (`false`), so the service can say so in the
+     * notification instead of looking connected while silent.
+     */
+    private val onInterruptionChanged: (Boolean) -> Unit = {},
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -87,7 +98,8 @@ class AudioEngine(
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
 
-    private val playbackTrack = AtomicReference<AudioTrack?>(null)
+    private val playbackLock = Any()
+    @Volatile private var playbackWriter: PlaybackWriter? = null
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -104,6 +116,30 @@ class AudioEngine(
     private val scoRouter = BluetoothScoRouter(context, audioManager)
 
     /**
+     * True while a phone call or another app holds audio focus. Capture stays
+     * open (so SCO does not drop) but no frames are sent or played.
+     */
+    @Volatile private var interrupted = false
+
+    private val focus = AudioFocusController(
+        audioManager,
+        onPause = { reason ->
+            Log.i(TAG, "audio interrupted: $reason")
+            interrupted = true
+            // Pausing the send path also ends any voice-activation burst.
+            updateVoiceActivity(false)
+            onInterruptionChanged(true)
+        },
+        onResume = {
+            Log.i(TAG, "audio interruption ended")
+            interrupted = false
+            onInterruptionChanged(false)
+            // A call can leave the route/SCO link and streams stale.
+            rehome("audio focus regained")
+        },
+    )
+
+    /**
      * Starts playback and, when [withCapture] is true, capture — on whatever
      * route Android currently has active.
      *
@@ -117,6 +153,7 @@ class AudioEngine(
         if (!running.compareAndSet(false, true)) return
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        focus.acquire()
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
         emitDeviceLists()
         // Route to the preferred device *before* opening the streams —
@@ -156,6 +193,8 @@ class AudioEngine(
         capturing.set(false)
 
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
+        focus.release()
+        interrupted = false
         scoRouter.release()
         captureThread?.join(500)
         captureThread = null
@@ -165,7 +204,10 @@ class AudioEngine(
         record?.let { runCatching { it.stop() }; it.release() }
         record = null
 
-        playbackTrack.getAndSet(null)?.let { runCatching { it.stop() }; it.release() }
+        synchronized(playbackLock) {
+            playbackWriter?.close()
+            playbackWriter = null
+        }
 
         audioManager.mode = AudioManager.MODE_NORMAL
         Log.i(TAG, "AudioEngine stopped")
@@ -178,6 +220,34 @@ class AudioEngine(
      */
     fun setSending(value: Boolean) {
         sending.set(value)
+        if (!value) {
+            vadGate?.reset()
+            updateVoiceActivity(false)
+        }
+    }
+
+    @Volatile private var vadGate: VoiceActivityGate? = null
+    /** Whether the voice-activation gate is currently letting frames through. */
+    private val voiceActive = AtomicBoolean(false)
+
+    /**
+     * Voice activation (PHA-4851 / PHA-4868): when on, only frames the energy
+     * gate accepts — plus its hangover tail — are sent. Capture and the
+     * Bluetooth route stay up throughout, exactly as with PTT.
+     */
+    fun setVadEnabled(enabled: Boolean) {
+        if (enabled) {
+            // Idempotent: the service re-applies its gate on every mute or
+            // mode change, and a mid-word re-apply must not reset the hangover.
+            if (vadGate == null) vadGate = VoiceActivityGate()
+        } else {
+            vadGate = null
+            updateVoiceActivity(false)
+        }
+    }
+
+    private fun updateVoiceActivity(active: Boolean) {
+        if (voiceActive.getAndSet(active) != active) onVoiceActivityChanged(active)
     }
 
     /**
@@ -209,11 +279,12 @@ class AudioEngine(
 
     /** Feed one decoded 20 ms / 960-sample / 48 kHz mono frame from plnt-core to the speaker/headset. */
     fun onPlaybackFrame(samples: FloatArray) {
-        val track = playbackTrack.get() ?: return
         if (samples.size != CORE_FRAME_SAMPLES) {
             Log.w(TAG, "onPlaybackFrame: got ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
         }
-        track.write(samples, 0, samples.size, AudioTrack.WRITE_NON_BLOCKING)
+        // Rejection is explicit in PlaybackWriter (bounded overflow or failed output).
+        if (interrupted) return
+        playbackWriter?.offer(samples)
     }
 
     // ---- device rehoming --------------------------------------------------
@@ -281,10 +352,25 @@ class AudioEngine(
             while (running.get() && capturing.get() && record === rec) {
                 val n = rec.read(nativeBuf, 0, nativeBuf.size, AudioRecord.READ_BLOCKING)
                 if (n <= 0) continue
+                // PHA-4920: PTT up or muted — keep draining the recorder but
+                // skip resampling/framing nobody will hear.
+                if (!sending.get()) continue
                 val resampled = resampler.process(nativeBuf, n)
                 frameAccumulator.push(resampled) { frame ->
                     // Capture never stops; only forwarding is gated by PTT.
-                    if (sending.get()) onCaptureFrame(frame)
+                    if (sending.get() && !interrupted) {
+                        val g = vadGate
+                        if (g == null) {
+                            onCaptureFrame(frame)
+                        } else {
+                            val open = g.accept(frame)
+                            updateVoiceActivity(open)
+                            if (open) onCaptureFrame(frame)
+                        }
+                    } else {
+                        vadGate?.reset()
+                        updateVoiceActivity(false)
+                    }
                 }
             }
         }
@@ -354,11 +440,21 @@ class AudioEngine(
 
     // ---- playback -------------------------------------------------------------
 
-    private fun openPlaybackTrack(reopen: Boolean = false) {
-        val old = if (reopen) playbackTrack.getAndSet(null) else playbackTrack.get()
-        old?.let { runCatching { it.stop() }; it.release() }
-        if (!reopen && playbackTrack.get() != null) return
+    private fun openPlaybackTrack(reopen: Boolean = false) = synchronized(playbackLock) {
+        if (!running.get()) return@synchronized
+        val existing = playbackWriter
+        if (existing != null) {
+            if (reopen) existing.reopen()
+        } else {
+            playbackWriter = PlaybackWriter.threaded(::buildPlaybackSink) { error ->
+                Log.e(TAG, "playback unavailable", error)
+                onAudioError("playback", error)
+            }.also { it.reopen() }
+        }
+    }
 
+    /** The writer owns each track from successful acquisition until close. */
+    private fun buildPlaybackSink(): PlaybackSink {
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -372,6 +468,7 @@ class AudioEngine(
         // Same unchecked-acquisition problem as capture (#3290 item 8), and
         // the worse half of it: a failure here means the call is connected and
         // the user hears nothing at all.
+        var opened: AudioTrack? = null
         val track = try {
             AudioTrack(
                 attrs,
@@ -380,19 +477,26 @@ class AudioEngine(
                 AudioTrack.MODE_STREAM,
                 AudioManager.AUDIO_SESSION_ID_GENERATE,
             ).also {
-                // Same reasoning as buildAudioRecord(): Automatic leaves this untouched.
+                opened = it // release even when state/preferred device/play fails
+                check(it.state == AudioTrack.STATE_INITIALIZED) { "AudioTrack not initialized" }
                 preferredOutputKey?.let { key ->
                     findDevice(AudioManager.GET_DEVICES_OUTPUTS, key)?.let(it::setPreferredDevice)
                 }
                 it.play()
+                check(it.playState == AudioTrack.PLAYSTATE_PLAYING) { "AudioTrack did not start" }
             }
-        } catch (t: Throwable) {
-            playbackTrack.set(null)
-            Log.e(TAG, "playback unavailable", t)
-            onAudioError("playback", t)
-            return
+        } catch (e: Exception) {
+            opened?.let { runCatching { it.release() } }
+            throw e
         }
-        playbackTrack.set(track)
+        return object : PlaybackSink {
+            override fun write(samples: FloatArray, offset: Int, count: Int): Int =
+                track.write(samples, offset, count, AudioTrack.WRITE_NON_BLOCKING)
+
+            override fun close() {
+                try { track.stop() } finally { track.release() }
+            }
+        }
     }
 
     private fun findDevice(flags: Int, key: String): AudioDeviceInfo? =

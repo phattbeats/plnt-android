@@ -169,6 +169,36 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: "Test: Android JVM unit suite"
+        working-directory: app
+        run: |
+          ./gradlew --no-daemon :app:testDebugUnitTest
+          grep -h '<testsuite ' app/build/test-results/testDebugUnitTest/TEST-*.xml
+
+      # PHA-4856 (WS8): audit the merged manifest of the debug APK and of a
+      # release build: nothing debuggable in release, no cleartext, backup
+      # rules present, every exported component guarded, no unreviewed
+      # permission. The release APK is signed with the shared key when the
+      # secret is present (unsigned on fork PRs) and kept as an artifact so
+      # testers can be moved off the debuggable build.
+      - name: "Audit: debug and release APK manifest / BuildConfig"
+        env:
+          PLNT_KEYSTORE_PASSWORD: ${{ secrets.PLNT_KEYSTORE_PASSWORD }}
+        run: |
+          python3 tools/audit_apk.py app/app/build/outputs/apk/debug/app-debug.apk
+          (cd app && ./gradlew --no-daemon assembleRelease)
+          release_apk=$(ls app/app/build/outputs/apk/release/*.apk | head -1)
+          echo "release APK: $release_apk"
+          python3 tools/audit_apk.py "$release_apk" --release
+
+      - name: Upload release APK as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plnt-app-release-apk
+          path: app/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
       # Deliberately last: a red test must not cost us the APK artifact, which
       # is what on-device verification runs against.
       #
@@ -184,3 +214,9 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libopus-dev
           cargo test -p plnt-core --target x86_64-unknown-linux-gnu -- --nocapture
+
+      - name: "Test: Kotlin JVM unit tests"
+        working-directory: app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon testDebugUnitTest
