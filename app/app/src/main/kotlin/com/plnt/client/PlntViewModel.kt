@@ -344,6 +344,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val settings = dataStore.loadSettings()
             batteryPromptShown = dataStore.batteryPromptShown()
+            val diagnostics = withContext(Dispatchers.IO) { Diag.isEnabled(getApplication()) }
             val identity = identityStore.loadOrCreate()
             _state.update {
                 it.copy(
@@ -354,6 +355,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                     // show it and offer to raise it.
                     identityLevel = CoreBridge.identityLevel(identity),
                     batteryOptimizationExempt = isIgnoringBatteryOptimizations(),
+                    diagnosticsEnabled = diagnostics,
                 )
             }
             // The service starts on its own default (push-to-talk); hand it the
@@ -366,31 +368,6 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.setPreferredOutputDevice(settings.preferredOutputDeviceKey)
             }
             refreshAudioDevices()
-            autoJoinOnOpen()
-        }
-    }
-
-    /**
-     * PHA-4176 diagnostic build: opening the app is the whole test, so join
-     * without a tap — the server last connected to, else the first bookmark.
-     * Only into an idle service (never over a live, connecting or
-     * reconnecting call) and never once the user has hung up in this process.
-     */
-    private suspend fun autoJoinOnOpen() {
-        if (!Diag.ENABLED || userDisconnected) return
-        val (persisted, lastId) = withContext(Dispatchers.IO) {
-            val session = runCatching { sessionStore.load() }.getOrNull()
-            session to (session?.bookmark?.id ?: runCatching { sessionStore.lastBookmarkId() }.getOrNull())
-        }
-        val bookmarks = _state.value.bookmarks
-        val target = bookmarks.firstOrNull { it.id == lastId }
-            ?: persisted?.bookmark
-            ?: bookmarks.firstOrNull()
-            ?: return
-        runOnService { svc ->
-            val status = svc.currentConnectionSnapshot().status
-            if (userDisconnected || status.busy || status.phase == ConnectionPhase.CONNECTED) return@runOnService
-            connect(target)
         }
     }
 
@@ -427,13 +404,23 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     fun addOrUpdateBookmark(bookmark: Bookmark) {
         val next = _state.value.bookmarks.filterNot { it.id == bookmark.id } + bookmark
         _state.update { it.copy(bookmarks = next) }
-        viewModelScope.launch { dataStore.saveBookmarks(next) }
+        viewModelScope.launch { persistBookmarks(next) }
     }
 
     fun deleteBookmark(id: String) {
         val next = _state.value.bookmarks.filterNot { it.id == id }
         _state.update { it.copy(bookmarks = next) }
-        viewModelScope.launch { dataStore.saveBookmarks(next) }
+        viewModelScope.launch { persistBookmarks(next) }
+    }
+
+    /**
+     * PHA-4856: secrets only go to the Keystore-backed vault. When that is
+     * unavailable they are kept for this run only, and the user is told,
+     * rather than written anywhere in the clear.
+     */
+    private suspend fun persistBookmarks(next: List<Bookmark>) {
+        if (dataStore.saveBookmarks(next)) return
+        _state.update { it.copy(lastError = SECRETS_NOT_STORED) }
     }
 
     fun newBookmarkId(): String = UUID.randomUUID().toString()
@@ -624,6 +611,15 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
     private fun isIgnoringBatteryOptimizations(): Boolean =
         powerManager?.isIgnoringBatteryOptimizations(getApplication<Application>().packageName) == true
 
+    /**
+     * PHA-4856: the user's own switch for the diagnostic trace and its
+     * upload. Off deletes the trace on the phone at once.
+     */
+    fun setDiagnosticsEnabled(enabled: Boolean) {
+        _state.update { it.copy(diagnosticsEnabled = enabled) }
+        viewModelScope.launch(Dispatchers.IO) { Diag.setEnabled(getApplication(), enabled) }
+    }
+
     /** Raises the one-shot request the Activity turns into the system dialog. */
     fun requestBatteryExemption() {
         _state.update { it.copy(batteryPromptRequest = UUID.randomUUID().toString()) }
@@ -649,7 +645,6 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() {
         cancelInitialRetry()
-        userDisconnected = true
         runOnService { it.disconnect("app button") }
         _state.update {
             it.copy(
@@ -1031,10 +1026,11 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
             if (fresh.isEmpty()) return AccountImportOutcome(0, duplicates.size)
             val ids = fresh.map { it.bookmark.id }.toSet()
             val next = _state.value.bookmarks.filterNot { it.id in ids } + fresh.map { it.bookmark }
-            withContext(Dispatchers.IO) {
+            val secretsStored = withContext(Dispatchers.IO) {
                 accountStore.save(fresh)
                 dataStore.saveBookmarks(next)
             }
+            if (!secretsStored) _state.update { it.copy(lastError = SECRETS_NOT_STORED) }
             _state.update { it.copy(bookmarks = next) }
             AccountImportOutcome(fresh.size, duplicates.size)
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
@@ -1226,9 +1222,6 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(connectionStatus = it.connectionStatus.reconnecting(), lastError = null)
             }
             is CoreEvent.Disconnected -> {
-                // Also covers a hang-up from the notification, which never
-                // passes through disconnect() above.
-                if (ev.cause == DisconnectCause.USER) userDisconnected = true
                 val retry = initialConnect
                 // PHA-4176: a first connect that timed out (phone off the
                 // network, server busy) keeps retrying for as long as the app
@@ -1422,11 +1415,7 @@ class PlntViewModel(app: Application) : AndroidViewModel(app) {
         /** The server never answered: no network, a dead route or a busy server. Worth retrying. */
         fun isUnreachable(reason: String?): Boolean = reason != null && UNREACHABLE.containsMatchIn(reason)
 
-        /**
-         * The user hung up at some point in this process. Process-wide rather
-         * than per-ViewModel so reopening the app after a hang-up does not
-         * auto-join again behind their back.
-         */
-        @Volatile var userDisconnected = false
+        const val SECRETS_NOT_STORED =
+            "This phone's secure storage is unavailable, so server passwords won't be remembered after the app closes."
     }
 }

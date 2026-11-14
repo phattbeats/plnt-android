@@ -26,8 +26,8 @@ data class Bookmark(
     val channel: String? = null,
     /**
      * PHA-4849: that channel's password. A secret, exactly like
-     * [serverPassword] — and stored the same way, which PHA-4856 (WS8) is
-     * going to move into an encrypted store.
+     * [serverPassword] — and stored the same way: in the encrypted bookmark
+     * vault, never in the plaintext bookmark list (PHA-4856).
      */
     val channelPassword: String? = null,
     /**
@@ -102,7 +102,12 @@ data class ChatMessage(
     val text: String,
 )
 
-enum class PttMode { PUSH_TO_TALK, OPEN_MIC }
+/**
+ * How the microphone reaches the channel. `VOICE_ACTIVATION` (PHA-4851) keeps
+ * capture open like open mic but only sends frames the energy gate accepts,
+ * plus a short hangover so word endings are not clipped.
+ */
+enum class PttMode { PUSH_TO_TALK, OPEN_MIC, VOICE_ACTIVATION }
 
 /**
  * One selectable entry in the Settings audio input/output pickers — a single
@@ -199,6 +204,8 @@ data class AppState(
     val microphoneActive: Boolean = true,
     /** Whether PLNT is exempt from battery optimisation — drives the Settings row (#3290 item 6). */
     val batteryOptimizationExempt: Boolean = false,
+    /** PHA-4856: Settings > Diagnostics. Off by default, in every build. */
+    val diagnosticsEnabled: Boolean = false,
     /**
      * Non-null when the Activity should launch the battery-optimisation
      * dialog. A nonce rather than a Boolean so a second request after the user

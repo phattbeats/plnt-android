@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Headset
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
@@ -95,6 +96,9 @@ fun SettingsScreen(
     availableOutputDevices: List<AudioDeviceOption>,
     batteryOptimizationExempt: Boolean,
     onRequestBatteryExemption: () -> Unit,
+    /** PHA-4856: the user's switch for the diagnostic trace and its upload. */
+    diagnosticsEnabled: Boolean = false,
+    onDiagnosticsChange: (Boolean) -> Unit = {},
     onPttModeChange: (PttMode) -> Unit,
     onPttOnVolumeButtonChange: (Boolean) -> Unit,
     onPttOnHeadsetButtonChange: (Boolean) -> Unit,
@@ -196,6 +200,8 @@ fun SettingsScreen(
                 ChoiceRow("Push to talk", "Hold the button, or a hardware trigger, to speak", settings.pttMode == PttMode.PUSH_TO_TALK) { onPttModeChange(PttMode.PUSH_TO_TALK) }
                 RowDivider()
                 ChoiceRow("Open mic", "Always transmitting while unmuted", settings.pttMode == PttMode.OPEN_MIC) { onPttModeChange(PttMode.OPEN_MIC) }
+                RowDivider()
+                ChoiceRow("Voice activation", "Transmit when you speak, with a short tail so word endings are not cut", settings.pttMode == PttMode.VOICE_ACTIVATION) { onPttModeChange(PttMode.VOICE_ACTIVATION) }
             }
 
             Section("Push-to-talk triggers", Icons.Outlined.Mic) {
@@ -278,6 +284,15 @@ fun SettingsScreen(
                 RowDivider()
                 NavRow("Create new identity", "Servers will see you as a new user", enabled = identityChangeAllowed) { showCreate = true }
                 if (!identityChangeAllowed) Footnote("Disconnect before replacing your identity.")
+            }
+
+            Section("Diagnostics", Icons.Outlined.BugReport) {
+                SwitchRow("Send connection diagnostics", "Helps PHATT TECH find why calls drop", diagnosticsEnabled, onDiagnosticsChange)
+                Footnote(
+                    "Off unless you turn it on. While on, a connection trace is uploaded to PHATT TECH. " +
+                        "Passwords, keys, nicknames, server addresses and IPs are removed before it is written. " +
+                        "Turning it off stops uploads and deletes the trace from this phone.",
+                )
             }
 
             Section("About", Icons.Outlined.Info) {

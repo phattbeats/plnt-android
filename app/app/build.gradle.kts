@@ -42,6 +42,11 @@ android {
             if (sharedKeystore != null) signingConfig = signingConfigs.getByName("shared")
         }
         release {
+            // PHA-4856 (WS8): the same shared key as debug, so a release APK
+            // installs over a tester's debug one. The debug build is
+            // debuggable — anyone with ADB on an unlocked phone can attach and
+            // use the app's Keystore keys — so release is the build to hand out.
+            if (sharedKeystore != null) signingConfig = signingConfigs.getByName("shared")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

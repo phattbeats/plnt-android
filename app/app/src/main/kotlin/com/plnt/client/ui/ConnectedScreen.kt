@@ -117,6 +117,8 @@ fun ConnectedScreen(
     outputDeafened: Boolean,
     transmitting: Boolean,
     pttIsPushToTalk: Boolean,
+    /** PHA-4851: voice activation shares open mic's gesture-free control but its own label. */
+    voiceActivation: Boolean = false,
     lastError: String?,
     onJoinChannel: (Long) -> Unit,
     /**
@@ -285,6 +287,7 @@ fun ConnectedScreen(
                 outputDeafened = outputDeafened,
                 transmitting = transmitting,
                 pttIsPushToTalk = pttIsPushToTalk,
+                voiceActivation = voiceActivation,
                 onToggleMute = onToggleMute,
                 onToggleDeafen = onToggleDeafen,
                 onPttPress = onPttPress,
@@ -616,6 +619,7 @@ private fun ControlBar(
     outputDeafened: Boolean,
     transmitting: Boolean,
     pttIsPushToTalk: Boolean,
+    voiceActivation: Boolean = false,
     onToggleMute: () -> Unit,
     onToggleDeafen: () -> Unit,
     onPttPress: () -> Unit,
@@ -720,6 +724,8 @@ private fun ControlBar(
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 when {
+                    voiceActivation && transmitting -> "Voice activation · talking"
+                    voiceActivation -> "Voice activation · listening"
                     !pttIsPushToTalk && transmitting -> "Open mic · live"
                     !pttIsPushToTalk -> "Open mic"
                     transmitting -> "Talking"

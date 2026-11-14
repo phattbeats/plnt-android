@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
                             outputDeafened = state.outputDeafened,
                             transmitting = state.transmitting,
                             pttIsPushToTalk = state.settings.pttMode == com.plnt.client.model.PttMode.PUSH_TO_TALK,
+                            voiceActivation = state.settings.pttMode == com.plnt.client.model.PttMode.VOICE_ACTIVATION,
                             lastError = state.lastError,
                             onJoinChannel = viewModel::joinChannel,
                             // PHA-4854: long-press admin actions.
@@ -187,6 +188,8 @@ class MainActivity : ComponentActivity() {
                             availableOutputDevices = state.availableOutputDevices,
                             batteryOptimizationExempt = state.batteryOptimizationExempt,
                             onRequestBatteryExemption = viewModel::requestBatteryExemption,
+                            diagnosticsEnabled = state.diagnosticsEnabled,
+                            onDiagnosticsChange = viewModel::setDiagnosticsEnabled,
                             onPttModeChange = viewModel::setPttMode,
                             onPttOnVolumeButtonChange = viewModel::setPttOnVolumeButton,
                             onPttOnHeadsetButtonChange = viewModel::setPttOnHeadsetButton,

@@ -253,6 +253,8 @@ class VoiceService : Service() {
     private var inputMuted = false
     private var outputMuted = false
     private var transmitting = false
+    /** True while a phone call or another app holds audio focus (PHA-4866). */
+    private var audioInterrupted = false
     // #3282. Held here rather than only on the AudioEngine because the engine is
     // released on a real teardown and while parked waiting for a network — the pin
     // has to survive that without the ViewModel having to re-push it.
@@ -261,6 +263,7 @@ class VoiceService : Service() {
     private var availableInputDevices: List<AudioDeviceOption> = emptyList()
     private var availableOutputDevices: List<AudioDeviceOption> = emptyList()
 
+    private var exitProcessOnDestroy = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     /** Latest onStartCommand id, so a hang-up only un-starts us if no newer start is pending. */
@@ -310,7 +313,7 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         logLifecycle("onCreate", "")
-        Diag.init(filesDir)
+        Diag.init(this)
         // Before any connect: the native DNS resolver needs the app Context
         // to resolve server hostnames on Android (PHA-3289).
         com.plnt.client.core.AndroidContext.ensure(this)
@@ -359,7 +362,7 @@ class VoiceService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE_MUTE -> setInputMuted(!inputMuted)
             ACTION_TOGGLE_TALK -> setPushToTalk(!transmitting)
-            ACTION_DISCONNECT -> disconnect("notification")
+            ACTION_DISCONNECT -> endAndExit("notification exit")
         }
         if (intent == null) restorePersistedSession()
         return START_STICKY
@@ -801,14 +804,35 @@ class VoiceService : Service() {
 
     fun setPttMode(mode: PttMode) {
         pttMode = mode
+        // Open mic is transmitting the moment it is selected. Voice activation
+        // starts quiet: the engine reports the gate opening asynchronously
+        // through onVoiceActivityChanged, and `transmitting` follows that.
         transmitting = mode == PttMode.OPEN_MIC
         applySendingGate()
         emitState()
     }
 
+    /**
+     * `setSending` is the engine's capture-forwarding gate. PTT drives it
+     * from the button; open mic and voice activation leave it open while
+     * unmuted, and voice activation adds the energy gate on top.
+     */
     private fun applySendingGate() {
         val engine = audioEngine ?: return
-        engine.setSending(!inputMuted && transmitting)
+        val modeAllowsSend = when (pttMode) {
+            PttMode.PUSH_TO_TALK -> transmitting
+            PttMode.OPEN_MIC, PttMode.VOICE_ACTIVATION -> true
+        }
+        engine.setVadEnabled(pttMode == PttMode.VOICE_ACTIVATION)
+        engine.setSending(!inputMuted && modeAllowsSend)
+    }
+
+    /** Capture-thread report from the engine's voice-activation gate. */
+    private fun onVoiceActivity(active: Boolean) {
+        if (pttMode != PttMode.VOICE_ACTIVATION || transmitting == active) return
+        transmitting = active
+        updateNotification()
+        emitState()
     }
 
     /**
@@ -821,6 +845,20 @@ class VoiceService : Service() {
         // in-app button from the notification's action.
         Diag.add("hang-up from $source")
         shutdown(DisconnectCause.USER, "disconnected by user")
+    }
+
+    /**
+     * PHA-4920: the user closed the app (swiped it from Recents or tapped Exit
+     * on the notification). End the session, clear the persisted snapshot so
+     * nothing redials it, stop the service and let the process go. Unlike
+     * [disconnect] the process is also killed once the service is destroyed,
+     * so no cached process lingers.
+     */
+    fun endAndExit(source: String) {
+        exitProcessOnDestroy = true
+        disconnect(source)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     /** Initial setup failed before the asynchronous native connect was launched. */
@@ -917,6 +955,7 @@ class VoiceService : Service() {
         mediaSession.release()
         if (eglBaseLazy.isInitialized()) runCatching { eglBase.release() }
         super.onDestroy()
+        if (exitProcessOnDestroy) android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     // ---- session persistence (#3290 item 2) ----------------------------
@@ -1014,6 +1053,9 @@ class VoiceService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         logLifecycle("onTaskRemoved", "task swiped from Recents")
+        // PHA-4920: closing the app ends the call. Backgrounding does not
+        // reach here; only removing the task does.
+        endAndExit("task removed")
         super.onTaskRemoved(rootIntent)
     }
 
@@ -1188,6 +1230,14 @@ class VoiceService : Service() {
                 }
             },
             onAudioError = { stage, error -> mainHandler.post { reportAudioFailure(stage, error) } },
+            onVoiceActivityChanged = { active -> mainHandler.post { onVoiceActivity(active) } },
+            onInterruptionChanged = { paused ->
+                mainHandler.post {
+                    audioInterrupted = paused
+                    updateNotification()
+                    emitState()
+                }
+            },
         )
         engine.setPreferredInputDevice(preferredInputDeviceKey)
         engine.setPreferredOutputDevice(preferredOutputDeviceKey)
@@ -1521,6 +1571,9 @@ class VoiceService : Service() {
             awaitingNetwork -> "Waiting for network…"
             reconnecting -> "Reconnecting…"
             connectionParams == null -> "Idle"
+            // A phone call or another app holds audio focus: still connected,
+            // deliberately silent both ways until it ends (PHA-4866).
+            audioInterrupted -> "$label — paused by another call"
             // The user is connected but cannot be heard — the one call state
             // that looks fine and isn't.
             audioEngine?.isCaptureActive() == false -> "$label — no microphone"
@@ -1538,7 +1591,7 @@ class VoiceService : Service() {
         )
         val disconnectAction = NotificationCompat.Action(
             android.R.drawable.ic_menu_close_clear_cancel,
-            "Disconnect",
+            "Exit",
             servicePendingIntent(ACTION_DISCONNECT, 3),
         )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
