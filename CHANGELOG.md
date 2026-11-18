@@ -5,6 +5,17 @@ All notable changes to Chlorophone for TeamSpeak. Format follows
 semantic-ish versioning where `versionCode` is the bump that matters for
 Android installs.
 
+## [0.2.1-dev] - 2026-11-18 - Test candidate
+
+`versionCode` 5. Debug build signed with the shared key, so it installs over
+earlier test builds.
+
+### Fixed
+
+- Watching or listening with two or more people talking no longer fails with
+  "Playback unavailable: Playback buffer full". Each speaker's audio is now
+  mixed into one stream instead of being queued at N times real time (#50).
+
 ## [0.2.0-dev] - 2026-11-14 - Test candidate
 
 `versionCode` 4. Debug build signed with the shared key, so it installs over
