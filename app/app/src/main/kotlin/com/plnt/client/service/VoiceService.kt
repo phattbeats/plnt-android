@@ -1126,7 +1126,7 @@ class VoiceService : Service() {
                     // The field, not a captured local: the engine now outlives
                     // any one client, so a captured reference could outlive the
                     // engine it points at instead.
-                    audioEngine?.onPlaybackFrame(samples)
+                    audioEngine?.onPlaybackFrame(samples, clientId.hashCode())
                 } else {
                     Log.w(TAG, "PcmFrame from client $clientId: ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
                 }

@@ -86,6 +86,15 @@ class PlaybackWriterTest {
         r.clock.drain(); assertEquals(listOf(1f, 2f, 3f, 4f), sink.delivered)
     }
 
+    @Test fun offerIfBehindByDropsQuietlyWhenSinkIsBehind() {
+        val r = Rig(max = 16)
+        assertTrue(r.writer.offerIfBehindBy(floatArrayOf(1f, 2f), maxQueued = 3))
+        assertFalse(r.writer.offerIfBehindBy(floatArrayOf(3f, 4f), maxQueued = 3))
+        assertEquals(2, r.writer.pendingSamples); assertTrue(r.errors.isEmpty())
+        r.clock.drain(); assertTrue(r.writer.offerIfBehindBy(floatArrayOf(5f, 6f), maxQueued = 3))
+        r.clock.drain(); assertEquals(listOf(1f, 2f, 5f, 6f), r.sinks[0].delivered)
+    }
+
     @Test fun oversizedFrameRejectedWithoutScheduling() {
         val r = Rig(max = 1); assertFalse(r.offer(1f, 2f))
         assertEquals(0, r.writer.pendingSamples); assertTrue(r.clock.tasks.isEmpty())

@@ -100,6 +100,8 @@ class AudioEngine(
 
     private val playbackLock = Any()
     @Volatile private var playbackWriter: PlaybackWriter? = null
+    @Volatile private var playbackMixer: PcmMixer? = null
+    private var mixerExecutor: java.util.concurrent.ScheduledExecutorService? = null
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -205,6 +207,8 @@ class AudioEngine(
         record = null
 
         synchronized(playbackLock) {
+            mixerExecutor?.shutdownNow(); mixerExecutor = null
+            playbackMixer = null
             playbackWriter?.close()
             playbackWriter = null
         }
@@ -278,13 +282,15 @@ class AudioEngine(
     }
 
     /** Feed one decoded 20 ms / 960-sample / 48 kHz mono frame from plnt-core to the speaker/headset. */
-    fun onPlaybackFrame(samples: FloatArray) {
+    fun onPlaybackFrame(samples: FloatArray, sourceId: Int = 0) {
         if (samples.size != CORE_FRAME_SAMPLES) {
             Log.w(TAG, "onPlaybackFrame: got ${samples.size} samples, expected $CORE_FRAME_SAMPLES")
         }
         // Rejection is explicit in PlaybackWriter (bounded overflow or failed output).
         if (interrupted) return
-        playbackWriter?.offer(samples)
+        // Per-speaker frames are summed into one real-time stream; offering each
+        // straight to the sink fills it at N x real time with N talkers.
+        playbackMixer?.push(sourceId, samples)
     }
 
     // ---- device rehoming --------------------------------------------------
@@ -446,10 +452,16 @@ class AudioEngine(
         if (existing != null) {
             if (reopen) existing.reopen()
         } else {
-            playbackWriter = PlaybackWriter.threaded(::buildPlaybackSink) { error ->
+            val writer = PlaybackWriter.threaded(::buildPlaybackSink) { error ->
                 Log.e(TAG, "playback unavailable", error)
                 onAudioError("playback", error)
             }.also { it.reopen() }
+            playbackWriter = writer
+            val (mixer, ex) = PcmMixer.start(CORE_FRAME_SAMPLES, 20) {
+                writer.offerIfBehindBy(it, maxQueued = CORE_FRAME_SAMPLES * 5) // 100 ms
+            }
+            playbackMixer = mixer
+            mixerExecutor = ex
         }
     }
 
