@@ -18,9 +18,9 @@ class PcmMixerTest {
     }
 
     @Test fun burstFromOneSourceKeepsNewestAndEmitsOnePerTick() {
-        m.push(1, floatArrayOf(1f, 1f)); m.push(1, floatArrayOf(2f, 2f)); m.push(1, floatArrayOf(3f, 3f))
+        m.push(1, floatArrayOf(0.1f, 0.1f)); m.push(1, floatArrayOf(0.2f, 0.2f)); m.push(1, floatArrayOf(0.3f, 0.3f))
         m.tick(); m.tick(); m.tick()
-        assertEquals(2, out.size); assertEquals(2f, out[0][0], 0f); assertEquals(3f, out[1][0], 0f)
+        assertEquals(2, out.size); assertEquals(0.2f, out[0][0], 0f); assertEquals(0.3f, out[1][0], 0f)
     }
 
     @Test fun idleEmitsNothingAndWrongSizeIgnored() {

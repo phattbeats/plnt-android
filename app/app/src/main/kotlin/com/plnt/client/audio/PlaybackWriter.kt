@@ -67,6 +67,16 @@ internal class PlaybackWriter(
         return true
     }
 
+    /**
+     * For a producer on its own real-time clock (the mixer): when the sink is
+     * already [maxQueued] behind, drop this frame quietly. Clock drift then costs
+     * an occasional dropped frame instead of a reported overflow.
+     */
+    @Synchronized fun offerIfBehindBy(samples: FloatArray, maxQueued: Int): Boolean {
+        if (pendingSamples + samples.size > maxQueued) return false
+        return offer(samples)
+    }
+
     @Synchronized fun close() {
         if (closed) return
         closed = true

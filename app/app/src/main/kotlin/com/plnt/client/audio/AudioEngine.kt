@@ -457,7 +457,9 @@ class AudioEngine(
                 onAudioError("playback", error)
             }.also { it.reopen() }
             playbackWriter = writer
-            val (mixer, ex) = PcmMixer.start(CORE_FRAME_SAMPLES, 20) { writer.offer(it) }
+            val (mixer, ex) = PcmMixer.start(CORE_FRAME_SAMPLES, 20) {
+                writer.offerIfBehindBy(it, maxQueued = CORE_FRAME_SAMPLES * 5) // 100 ms
+            }
             playbackMixer = mixer
             mixerExecutor = ex
         }
